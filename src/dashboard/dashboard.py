@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import (
+﻿from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider,
-    QRadioButton, QButtonGroup
+    QRadioButton, QButtonGroup, QGraphicsDropShadowEffect
 )
 from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage, QIntValidator
 from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal, QDate
@@ -146,7 +146,7 @@ class DeviceScanWorker(QThread):
             for port in ports:
                 try:
                     desc = str(getattr(port, "description", "") or "")
-                    print(f"🔎 Device scan: probing {port.device} ({desc})")
+                    print(f"ðŸ”Ž Device scan: probing {port.device} ({desc})")
 
                     # Quick check (keep it short; this runs in a background thread).
                     ser = serial.Serial(
@@ -411,7 +411,7 @@ class Dashboard(QWidget):
         self.status_dot.setAlignment(Qt.AlignCenter)
         self.status_dot.setScaledContents(True)
         self.status_dot.setStyleSheet("background: transparent;")
-        self.status_dot.setToolTip("Checking connection…")
+        self.status_dot.setToolTip("Checking connection...")
         header.addWidget(self.status_dot)
 
         # Wi‑Fi / Internet indicator icons (falls back to dot if icons missing)
@@ -503,7 +503,7 @@ class Dashboard(QWidget):
         self.admin_btn.setVisible(False)
 
         # Patient registration moved from ECG menu ("Save ECG") to outer dashboard header.
-        self.new_registration_btn = QPushButton("New registration")
+        self.new_registration_btn = QPushButton("New User")
         self.new_registration_btn.setStyleSheet(
             "background: #ff6600; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
         )
@@ -794,7 +794,7 @@ class Dashboard(QWidget):
         header_row.addStretch()
 
         # total badge (will be updated after counting)
-        self._visitors_total_badge = QLabel("—")
+        self._visitors_total_badge = QLabel("-")
         self._visitors_total_badge.setAlignment(Qt.AlignCenter)
         self._visitors_total_badge.setStyleSheet("""
             QLabel {
@@ -895,15 +895,15 @@ class Dashboard(QWidget):
 
             # Trend vs previous month (chronological)
             if src_idx == 0:
-                trend_txt, trend_color = "—", "#bbb"
+                trend_txt, trend_color = "-", "#bbb"
             else:
                 diff = val - month_data[src_idx - 1]
                 if diff > 0:
-                    trend_txt, trend_color = "↑", "#27ae60"
+                    trend_txt, trend_color = "^", "#27ae60"
                 elif diff < 0:
-                    trend_txt, trend_color = "↓", "#e74c3c"
+                    trend_txt, trend_color = "v", "#e74c3c"
                 else:
-                    trend_txt, trend_color = "→", "#f39c12"
+                    trend_txt, trend_color = ">", "#f39c12"
 
             row = QHBoxLayout()
             row.setSpacing(0)
@@ -990,7 +990,7 @@ class Dashboard(QWidget):
         calendar_nav_layout.setSpacing(10)
         
         # Previous month button
-        self.prev_month_btn = QPushButton("◀")
+        self.prev_month_btn = QPushButton("<")
         self.prev_month_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff8533, stop:1 #ff6600);
@@ -1049,7 +1049,7 @@ class Dashboard(QWidget):
         calendar_nav_layout.addWidget(self.year_label)
         
         # Next month button
-        self.next_month_btn = QPushButton("▶")
+        self.next_month_btn = QPushButton(">")
         self.next_month_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff8533, stop:1 #ff6600);
@@ -2105,7 +2105,7 @@ class Dashboard(QWidget):
                 if hasattr(self, 'parameters_text'):
                     self.parameters_text.setHtml(
                         "<div style='text-align:center; padding:20px; color:#666; font-size:14px;'>"
-                        "📊 <b>LIVE METRICS</b><br><br>Waiting for ECG data...<br>"
+                        "ðŸ“Š <b>LIVE METRICS</b><br><br>Waiting for ECG data...<br>"
                         "<small>Start ECG acquisition or demo mode to see real-time metrics</small>"
                         "</div>"
                     )
@@ -2223,7 +2223,7 @@ class Dashboard(QWidget):
                 reader = getattr(self.ecg_test_page, 'serial_reader', None)
                 if reader and getattr(reader, 'running', False):
                     return True
-                # 🔧 Allow metric updates even when demo/serial not running
+                # ðŸ”§ Allow metric updates even when demo/serial not running
                 # This ensures dashboard values update from Lead 2 calculation
                 return True  # Always allow updates for calibrated metrics
         except Exception:
@@ -2395,7 +2395,7 @@ class Dashboard(QWidget):
             # Simplified: QT = 400 - (BPM-60)*0.8
             qt_interval = max(300, min(440, 400 - (bpm - 60) * 0.8))
             
-            # 🔧 QT Interval calibration (from calibration guide)
+            # ðŸ”§ QT Interval calibration (from calibration guide)
             # According to reference table analysis, QT is already correct
             # Adding minimal verification adjustments for perfect match
             if bpm >= 200:
@@ -3341,7 +3341,7 @@ class Dashboard(QWidget):
             
             # Only print sync message every 50th sync to reduce console spam
             if self._sync_count % 50 == 1:
-                print(f"🔄 FORCE SYNC: Dashboard -> ECG Page")
+                print(f"ðŸ”„ FORCE SYNC: Dashboard -> ECG Page")
                 
             # Force sync metric values from dashboard to ECG test page
             # Extract numeric values from dashboard labels (e.g., "100 BPM" -> "100")
@@ -4428,7 +4428,7 @@ class Dashboard(QWidget):
         """Create/update patient registration details (previously 'Save ECG' in ECG menu)."""
         dialog = QDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        dialog.setWindowTitle(self.tr("New registration"))
+        dialog.setWindowTitle(self.tr("New User"))
         dialog.setMinimumWidth(720)
         dialog.setMinimumHeight(650)
 
@@ -4436,7 +4436,7 @@ class Dashboard(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        title = QLabel(self.tr("New registration"))
+        title = QLabel(self.tr("New User"))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
             "font: bold 18pt Arial; color: white; background: #ff6600; border-radius: 10px; padding: 10px;"
@@ -4493,6 +4493,7 @@ class Dashboard(QWidget):
         age_entry.setValidator(QIntValidator(0, 120, dialog))
         age_entry.setStyleSheet(input_style)
         age_entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        age_entry.setText("1")
         age_row.addWidget(age_lbl)
         age_row.addWidget(age_entry)
         form_layout.addLayout(age_row)
@@ -4516,8 +4517,9 @@ class Dashboard(QWidget):
 
         # Prefill previously saved values (same behavior as former Save ECG panel)
         try:
+            explicit_patient = getattr(self, "patient_details", None)
             prefill = resolve_patient_profile(
-                explicit_patient=getattr(self, "patient_details", None),
+                explicit_patient=explicit_patient,
                 username=getattr(self, "username", "") or "",
                 user_details=getattr(self, "user_details", {}) or {},
             )
@@ -4547,8 +4549,9 @@ class Dashboard(QWidget):
                 full_name = (first + (" " + last if last else "")).strip()
                 if full_name:
                     entries["Patient Name"].setText(full_name)
-                if pd.get("age") is not None:
-                    entries["Age"].setText(str(pd.get("age")))
+                
+                if isinstance(explicit_patient, dict) and explicit_patient.get("age") is not None:
+                    entries["Age"].setText(str(explicit_patient.get("age")))
                 if pd.get("gender"):
                     idx = gender_menu.findText(str(pd.get("gender")))
                     if idx != -1:
@@ -4651,36 +4654,41 @@ class Dashboard(QWidget):
         dialog = QDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dialog.setWindowTitle("Help & Support")
-        dialog.setMinimumWidth(620)
+        dialog.setMinimumWidth(740)
         dialog.setStyleSheet("""
-            QDialog { background: #ffffff; }
-            QLabel#supportTitle { font-size: 16px; font-weight: 900; color: #111; }
-            QLabel#supportHint { font-size: 11px; font-weight: 500; color: #55606f; }
-            QLabel#supportSection { font-size: 13px; font-weight: 900; color: #111; }
-            QScrollArea { background: transparent; }
-            QScrollArea > QWidget > QWidget { background: transparent; }
-            QFrame#issueTile {
+            QDialog { background: #f6f8fb; }
+
+            QFrame#supportCard {
                 background: #ffffff;
                 border: 1px solid #e6eaf0;
+                border-radius: 16px;
+            }
+
+            QLabel { color: #101828; }
+            QLabel#supportTitle { font-size: 18px; font-weight: 900; }
+            QLabel#supportHint { font-size: 12px; font-weight: 600; color: #667085; }
+            QLabel#supportSection { font-size: 13px; font-weight: 900; color: #101828; }
+
+            QScrollArea { background: transparent; }
+            QScrollArea > QWidget > QWidget { background: transparent; }
+
+            QFrame#issueTile {
+                background: #ffffff;
+                border: 1px solid #eaecf0;
                 border-radius: 14px;
             }
             QFrame#issueTile:hover { border: 1px solid #ffb380; background: #fffaf6; }
-            QFrame#issueTile[selected="true"] {
-                border: 2px solid #ff6600;
-                background: #fff7f0;
-            }
+            QFrame#issueTile[selected="true"] { border: 2px solid #ff6600; background: #fff7f0; }
+
             QRadioButton {
                 font-size: 12px;
-                font-weight: 800;
-                color: #111;
-                padding: 10px 10px;
+                font-weight: 900;
+                color: #101828;
+                padding: 12px 10px;
             }
-            QRadioButton::indicator {
-                width: 18px;
-                height: 18px;
-            }
+            QRadioButton::indicator { width: 18px; height: 18px; }
             QRadioButton::indicator:unchecked {
-                border: 2px solid #cfd6df;
+                border: 2px solid #d0d5dd;
                 border-radius: 9px;
                 background: #ffffff;
             }
@@ -4689,58 +4697,58 @@ class Dashboard(QWidget):
                 border-radius: 9px;
                 background: #ff6600;
             }
+
             QPushButton#supportCancel {
-                background: #f2f4f7;
-                color: #111;
-                border-radius: 10px;
-                padding: 8px 18px;
-                font-weight: 700;
-                border: 1px solid #d7dde6;
+                background: #ffffff;
+                color: #344054;
+                border-radius: 12px;
+                padding: 10px 18px;
+                font-weight: 900;
+                border: 1px solid #d0d5dd;
                 min-width: 120px;
             }
-            QPushButton#supportCancel:hover { background: #e9edf3; }
+            QPushButton#supportCancel:hover { background: #f2f4f7; }
+            QPushButton#supportCancel:pressed { background: #e9edf3; }
+
             QPushButton#supportOutline {
                 background: #ffffff;
                 color: #ff6600;
                 border-radius: 12px;
-                padding: 9px 18px;
+                padding: 10px 18px;
                 font-weight: 900;
                 border: 2px solid #ffb380;
                 min-width: 140px;
             }
             QPushButton#supportOutline:hover { background: #fff3e8; border: 2px solid #ff7a26; }
             QPushButton#supportOutline:pressed { background: #ffd9bd; border: 2px solid #ff7a26; }
-            QPushButton#supportOutline:disabled { background: #ffffff; color: #98a2b3; border: 2px solid #e6eaf0; }
-            QPushButton#supportPrimary {
+            QPushButton#supportOutline:disabled { background: #ffffff; color: #98a2b3; border: 2px solid #eaecf0; }
+
+            QPushButton#supportPrimary, QPushButton#supportSubmit {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff6600, stop:1 #ff7a26);
                 color: white;
-                border-radius: 14px;
-                padding: 10px 22px;
+                border-radius: 12px;
+                padding: 10px 20px;
                 font-weight: 900;
                 border: 2px solid #ff7a26;
                 min-width: 160px;
             }
-            QPushButton#supportPrimary:hover { background: #ff7a26; border: 2px solid #ff8e47; }
-            QPushButton#supportPrimary:pressed { background: #e65c00; }
-            QPushButton#supportSubmit {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff6600, stop:1 #ff7a26);
-                color: white;
-                border-radius: 14px;
-                padding: 9px 20px;
-                font-weight: 900;
-                border: 2px solid #ff7a26;
-                min-width: 160px;
-            }
-            QPushButton#supportSubmit:hover { background: #ff7a26; border: 2px solid #ff8e47; }
-            QPushButton#supportSubmit:pressed { background: #e65c00; }
+            QPushButton#supportPrimary:hover, QPushButton#supportSubmit:hover { background: #ff7a26; border: 2px solid #ff8e47; }
+            QPushButton#supportPrimary:pressed, QPushButton#supportSubmit:pressed { background: #e65c00; }
         """)
 
         root = QVBoxLayout(dialog)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        card = QFrame()
+        card.setObjectName("supportCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(12)
 
         top = QHBoxLayout()
         title_col = QVBoxLayout()
+        title_col.setSpacing(2)
 
         title = QLabel("Help & Support")
         title.setObjectName("supportTitle")
@@ -4764,11 +4772,11 @@ class Dashboard(QWidget):
         top_actions.addWidget(status_btn)
         top_actions.addWidget(raise_btn)
         top.addLayout(top_actions, 0)
-        root.addLayout(top)
+        card_layout.addLayout(top)
 
         section = QLabel("Select an issue")
         section.setObjectName("supportSection")
-        root.addWidget(section)
+        card_layout.addWidget(section)
 
         issues = [
             ("Device Power ON issue", "hardware"),
@@ -4793,8 +4801,8 @@ class Dashboard(QWidget):
             tile.setObjectName("issueTile")
             tile.setProperty("selected", "false")
             tile_layout = QHBoxLayout(tile)
-            tile_layout.setContentsMargins(10, 6, 10, 6)
-            tile_layout.setSpacing(8)
+            tile_layout.setContentsMargins(14, 8, 14, 8)
+            tile_layout.setSpacing(10)
 
             radio = QRadioButton(label)
             radio.setProperty("issue_text", label)
@@ -4826,7 +4834,7 @@ class Dashboard(QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(tiles_container)
         scroll.setMinimumHeight(280)
-        root.addWidget(scroll, 1)
+        card_layout.addWidget(scroll, 1)
 
         def _open_raise_manual():
             dialog.accept()
@@ -4914,14 +4922,25 @@ class Dashboard(QWidget):
         footer.addWidget(submit_issue_btn)
 
         contact_btn = QPushButton("Contact Us")
-        contact_btn.setObjectName("supportCancel")
+        contact_btn.setObjectName("supportOutline")
         footer.addWidget(contact_btn)
 
         footer.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setObjectName("supportCancel")
         footer.addWidget(close_btn)
-        root.addLayout(footer)
+        card_layout.addLayout(footer)
+
+        root.addWidget(card)
+
+        try:
+            shadow = QGraphicsDropShadowEffect(dialog)
+            shadow.setBlurRadius(22)
+            shadow.setOffset(0, 8)
+            shadow.setColor(QColor(16, 24, 40, 50))
+            card.setGraphicsEffect(shadow)
+        except Exception:
+            pass
 
         close_btn.clicked.connect(dialog.reject)
         raise_btn.clicked.connect(_open_raise_manual)
@@ -4942,11 +4961,21 @@ class Dashboard(QWidget):
         dialog = QDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dialog.setWindowTitle("Complaint Status")
-        dialog.setMinimumWidth(520)
+        dialog.setMinimumWidth(620)
         dialog.setStyleSheet("""
-            QDialog { background: #ffffff; }
-            QLabel#supportTitle { font-size: 16px; font-weight: 900; color: #111; }
-            QLabel#supportHint { font-size: 11px; font-weight: 500; color: #55606f; }
+            QDialog { background: #f6f8fb; }
+
+            QFrame#supportCard {
+                background: #ffffff;
+                border: 1px solid #e6eaf0;
+                border-radius: 16px;
+            }
+
+            QLabel { color: #101828; }
+            QLabel#supportTitle { font-size: 18px; font-weight: 900; }
+            QLabel#supportHint { font-size: 12px; font-weight: 600; color: #667085; }
+            QLabel#statusKey { font-size: 12px; font-weight: 800; color: #344054; }
+            QLabel#statusValue { font-size: 12px; font-weight: 900; color: #101828; }
             QLabel#statusBadge {
                 padding: 6px 12px;
                 border-radius: 12px;
@@ -4955,78 +4984,75 @@ class Dashboard(QWidget):
                 background: #fff3e8;
                 border: none;
             }
-            QLabel#statusKey { font-size: 12px; font-weight: 800; color: #344054; }
-            QLabel#statusValue { font-size: 12px; font-weight: 900; color: #111; }
             QFrame#statusCard {
                 background: #fff7f0;
-                border: none;
-                border-left: 4px solid #ff6600;
+                border: 1px solid #ffd9bd;
                 border-radius: 14px;
             }
             QLineEdit {
-                border: 1px solid #d7dde6;
-                border-radius: 10px;
-                padding: 8px 10px;
+                border: 1px solid #d0d5dd;
+                border-radius: 12px;
+                padding: 9px 12px;
                 font-size: 12px;
-                background: #fbfcfe;
-                color: #111;
+                background: #ffffff;
+                color: #101828;
+                min-height: 40px;
             }
             QLineEdit:focus { border: 2px solid #ff7a26; background: #ffffff; }
             QPushButton#supportCancel {
-                background: #f2f4f7;
-                color: #111;
-                border-radius: 10px;
-                padding: 8px 18px;
-                font-weight: 700;
-                border: 1px solid #d7dde6;
-                min-width: 110px;
-            }
-            QPushButton#supportCancel:hover { background: #e9edf3; }
-            QPushButton#supportOutline {
                 background: #ffffff;
-                color: #ff6600;
+                color: #344054;
                 border-radius: 12px;
-                padding: 9px 18px;
+                padding: 10px 18px;
                 font-weight: 900;
-                border: 2px solid #ffb380;
-                min-width: 140px;
+                border: 1px solid #d0d5dd;
+                min-width: 120px;
             }
-            QPushButton#supportOutline:hover { background: #fff3e8; border: 2px solid #ff7a26; }
-            QPushButton#supportOutline:pressed { background: #ffd9bd; border: 2px solid #ff7a26; }
-            QPushButton#supportOutline:disabled { background: #ffffff; color: #98a2b3; border: 2px solid #e6eaf0; }
+            QPushButton#supportCancel:hover { background: #f2f4f7; }
+            QPushButton#supportCancel:pressed { background: #e9edf3; }
             QPushButton#supportPrimary {
-                background: #ff6600;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff6600, stop:1 #ff7a26);
                 color: white;
-                border-radius: 10px;
-                padding: 8px 18px;
+                border-radius: 12px;
+                padding: 10px 20px;
                 font-weight: 900;
                 border: 2px solid #ff7a26;
-                min-width: 120px;
+                min-width: 140px;
             }
             QPushButton#supportPrimary:hover { background: #ff7a26; border: 2px solid #ff8e47; }
             QPushButton#supportPrimary:pressed { background: #e65c00; }
         """)
 
         root = QVBoxLayout(dialog)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        card = QFrame()
+        card.setObjectName("supportCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(12)
 
         title = QLabel("Complaint Status")
         title.setObjectName("supportTitle")
         hint = QLabel("Paste your Complaint ID and click Check.")
         hint.setObjectName("supportHint")
         hint.setWordWrap(True)
-        root.addWidget(title)
-        root.addWidget(hint)
+        card_layout.addWidget(title)
+        card_layout.addWidget(hint)
 
         row = QHBoxLayout()
         cid_input = QLineEdit(str(prefill_id or "").strip())
-        cid_input.setPlaceholderText("Complaint ID (uuid)")
+        cid_input.setPlaceholderText("Complaint ID")
+        try:
+            cid_input.setClearButtonEnabled(True)
+        except Exception:
+            pass
         check_btn = QPushButton("Check")
         check_btn.setObjectName("supportPrimary")
         row.addWidget(cid_input, 1)
         row.addWidget(check_btn)
-        root.addLayout(row)
+        card_layout.addLayout(row)
 
         result_box = QFrame()
         result_box.setObjectName("statusCard")
@@ -5037,7 +5063,7 @@ class Dashboard(QWidget):
         status_line = QHBoxLayout()
         status_label = QLabel("Status")
         status_label.setObjectName("statusKey")
-        badge = QLabel("—")
+        badge = QLabel("-")
         badge.setObjectName("statusBadge")
         status_line.addWidget(status_label)
         status_line.addWidget(badge, 0, Qt.AlignLeft)
@@ -5049,7 +5075,7 @@ class Dashboard(QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             key = QLabel(key_text)
             key.setObjectName("statusKey")
-            value = QLabel("—")
+            value = QLabel("-")
             value.setObjectName("statusValue")
             row.addWidget(key)
             row.addSpacing(8)
@@ -5063,14 +5089,25 @@ class Dashboard(QWidget):
         box_lay.addLayout(updated_row)
         box_lay.addLayout(resolved_row)
 
-        root.addWidget(result_box)
+        card_layout.addWidget(result_box)
 
         footer = QHBoxLayout()
         footer.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setObjectName("supportCancel")
         footer.addWidget(close_btn)
-        root.addLayout(footer)
+        card_layout.addLayout(footer)
+
+        root.addWidget(card)
+
+        try:
+            shadow = QGraphicsDropShadowEffect(dialog)
+            shadow.setBlurRadius(22)
+            shadow.setOffset(0, 8)
+            shadow.setColor(QColor(16, 24, 40, 50))
+            card.setGraphicsEffect(shadow)
+        except Exception:
+            pass
 
         close_btn.clicked.connect(dialog.accept)
 
@@ -5089,12 +5126,12 @@ class Dashboard(QWidget):
 
         def _render(data: dict):
             status_value = str(data.get("status") or "").strip()
-            badge.setText(status_value.title() if status_value else "—")
+            badge.setText(status_value.title() if status_value else "-")
             badge.setStyleSheet(_badge_style(status_value))
 
-            created_val.setText(str(data.get("created_at") or "—"))
-            updated_val.setText(str(data.get("updated_at") or "—"))
-            resolved_val.setText(str(data.get("resolved_at") or "—"))
+            created_val.setText(str(data.get("created_at") or "-"))
+            updated_val.setText(str(data.get("updated_at") or "-"))
+            resolved_val.setText(str(data.get("resolved_at") or "-"))
 
         def _check():
             complaint_id = cid_input.text().strip()
@@ -5133,32 +5170,41 @@ class Dashboard(QWidget):
         dialog = QDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dialog.setWindowTitle("Raise a Complaint")
-        dialog.setMinimumWidth(520)
+        dialog.setMinimumWidth(620)
         dialog.setStyleSheet("""
-            QDialog {
+            QDialog { background: #f6f8fb; }
+
+            QFrame#supportCard {
                 background: #ffffff;
+                border: 1px solid #e6eaf0;
+                border-radius: 16px;
             }
-            QLabel {
-                color: #111;
-                font-size: 12px;
-                font-weight: 600;
-            }
+
+            QLabel { color: #101828; }
+            QLabel#supportTitle { font-size: 18px; font-weight: 900; }
+            QLabel#supportHint { font-size: 12px; font-weight: 600; color: #667085; }
+            QLabel#supportFieldLabel { font-size: 12px; font-weight: 800; color: #344054; }
+
             QLineEdit, QComboBox, QTextEdit {
-                border: 1px solid #d7dde6;
-                border-radius: 10px;
-                padding: 8px 10px;
+                border: 1px solid #d0d5dd;
+                border-radius: 12px;
+                padding: 9px 12px;
                 font-size: 12px;
-                background: #fbfcfe;
-                color: #111;
+                background: #ffffff;
+                color: #101828;
             }
+            QLineEdit, QComboBox { min-height: 40px; }
+            QTextEdit { min-height: 120px; }
+
             QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
                 border: 2px solid #ff7a26;
                 background: #ffffff;
             }
+
             QComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 28px;
+                width: 30px;
                 border: 0px;
                 background: transparent;
             }
@@ -5170,62 +5216,91 @@ class Dashboard(QWidget):
                 border-right: 6px solid transparent;
                 border-top: 8px solid #ff6600;
             }
+
             QPushButton#supportCancel {
-                background: #f2f4f7;
-                color: #111;
-                border-radius: 10px;
-                padding: 8px 18px;
-                font-weight: 700;
-                border: 1px solid #d7dde6;
-                min-width: 100px;
+                background: #ffffff;
+                color: #344054;
+                border-radius: 12px;
+                padding: 10px 18px;
+                font-weight: 900;
+                border: 1px solid #d0d5dd;
+                min-width: 120px;
             }
-            QPushButton#supportCancel:hover { background: #e9edf3; }
+            QPushButton#supportCancel:hover { background: #f2f4f7; }
+            QPushButton#supportCancel:pressed { background: #e9edf3; }
+
             QPushButton#supportSubmit {
-                background: #ff6600;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff6600, stop:1 #ff7a26);
                 color: white;
-                border-radius: 10px;
-                padding: 8px 18px;
-                font-weight: 800;
+                border-radius: 12px;
+                padding: 10px 20px;
+                font-weight: 900;
                 border: 2px solid #ff7a26;
-                min-width: 110px;
+                min-width: 140px;
             }
             QPushButton#supportSubmit:hover { background: #ff7a26; border: 2px solid #ff8e47; }
             QPushButton#supportSubmit:pressed { background: #e65c00; }
-            QLabel#supportTitle {
-                font-size: 16px;
-                font-weight: 900;
-                color: #111;
-            }
-            QLabel#supportHint {
-                font-size: 11px;
-                font-weight: 500;
-                color: #55606f;
-            }
         """)
 
         root = QVBoxLayout(dialog)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
 
+        card = QFrame()
+        card.setObjectName("supportCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+
+        badge = QLabel("!")
+        badge.setFixedSize(30, 30)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet("""
+            QLabel {
+                background: #fff3e8;
+                color: #ff6600;
+                border: 1px solid #ffd9bd;
+                border-radius: 15px;
+                font-size: 16px;
+                font-weight: 900;
+            }
+        """)
+        header.addWidget(badge, 0, Qt.AlignTop)
+
+        header_col = QVBoxLayout()
+        header_col.setSpacing(2)
         title = QLabel("Raise a Complaint")
         title.setObjectName("supportTitle")
         hint = QLabel("Send a complaint to support. If offline, it will be queued and sent automatically when online.")
         hint.setWordWrap(True)
         hint.setObjectName("supportHint")
-        root.addWidget(title)
-        root.addWidget(hint)
+        header_col.addWidget(title)
+        header_col.addWidget(hint)
+        header.addLayout(header_col, 1)
+        card_layout.addLayout(header)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignLeft)
         form.setFormAlignment(Qt.AlignTop)
-        form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(12)
 
         name_input = QLineEdit()
         name_input.setPlaceholderText("Your name")
+        try:
+            name_input.setClearButtonEnabled(True)
+        except Exception:
+            pass
 
         machine_input = QLineEdit()
         machine_input.setPlaceholderText("Machine ID / Serial Number")
+        try:
+            machine_input.setClearButtonEnabled(True)
+        except Exception:
+            pass
 
         source_input = QComboBox()
         source_input.addItems(["software", "hardware", "other"])
@@ -5237,16 +5312,20 @@ class Dashboard(QWidget):
 
         complaint_input = QTextEdit()
         complaint_input.setPlaceholderText("Describe the issue…")
-        complaint_input.setFixedHeight(150)
         if str(prefill_complaint or "").strip():
             complaint_input.setPlainText(str(prefill_complaint).strip())
 
-        form.addRow("Name", name_input)
-        form.addRow("Machine ID", machine_input)
-        form.addRow("Source", source_input)
-        form.addRow("Complaint", complaint_input)
+        def _lbl(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setObjectName("supportFieldLabel")
+            return lbl
 
-        root.addLayout(form)
+        form.addRow(_lbl("Name"), name_input)
+        form.addRow(_lbl("Machine ID"), machine_input)
+        form.addRow(_lbl("Source"), source_input)
+        form.addRow(_lbl("Complaint"), complaint_input)
+
+        card_layout.addLayout(form)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -5256,7 +5335,18 @@ class Dashboard(QWidget):
         submit_btn.setObjectName("supportSubmit")
         buttons.addWidget(cancel_btn)
         buttons.addWidget(submit_btn)
-        root.addLayout(buttons)
+        card_layout.addLayout(buttons)
+
+        root.addWidget(card)
+
+        try:
+            shadow = QGraphicsDropShadowEffect(dialog)
+            shadow.setBlurRadius(22)
+            shadow.setOffset(0, 8)
+            shadow.setColor(QColor(16, 24, 40, 50))
+            card.setGraphicsEffect(shadow)
+        except Exception:
+            pass
 
         cancel_btn.clicked.connect(dialog.reject)
 
@@ -5460,7 +5550,7 @@ class Dashboard(QWidget):
                 # Stop acquisition if running
                 if hasattr(self.ecg_test_page, 'serial_reader') and self.ecg_test_page.serial_reader:
                     try:
-                        print("🔌 Closing serial connection on sign out...")
+                        print("ðŸ”Œ Closing serial connection on sign out...")
                         self.ecg_test_page.serial_reader.stop()
                         self.ecg_test_page.serial_reader.close()
                         self.ecg_test_page.serial_reader = None
@@ -5553,9 +5643,64 @@ class Dashboard(QWidget):
         #     except Exception as e:
         #         print(f"Error closing 12-lead serial connection: {e}")
 
+        duration_minutes = None
+        dlg = QDialog(self)
+        dlg.setWindowTitle("HRV Test Duration")
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setModal(True)
+        dlg.setFixedSize(320, 170)
+        dlg.setStyleSheet("""
+            QDialog { background: #fff; border-radius: 14px; }
+            QLabel { font-size: 14px; color: #222; }
+            QPushButton { border-radius: 10px; padding: 10px 0; font-size: 14px; font-weight: bold; }
+            QPushButton#five { background: #ff6600; color: white; }
+            QPushButton#five:hover { background: #ff7a1a; }
+            QPushButton#three { background: #007bff; color: white; }
+            QPushButton#three:hover { background: #1a88ff; }
+            QPushButton#cancel { background: #e9ecef; color: #222; }
+            QPushButton#cancel:hover { background: #dde2e6; }
+        """)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Select HRV capture duration")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 12, QFont.Bold))
+        outer.addWidget(title)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        btn_5 = QPushButton("5 mins")
+        btn_5.setObjectName("five")
+        btn_3 = QPushButton("3 mins")
+        btn_3.setObjectName("three")
+
+        def _pick(minutes):
+            nonlocal duration_minutes
+            duration_minutes = minutes
+            dlg.accept()
+
+        btn_5.clicked.connect(lambda: _pick(5))
+        btn_3.clicked.connect(lambda: _pick(3))
+
+        btn_row.addWidget(btn_5)
+        btn_row.addWidget(btn_3)
+        outer.addLayout(btn_row)
+
+        cancel = QPushButton("Cancel")
+        cancel.setObjectName("cancel")
+        cancel.clicked.connect(dlg.reject)
+        outer.addWidget(cancel)
+
+        if dlg.exec_() != QDialog.Accepted or not duration_minutes:
+            return
+
         try:
             from ecg.hrv_test import HRVTestWindow
-            self.hrv_window = HRVTestWindow(parent=self, username=self.username)
+            self.hrv_window = HRVTestWindow(parent=self, username=self.username, duration_minutes=duration_minutes)
             self.hrv_window.showMaximized()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open HRV Test window: {str(e)}")
@@ -5652,7 +5797,7 @@ class Dashboard(QWidget):
 
             # Not connected, only scan if the ports list has changed (new device plugged in)
             if set(current_ports) != set(self._last_available_ports):
-                print(f"🔄 COM port change detected: {self._last_available_ports} -> {current_ports}")
+                print(f"ðŸ”„ COM port change detected: {self._last_available_ports} -> {current_ports}")
                 self._last_available_ports = current_ports
                 
                 # If a new port was added, try to scan
@@ -5719,7 +5864,7 @@ class Dashboard(QWidget):
 
             # Update hardware version if it's different from current
             if self.device_version != version:
-                print(f"🔄 Hardware version changed from {self.device_version} to {version}")
+                print(f"ðŸ”„ Hardware version changed from {self.device_version} to {version}")
                 self.device_version = version
 
             self.device_port = port
@@ -5888,7 +6033,7 @@ class Dashboard(QWidget):
                     self.status_dot.setStyleSheet(
                         "border-radius: 9px; background: #00e676; border: 2px solid #fff;"
                     )
-                self.status_dot.setToolTip(f"Wi‑Fi/Internet connected ({source})")
+                self.status_dot.setToolTip(f"Wi-Fi/Internet connected ({source})")
             else:
                 if hasattr(self, "_wifi_pixmap_disconnected") and not self._wifi_pixmap_disconnected.isNull():
                     self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
@@ -5898,7 +6043,7 @@ class Dashboard(QWidget):
                     self.status_dot.setStyleSheet(
                         "border-radius: 9px; background: #e74c3c; border: 2px solid #fff;"
                     )
-                self.status_dot.setToolTip(f"Wi‑Fi/Internet disconnected ({source})")
+                self.status_dot.setToolTip(f"Wi-Fi/Internet disconnected ({source})")
         except Exception:
             pass
 
@@ -6312,7 +6457,7 @@ class Dashboard(QWidget):
         if hasattr(self, 'settings_manager'):
             self.settings_manager.set_setting("hardware_version", "")
             self.settings_manager.save_settings()
-            print("✅ Hardware version cleared on close")
+            print("Hardware version cleared on close")
 
         try:
             if hasattr(self, 'ecg_test_page') and self.ecg_test_page:

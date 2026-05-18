@@ -22,11 +22,11 @@ from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF, pyqtSignal,
 from PyQt5.QtGui import (QFont, QPixmap, QCursor, QPainter, QPen,
                          QColor, QBrush, QRadialGradient, QFontMetrics, QImage)
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QFrame, QMessageBox,
-    QSizePolicy, QComboBox, QFileDialog, QTextEdit, QSlider,
-    QLineEdit, QAction, QMenu, QApplication, QButtonGroup,
-    QToolButton, QWidget, QSplitter, QHeaderView, QDateEdit
+     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+     QTableWidget, QTableWidgetItem, QFrame, QMessageBox,
+     QSizePolicy, QComboBox, QFileDialog, QTextEdit, QSlider,
+     QLineEdit, QAction, QMenu, QApplication, QButtonGroup,
+     QToolButton, QWidget, QSplitter, QHeaderView, QDateEdit, QProgressBar
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -933,6 +933,7 @@ class PublicReportsDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Report ID", "Type", "Date", "Format", "Name", "Age/Gender"])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -1006,28 +1007,33 @@ class PublicReportsDialog(QDialog):
         return True
 
     def _refresh_table(self):
-        self.table.setRowCount(0)
-        rows = [r for r in self._all if self._matches(r)]
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            rows = [r for r in self._all if self._matches(r)]
+            self.table.clearContents()
+            self.table.setRowCount(len(rows))
 
-        for report in rows:
-            rid = self._norm(self._get_first(report, "report_id", "reportId", "id", "reportID"))
-            rtype = self._norm(self._get_first(report, "report_type", "reportType", "type"))
-            rdate = self._norm(self._get_first(report, "report_date", "reportDate", "date", "created_at", "createdAt"))
-            fmt = self._norm(self._get_first(report, "report_format", "reportFormat", "format"))
-            name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
-            age = self._norm(self._get_first(report, "age", "patient_age", "patientAge"))
-            gender = self._norm(self._get_first(report, "gender", "patient_gender", "patientGender"))
+            for row, report in enumerate(rows):
+                rid = self._norm(self._get_first(report, "report_id", "reportId", "id", "reportID"))
+                rtype = self._norm(self._get_first(report, "report_type", "reportType", "type"))
+                rdate = self._norm(self._get_first(report, "report_date", "reportDate", "date", "created_at", "createdAt"))
+                fmt = self._norm(self._get_first(report, "report_format", "reportFormat", "format"))
+                name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
+                age = self._norm(self._get_first(report, "age", "patient_age", "patientAge"))
+                gender = self._norm(self._get_first(report, "gender", "patient_gender", "patientGender"))
 
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            vals = [rid, rtype, rdate, fmt, name, f"{age}/{gender}".strip("/")]
-            for col, val in enumerate(vals):
-                item = QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col in (4,) else Qt.AlignCenter)
-                self.table.setItem(row, col, item)
-            if self.table.item(row, 0):
-                self.table.item(row, 0).setData(Qt.UserRole, report)
-            self.table.setRowHeight(row, 26)
+                vals = [rid, rtype, rdate, fmt, name, f"{age}/{gender}".strip("/")]
+                for col, val in enumerate(vals):
+                    item = QTableWidgetItem(val)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col in (4,) else Qt.AlignCenter)
+                    self.table.setItem(row, col, item)
+                if self.table.item(row, 0):
+                    self.table.item(row, 0).setData(Qt.UserRole, report)
+                self.table.setRowHeight(row, 26)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
 
     def _accept_selected(self):
         row = self.table.currentRow()
@@ -1091,10 +1097,81 @@ class ECGAnalysisWindow(QDialog):
         project_root = Path(__file__).resolve().parents[2]
         self.analysis_pdf_logo_path = project_root / "assets" / "DeckmountLogo.png"
 
+        # Public API perf helpers (mobile report browser)
+        self._public_api_session = None
+        self._public_reports_cache = {}
+
         self._apply_stylesheet()
         self._build_ui()
+        self._init_loader_overlay()
         self.load_reports()
         QTimer.singleShot(0, self._fit_window_to_screen)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            if hasattr(self, "_loader_overlay") and self._loader_overlay is not None:
+                self._loader_overlay.setGeometry(self.rect())
+        except Exception:
+            pass
+
+    def _init_loader_overlay(self):
+        """Full-window loading overlay (used for public mobile report fetch)."""
+        self._loader_overlay = QWidget(self)
+        self._loader_overlay.setObjectName("loader_overlay")
+        self._loader_overlay.setGeometry(self.rect())
+        self._loader_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self._loader_overlay.hide()
+
+        root = QVBoxLayout(self._loader_overlay)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        center = QWidget(self._loader_overlay)
+        center_lay = QVBoxLayout(center)
+        center_lay.setContentsMargins(0, 0, 0, 0)
+        center_lay.setSpacing(10)
+        center_lay.setAlignment(Qt.AlignCenter)
+
+        box = QFrame(center)
+        box.setObjectName("loader_box")
+        box_lay = QVBoxLayout(box)
+        box_lay.setContentsMargins(18, 14, 18, 14)
+        box_lay.setSpacing(10)
+
+        self._loader_label = QLabel("Loading…", box)
+        self._loader_label.setObjectName("loader_label")
+        self._loader_label.setAlignment(Qt.AlignCenter)
+        box_lay.addWidget(self._loader_label)
+
+        self._loader_bar = QProgressBar(box)
+        self._loader_bar.setObjectName("loader_bar")
+        self._loader_bar.setRange(0, 0)  # indeterminate
+        self._loader_bar.setFixedWidth(280)
+        box_lay.addWidget(self._loader_bar, 0, Qt.AlignCenter)
+
+        center_lay.addWidget(box, 0, Qt.AlignCenter)
+        root.addWidget(center, 1)
+
+    def _show_loader(self, text: str = "Loading…"):
+        try:
+            if hasattr(self, "_loader_label") and self._loader_label is not None:
+                self._loader_label.setText(str(text or "Loading…"))
+            if hasattr(self, "_loader_overlay") and self._loader_overlay is not None:
+                self._loader_overlay.setGeometry(self.rect())
+                self._loader_overlay.raise_()
+                self._loader_overlay.show()
+                QApplication.processEvents()
+        except Exception:
+            pass
+
+    def _hide_loader(self):
+        try:
+            if hasattr(self, "_loader_overlay") and self._loader_overlay is not None:
+                self._loader_overlay.hide()
+                QApplication.processEvents()
+        except Exception:
+            pass
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STYLESHEET
@@ -1118,6 +1195,68 @@ class ECGAnalysisWindow(QDialog):
                 background: #15192b;
                 border: 1px solid #5f4523;
                 border-radius: 8px;
+            }
+            QFrame#manual_mark_card {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #171b2e, stop:1 #12162a);
+                border: 1px solid #5b4525;
+                border-radius: 10px;
+            }
+            QLabel#section_title {
+                color:#fff4e8;
+                font-size:12px;
+                font-weight:bold;
+                font-family:'Courier New';
+            }
+            QLabel#field_lbl {
+                color:#fff4e8;
+                font-size:11px;
+                font-weight:bold;
+                font-family:Arial;
+            }
+            QLineEdit#manual_input, QLineEdit#mobile_input {
+                background:#0f1220;
+                color:#fff4e8;
+                border:1px solid #5e4827;
+                border-radius:7px;
+                padding:6px 10px;
+                font-size:12px;
+                font-family:Arial;
+            }
+            QLineEdit#manual_input:focus, QLineEdit#mobile_input:focus { border-color:#ff8a1f; }
+            QLineEdit#manual_input:hover, QLineEdit#mobile_input:hover { border-color:#ff8a1f; }
+            QLineEdit#manual_input::placeholder, QLineEdit#mobile_input::placeholder { color:#bda68b; }
+            QPushButton#mark_outline {
+                background:#15192b;
+                color:#fff4e8;
+                border:2px solid #ff8a1f;
+                border-radius:7px;
+                padding:6px 12px;
+                font-weight:bold;
+            }
+            QPushButton#mark_outline:hover { background:#1b2036; border-color:#ff9d3d; }
+            QPushButton#mark_danger {
+                background:#15192b;
+                color:#ff8b8b;
+                border:2px solid #a63d2d;
+                border-radius:7px;
+                padding:6px 12px;
+                font-weight:bold;
+            }
+            QPushButton#mark_danger:hover { background:#1b2036; border-color:#d65d4a; }
+            QTableWidget#annotation_table {
+                background:#0b0f1d;
+                border:1px solid #5b4525;
+                gridline-color:#2f261d;
+                selection-background-color:#ff8a1f;
+            }
+            QHeaderView::section {
+                background: #1a1f34;
+                color: #ffcb95;
+                border: none;
+                border-bottom: 1px solid #5b4525;
+                padding: 6px;
+                font-size: 10px;
+                font-weight: bold;
             }
             QFrame#leadbox {
                 background: #090b14;
@@ -1270,6 +1409,31 @@ class ECGAnalysisWindow(QDialog):
                 background: #6b4a23;
                 border-radius: 3px;
             }
+            QWidget#loader_overlay {
+                background: rgba(0, 0, 0, 140);
+            }
+            QFrame#loader_box {
+                background: #15192b;
+                border: 1px solid #5f4523;
+                border-radius: 10px;
+            }
+            QLabel#loader_label {
+                color: #fff4e8;
+                font-weight: bold;
+                font-size: 12px;
+                font-family: Arial;
+            }
+            QProgressBar#loader_bar {
+                border: 1px solid #5e4827;
+                border-radius: 6px;
+                background: #0f1220;
+                height: 10px;
+                text-align: center;
+            }
+            QProgressBar#loader_bar::chunk {
+                background: #ff8a1f;
+                border-radius: 6px;
+            }
         """)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1369,20 +1533,6 @@ class ECGAnalysisWindow(QDialog):
         self.pdf_btn.clicked.connect(self.generate_pdf_report)
         lay.addWidget(self.pdf_btn)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setStyleSheet("background:#5b4525;max-width:1px;margin:4px 4px;border:none;")
-        lay.addWidget(sep2)
-
-        lay.addWidget(QLabel("API ID:"))
-        self.api_id_input = QLineEdit()
-        self.api_id_input.setPlaceholderText("ID")
-        self.api_id_input.setFixedWidth(60)
-        self.api_fetch_btn = QPushButton("Fetch")
-        self.api_fetch_btn.setObjectName("apibtn")
-        self.api_fetch_btn.clicked.connect(self.fetch_api_report)
-        lay.addWidget(self.api_id_input)
-        lay.addWidget(self.api_fetch_btn)
         return frame
 
     # ── TOOL SIDEBAR ─────────────────────────────────────────────────────────
@@ -1710,18 +1860,21 @@ class ECGAnalysisWindow(QDialog):
 
         # ── Manual marking ───────────────────────────────────────────────────
         mark_box = QFrame()
-        mark_box.setStyleSheet("background:transparent;border:none;")
+        mark_box.setObjectName("manual_mark_card")
         mark_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         av = QVBoxLayout(mark_box)
-        av.setSpacing(6)
+        av.setContentsMargins(12, 10, 12, 10)
+        av.setSpacing(8)
 
         title_lbl = QLabel("▌ Manual Arrhythmia Marking")
-        title_lbl.setStyleSheet(
-            "color:#fff4e8;font-size:12px;font-weight:bold;font-family:'Courier New';")
+        title_lbl.setObjectName("section_title")
         av.addWidget(title_lbl)
 
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Type:"))
+        combo_lbl_style = "color:#fff4e8;font-size:11px;font-weight:bold;font-family:Arial;"
+        type_lbl = QLabel("Type:")
+        type_lbl.setObjectName("field_lbl")
+        row1.addWidget(type_lbl)
         self.arrhythmia_type_combo = QComboBox()
         self.arrhythmia_type_combo.addItems([
             "Atrial Fibrillation", "PVC", "PAC", "SVT", "VT",
@@ -1729,19 +1882,64 @@ class ECGAnalysisWindow(QDialog):
             "LBBB", "RBBB", "Normal Sinus Rhythm", "Other"
         ])
         self.arrhythmia_type_combo.setMinimumWidth(220)
+        # Use an absolute path so the arrow icon works regardless of current working directory / packaging.
+        arrow_icon_path = str((Path(__file__).resolve().parents[2] / "assets" / "dropdown_arrow.png").resolve()).replace("\\", "/")
+        combo_style = (
+            "QComboBox{"
+            " background:#0f1220;"
+            " color:#fff4e8;"
+            " border:1px solid #5e4827;"
+            " border-radius:6px;"
+            " padding:6px 34px 6px 10px;"
+            " font-size:12px;"
+            " font-family:Arial;"
+            "}"
+            "QComboBox:hover{border-color:#ff8a1f;}"
+            "QComboBox:focus{border-color:#ff8a1f;}"
+            "QComboBox::drop-down{"
+            " subcontrol-origin:padding;"
+            " subcontrol-position:top right;"
+            " width:28px;"
+            " border-left:1px solid #5e4827;"
+            " background:#15192b;"
+            " border-top-right-radius:6px;"
+            " border-bottom-right-radius:6px;"
+            "}"
+            "QComboBox::down-arrow{"
+            f" image: url(\"{arrow_icon_path}\");"
+            " width:18px;"
+            " height:18px;"
+            " margin-right:8px;"
+            "}"
+            "QComboBox QAbstractItemView{"
+            " background:#0b0f1d;"
+            " color:#fff4e8;"
+            " selection-background-color:#ff8a1f;"
+            " selection-color:#ffffff;"
+            " outline:0;"
+            "}"
+        )
+        self.arrhythmia_type_combo.setStyleSheet(combo_style)
+        self.arrhythmia_type_combo.setMinimumHeight(30)
         row1.addWidget(self.arrhythmia_type_combo, 2)
-        row1.addWidget(QLabel("Lead:"))
+        lead_lbl = QLabel("Lead:")
+        lead_lbl.setObjectName("field_lbl")
+        row1.addWidget(lead_lbl)
         self.mark_lead_combo = QComboBox()
         self.mark_lead_combo.addItems(["All Leads"] + self.LEADS)
         self.mark_lead_combo.setMinimumWidth(130)
+        self.mark_lead_combo.setStyleSheet(combo_style)
+        self.mark_lead_combo.setMinimumHeight(30)
         row1.addWidget(self.mark_lead_combo, 1)
         av.addLayout(row1)
 
         row1b = QHBoxLayout()
         self.manual_type_input = QLineEdit()
+        self.manual_type_input.setObjectName("manual_input")
         self.manual_type_input.setPlaceholderText("Custom type (if Other selected)")
         self.manual_type_input.setMinimumWidth(220)
         self.notes_input = QLineEdit()
+        self.notes_input.setObjectName("manual_input")
         self.notes_input.setPlaceholderText("Clinical notes...")
         self.notes_input.setMinimumWidth(220)
         row1b.addWidget(self.manual_type_input)
@@ -1749,21 +1947,17 @@ class ECGAnalysisWindow(QDialog):
         av.addLayout(row1b)
 
         row2 = QHBoxLayout()
-        btn_s = ("background:#15192b;color:#fff4e8;border:2px solid #ff8a1f;"
-                 "border-radius:5px;padding:5px 12px;font-weight:bold;")
         self.mark_start_btn = QPushButton("① Mark Start")
-        self.mark_start_btn.setStyleSheet(btn_s)
+        self.mark_start_btn.setObjectName("mark_outline")
         self.mark_start_btn.clicked.connect(self.mark_start)
 
         self.mark_end_btn = QPushButton("② Mark End + Save")
-        self.mark_end_btn.setStyleSheet(btn_s)
+        self.mark_end_btn.setObjectName("mark_outline")
         self.mark_end_btn.clicked.connect(self.mark_end_and_save)
         self.mark_end_btn.setEnabled(False)
 
         self.delete_mark_btn = QPushButton("🗑 Delete")
-        self.delete_mark_btn.setStyleSheet(
-            "background:#15192b;color:#ff8b8b;border:2px solid #a63d2d;"
-            "border-radius:5px;padding:5px 12px;font-weight:bold;")
+        self.delete_mark_btn.setObjectName("mark_danger")
         self.delete_mark_btn.clicked.connect(self.delete_selected_annotation)
 
         for b in (self.mark_start_btn, self.mark_end_btn,
@@ -1777,11 +1971,12 @@ class ECGAnalysisWindow(QDialog):
         av.addWidget(self.mark_status_lbl)
 
         self.annotation_table = QTableWidget(0, 5)
+        self.annotation_table.setObjectName("annotation_table")
         self.annotation_table.setHorizontalHeaderLabels(
             ["Start (s)", "End (s)", "Type", "Lead", "Notes"])
         self.annotation_table.horizontalHeader().setStretchLastSection(True)
         self.annotation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.annotation_table.setMinimumHeight(96)
+        self.annotation_table.setMinimumHeight(110)
         av.addWidget(self.annotation_table)
 
         h.addWidget(mark_box, stretch=2)
@@ -1802,12 +1997,9 @@ class ECGAnalysisWindow(QDialog):
         mobile_lay.addWidget(mobile_lbl, 0, Qt.AlignRight)
 
         self.mobile_no_input = QLineEdit()
+        self.mobile_no_input.setObjectName("mobile_input")
         self.mobile_no_input.setPlaceholderText("XXXXXXXXXX")
         self.mobile_no_input.setFixedWidth(170)
-        self.mobile_no_input.setStyleSheet(
-            "font-family:Arial; font-size:12px; padding:6px 10px; background:#0f1220; color:#fff4e8;"
-            "border:1px solid #5e4827; border-radius:5px;"
-        )
         mobile_lay.addWidget(self.mobile_no_input, 0, Qt.AlignRight)
 
         self.mobile_load_btn = QPushButton("Load")
@@ -1859,32 +2051,76 @@ class ECGAnalysisWindow(QDialog):
             QMessageBox.warning(self, "Mobile", "Enter a valid 10-digit mobile number.")
             return
 
-        url = (
-            "https://pmltkfluqk.execute-api.us-east-1.amazonaws.com/"
-            f"dev/api/public/reports?mobile_no={mobile_no}"
-        )
-        import requests
+        def _get_public_session():
+            import requests
+            if self._public_api_session is None:
+                s = requests.Session()
+                s.headers.update({"Accept": "application/json"})
+                self._public_api_session = s
+            return self._public_api_session
+
+        def _as_lightweight_rows(raw_reports: list):
+            """Return (light_rows, full_map) to keep the selector fast even if API returns huge waveform payloads."""
+            raw = [r for r in (raw_reports or []) if isinstance(r, dict)]
+            full_map = list(raw)
+            keep_keys = {
+                "report_id", "reportId", "id", "reportID",
+                "report_type", "reportType", "type",
+                "report_date", "reportDate", "date", "created_at", "createdAt",
+                "report_format", "reportFormat", "format",
+                "name", "patient_name", "patientName",
+                "age", "patient_age", "patientAge",
+                "gender", "patient_gender", "patientGender",
+            }
+            light = []
+            for idx, r in enumerate(full_map):
+                d = {k: r.get(k) for k in keep_keys if k in r}
+                d["__full_index"] = idx
+                light.append(d)
+            return light, full_map
+
+        url = "https://pmltkfluqk.execute-api.us-east-1.amazonaws.com/dev/api/public/reports"
+        cursor_overridden = False
         try:
             self.mobile_load_btn.setText("…")
             self.mobile_load_btn.setEnabled(False)
-            QApplication.processEvents()
+            self._show_loader("Loading reports…")
 
-            resp = requests.get(url, timeout=15)
-            payload = resp.json()
-
-            # Accept multiple shapes: list, {"data": [...]}, {"reports": [...]}
-            if isinstance(payload, list):
-                reports = payload
-            elif isinstance(payload, dict):
-                reports = payload.get("data") or payload.get("reports") or payload.get("items") or []
+            cached = self._public_reports_cache.get(mobile_no)
+            if isinstance(cached, list) and cached:
+                reports = cached
             else:
-                reports = []
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                cursor_overridden = True
+                QApplication.processEvents()
+                sess = _get_public_session()
+                resp = sess.get(url, params={"mobile_no": mobile_no}, timeout=15)
+                payload = resp.json()
+
+                # Accept multiple shapes: list, {"data": [...]}, {"reports": [...]}
+                if isinstance(payload, list):
+                    reports = payload
+                elif isinstance(payload, dict):
+                    reports = payload.get("data") or payload.get("reports") or payload.get("items") or []
+                else:
+                    reports = []
+
+                if isinstance(reports, list) and reports:
+                    # Session cache (avoid refetch on repeated loads for same mobile)
+                    self._public_reports_cache[mobile_no] = reports
+
+            # Restore the cursor as soon as the list is ready (dialog selection should use normal cursor).
+            if cursor_overridden:
+                QApplication.restoreOverrideCursor()
+                cursor_overridden = False
+            self._hide_loader()
 
             if not isinstance(reports, list) or not reports:
                 QMessageBox.information(self, "Reports", "No reports found for this mobile number.")
                 return
 
-            dlg = PublicReportsDialog(reports, parent=self)
+            light_rows, full_map = _as_lightweight_rows(reports)
+            dlg = PublicReportsDialog(light_rows, parent=self)
             if dlg.exec_() != QDialog.Accepted:
                 return
 
@@ -1892,7 +2128,18 @@ class ECGAnalysisWindow(QDialog):
             if not selected:
                 return
 
-            new_report = self._map_public_report_to_internal(selected)
+            self._show_loader("Loading selected waveform…")
+
+            # Map back to full record (if we used lightweight row objects)
+            full_idx = selected.get("__full_index") if isinstance(selected, dict) else None
+            selected_full = None
+            try:
+                if isinstance(full_idx, int) and 0 <= full_idx < len(full_map):
+                    selected_full = full_map[full_idx]
+            except Exception:
+                selected_full = None
+
+            new_report = self._map_public_report_to_internal(selected_full or selected)
             if not new_report:
                 # If listing is metadata-only, try fetching full details by report_id.
                 rep_id = (
@@ -1923,12 +2170,22 @@ class ECGAnalysisWindow(QDialog):
                 or new_report.get("report_type")
                 or "report"
             )
-            self.report_combo.addItem(f"[Mobile] {display_name} | {rep_type} | ID:{rep_id}", "")
-            self.report_combo.setCurrentIndex(idx)
+            try:
+                self.report_combo.blockSignals(True)
+                self.report_combo.addItem(f"[Mobile] {display_name} | {rep_type} | ID:{rep_id}", "")
+                self.report_combo.setCurrentIndex(idx)
+            finally:
+                self.report_combo.blockSignals(False)
+            # Do the heavy report parse/render while the loader is visible
+            self.load_selected_report(idx)
+            self._hide_loader()
         except Exception as e:
             QMessageBox.critical(self, "API Error", f"Failed to load reports: {str(e)}")
         finally:
             try:
+                self._hide_loader()
+                if cursor_overridden:
+                    QApplication.restoreOverrideCursor()
                 self.mobile_load_btn.setText("Load")
                 self.mobile_load_btn.setEnabled(True)
             except Exception:
@@ -1939,8 +2196,6 @@ class ECGAnalysisWindow(QDialog):
         rid = str(report_id or "").strip()
         if not rid:
             return None
-
-        import requests
 
         base = "https://pmltkfluqk.execute-api.us-east-1.amazonaws.com/dev/api/public"
         candidates = []
@@ -1957,9 +2212,11 @@ class ECGAnalysisWindow(QDialog):
             f"{base}/reports?reportId={rid}",
             f"{base}/reports?id={rid}",
         ]
+        import requests
+        sess = self._public_api_session if self._public_api_session is not None else requests.Session()
         for url in candidates:
             try:
-                resp = requests.get(url, timeout=15)
+                resp = sess.get(url, timeout=15)
                 payload = resp.json()
                 if isinstance(payload, dict):
                     if payload.get("status") is False:
