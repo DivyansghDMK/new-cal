@@ -69,9 +69,9 @@ except ImportError:
 
 
 class HRVTestWindow(QWidget):
-    """HRV Test Window - 5-minute Lead II capture and report generation"""
+    """HRV Test Window - configurable-duration Lead II capture and report generation"""
     
-    def __init__(self, parent=None, username=None):
+    def __init__(self, parent=None, username=None, duration_minutes=5):
         super().__init__(parent)
 
         # Full screen on open
@@ -96,7 +96,14 @@ class HRVTestWindow(QWidget):
         self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)  # Circular buffer for selected lead
         self.captured_data = []  # Store all captured data with timestamps
         self.start_time = None
-        self.capture_duration = 5 * 60  # 5 minutes in seconds
+        try:
+            self.duration_minutes = int(duration_minutes) if duration_minutes is not None else 5
+        except Exception:
+            self.duration_minutes = 5
+        if self.duration_minutes <= 0:
+            self.duration_minutes = 5
+
+        self.capture_duration = self.duration_minutes * 60  # seconds
         self.is_capturing = False
         self.serial_reader = None
         self.crash_logger = get_crash_logger()
@@ -176,6 +183,9 @@ class HRVTestWindow(QWidget):
         self.capture_timer.timeout.connect(self.update_plot)
         self.duration_timer = QTimer(self)
         self.duration_timer.timeout.connect(self.check_duration)
+
+    def _minutes_word(self):
+        return "minute" if int(self.duration_minutes) == 1 else "minutes"
 
     def mousePressEvent(self, event):
         # Block all mouse press events (left/right click) for dragging
@@ -371,7 +381,12 @@ class HRVTestWindow(QWidget):
         
         # Info label
         current_lead = self.lead_combo.currentText()
-        self.info_label = QLabel(f"Capture 5 minutes of {current_lead} data for HRV analysis. The capture will stop automatically after 5 minutes.")
+        m = int(self.duration_minutes)
+        mw = self._minutes_word()
+        self.info_label = QLabel(
+            f"Capture {m} {mw} of {current_lead} data for HRV analysis. "
+            f"The capture will stop automatically after {m} {mw}."
+        )
         self.info_label.setFont(QFont("Arial", 10))
         self.info_label.setStyleSheet("color: #666; padding: 10px;")
         self.info_label.setWordWrap(True)
@@ -388,7 +403,12 @@ class HRVTestWindow(QWidget):
             
         self.title_label.setText(f"HRV Test - {text}")
 
-        self.info_label.setText(f"Capture 5 minutes of {text} data for HRV analysis. The capture will stop automatically after 5 minutes.")
+        m = int(self.duration_minutes)
+        mw = self._minutes_word()
+        self.info_label.setText(
+            f"Capture {m} {mw} of {text} data for HRV analysis. "
+            f"The capture will stop automatically after {m} {mw}."
+        )
         
     def refresh_com_ports(self):
         """Refresh available COM ports"""
@@ -589,7 +609,7 @@ class HRVTestWindow(QWidget):
             self.metrics_timer.start(200)
             
             QMessageBox.information(self, "Capture Started",
-                                  f"{self.selected_lead} capture started. It will automatically stop after 5 minutes.")
+                                  f"{self.selected_lead} capture started. It will automatically stop after {int(self.duration_minutes)} {self._minutes_word()}.")
             
         except Exception as e:
             QMessageBox.critical(self, "Error",
@@ -687,7 +707,7 @@ class HRVTestWindow(QWidget):
                 self.close()
     
     def check_duration(self):
-        """Check if 5 minutes have elapsed"""
+        """Check if configured duration has elapsed"""
         if not self.is_capturing:
             return
         
@@ -701,7 +721,7 @@ class HRVTestWindow(QWidget):
         if elapsed >= self.capture_duration:
             self.stop_capture()
             QMessageBox.information(self, "Capture Complete", 
-                                  "5-minute capture completed successfully!")
+                                  f"{int(self.duration_minutes)}-minute capture completed successfully!")
     
     def _refresh_holter_bpm_label(self):
         """Called every 3 s by _bpm_refresh_timer. Reads stable BPM and updates HR label."""

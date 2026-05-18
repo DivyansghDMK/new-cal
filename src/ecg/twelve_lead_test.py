@@ -907,7 +907,6 @@ class ECGTestPage(QWidget):
         self.apply_display_settings()
 
         # Create ECG menu buttons
-        # "Save ECG" (patient registration) moved to outer dashboard as "New registration".
         ecg_menu_buttons = [
             ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),
             ("Holter", self.show_holter_menu, "#00FF00"),  # Added Holter button (Green)
