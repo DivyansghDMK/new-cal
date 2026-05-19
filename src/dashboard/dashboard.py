@@ -503,7 +503,7 @@ class Dashboard(QWidget):
         self.admin_btn.setVisible(False)
 
         # Patient registration moved from ECG menu ("Save ECG") to outer dashboard header.
-        self.new_registration_btn = QPushButton("New User")
+        self.new_registration_btn = QPushButton("Patient registration")
         self.new_registration_btn.setStyleSheet(
             "background: #ff6600; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
         )
@@ -4428,7 +4428,7 @@ class Dashboard(QWidget):
         """Create/update patient registration details (previously 'Save ECG' in ECG menu)."""
         dialog = QDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        dialog.setWindowTitle(self.tr("New User"))
+        dialog.setWindowTitle(self.tr("Patient registration"))
         dialog.setMinimumWidth(720)
         dialog.setMinimumHeight(650)
 
@@ -4436,7 +4436,7 @@ class Dashboard(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        title = QLabel(self.tr("New User"))
+        title = QLabel(self.tr("Patient registration"))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
             "font: bold 18pt Arial; color: white; background: #ff6600; border-radius: 10px; padding: 10px;"

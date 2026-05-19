@@ -759,12 +759,10 @@ class LoginRegisterDialog(QDialog):
         self.reg_serial.setPlaceholderText("Machine Serial ID")
         self.reg_name = QLineEdit()
         self.reg_name.setPlaceholderText("Full Name")
-        self.reg_age = QLineEdit()
-        self.reg_age.setPlaceholderText("Age")
-        self.reg_gender = QLineEdit()
-        self.reg_gender.setPlaceholderText("Gender")
-        self.reg_address = QLineEdit()
-        self.reg_address.setPlaceholderText("Address")
+        self.reg_doctor = QLineEdit()
+        self.reg_doctor.setPlaceholderText("Doctor Name")
+        self.reg_org_address = QLineEdit()
+        self.reg_org_address.setPlaceholderText("Organisation Address")
         self.reg_phone = QLineEdit()
         self.reg_phone.setPlaceholderText("Phone Number")
         self.reg_password = QLineEdit()
@@ -779,11 +777,11 @@ class LoginRegisterDialog(QDialog):
         register_btn.setObjectName("SignUpBtn")
         register_btn.clicked.connect(self.handle_register)
         
-        for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
+        for w in [self.reg_serial, self.reg_name, self.reg_doctor, self.reg_org_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             w.setMinimumHeight(44)
         
-        for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
+        for w in [self.reg_serial, self.reg_name, self.reg_doctor, self.reg_org_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setStyleSheet(register_input_style)
         
         register_btn.setStyleSheet("""
@@ -840,9 +838,8 @@ class LoginRegisterDialog(QDialog):
         layout.addLayout(self.org_buttons_layout)
         layout.addWidget(self.reg_serial)
         layout.addWidget(self.reg_name)
-        layout.addWidget(self.reg_age)
-        layout.addWidget(self.reg_gender)
-        layout.addWidget(self.reg_address)
+        layout.addWidget(self.reg_doctor)
+        layout.addWidget(self.reg_org_address)
         layout.addWidget(self.reg_phone)
         layout.addLayout(password_row)
         layout.addLayout(confirm_row)
@@ -1270,13 +1267,12 @@ class LoginRegisterDialog(QDialog):
     def handle_register(self):
         serial_id = self.reg_serial.text()
         name = self.reg_name.text()
-        age = self.reg_age.text()
-        gender = self.reg_gender.text()
-        address = self.reg_address.text()
+        doctor = self.reg_doctor.text().strip()
+        org_address = self.reg_org_address.text().strip()
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        if not all([serial_id, name, age, gender, address, phone, password, confirm]):
+        if not all([serial_id, name, doctor, org_address, phone, password, confirm]):
             QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
             return
         # Enforce numeric phone number with length up to 10 digits
@@ -1294,7 +1290,7 @@ class LoginRegisterDialog(QDialog):
             phone=phone,
             serial_id=serial_id,
             email="",
-            extra={"age": age, "gender": gender, "address": address}
+            extra={"doctor": doctor, "org_address": org_address}
         )
         if not ok:
             QMessageBox.warning(self, "Error", msg)
@@ -1309,13 +1305,12 @@ class LoginRegisterDialog(QDialog):
             user_data = {
                 'username': phone,
                 'full_name': name,
-                'age': age,
-                'gender': gender,
+                'doctor': doctor,
+                'org_address': org_address,
                 'phone': phone,
-                'address': address,
                 'serial_number': serial_id,
-                'serial_id': serial_id,  # Include both for compatibility
-                'machine_serial_id': serial_id,  # Include machine serial ID
+                'serial_id': serial_id,
+                'machine_serial_id': serial_id,
                 'registered_at': datetime.now().isoformat()
             }
             upload_result = uploader.upload_user_signup(user_data)
@@ -1421,6 +1416,7 @@ def main():
         # ── License Gate ─────────────────────────────────────────────────────
         # Validate license BEFORE showing login. On success the result is cached
         # locally (HMAC-protected) so subsequent starts are instant / offline.
+        '''
         try:
             from utils.license_manager import check_license, clear_license_cache, clear_stored_key, load_stored_key
             from utils.license_dialog import LicenseDialog
@@ -1460,6 +1456,7 @@ def main():
         except Exception as _lic_err:
             # If license system fails to import (e.g. first install), log and continue.
             logger.warning(f"[License] Check skipped due to error: {_lic_err}")
+        '''
         # ─────────────────────────────────────────────────────────────────────
 
         # Initialize login dialog

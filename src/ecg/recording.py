@@ -1054,6 +1054,8 @@ class ECGMenu(QGroupBox):
                 "Org.": values.get("Org. Name", ""),
                 "Org. Name": values.get("Org. Name", ""),
                 "Org. Address": values.get("Org. Address", ""),
+                "org_name": values.get("Org. Name", ""),
+                "org_address": values.get("Org. Address", ""),
                 "patient_name": values.get("Patient Name", ""),
                 "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }

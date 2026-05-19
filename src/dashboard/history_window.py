@@ -1304,7 +1304,7 @@ class HistoryWindow(QDialog):
         self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
             "Date", "Time", "Org.", "Doctor", "Patient Name",
-            "Age", "Gender", "Height", "Weight", "Type", "Status"
+            "Org. Name", "Org. Address", "Height", "Weight", "Type", "Status"
         ])
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
@@ -1329,8 +1329,8 @@ class HistoryWindow(QDialog):
         fixed_columns = {
             0: 92,   # Date
             1: 84,   # Time
-            5: 58,   # Age
-            6: 72,   # Gender
+            5: 130,  # Org. Name
+            6: 150,  # Org. Address
             7: 68,   # Height
             8: 68,   # Weight
             9: 90,   # Type
@@ -1507,8 +1507,8 @@ class HistoryWindow(QDialog):
                         "Org.": "",
                         "doctor": "",
                         "patient_name": "",
-                        "age": "",
-                        "gender": "",
+                        "org_name": "",
+                        "org_address": "",
                         "height": "",
                         "weight": "",
                         "report_file": full_path,
@@ -1557,8 +1557,8 @@ class HistoryWindow(QDialog):
                             "Org.": entry.get("org", entry.get("Org.", "")),
                             "doctor": entry.get("doctor", ""),
                             "patient_name": entry.get("patient", entry.get("patient_name", "")),
-                            "age": entry.get("age", ""),
-                            "gender": entry.get("gender", ""),
+                            "org_name": entry.get("org_name", entry.get("organisation_name", entry.get("org", ""))),
+                            "org_address": entry.get("org_address", entry.get("organisation_address", "")),
                             "height": entry.get("height", ""),
                             "weight": entry.get("weight", ""),
                             "report_file": os.path.join(REPORTS_DIR, entry.get("filename", "")),
@@ -1613,8 +1613,10 @@ class HistoryWindow(QDialog):
                         history_entries.append({
                             "date": ds, "time": ts, "report_type": "ECG",
                             "Org.": p.get("Org.", ""), "doctor": p.get("doctor", ""),
-                            "patient_name": pname, "age": str(p.get("age", "")),
-                            "gender": p.get("gender", ""), "height": str(p.get("height", "")),
+                            "patient_name": pname,
+                            "org_name": p.get("org_name", p.get("organisation_name", p.get("org", ""))),
+                            "org_address": p.get("org_address", p.get("organisation_address", "")),
+                            "height": str(p.get("height", "")),
                             "weight": str(p.get("weight", "")), "report_file": "",
                         })
                 except Exception:
@@ -1677,7 +1679,7 @@ class HistoryWindow(QDialog):
             entry.get("doctor", ""),
             entry.get("patient_name", "") or (
                 (entry.get("first_name", "") + " " + entry.get("last_name", "")).strip()),
-            str(entry.get("age", "")), entry.get("gender", ""),
+            entry.get("org_name", ""), entry.get("org_address", ""),
             str(entry.get("height", "")), str(entry.get("weight", "")),
             entry.get("report_type", ""), status,
         ]
@@ -2374,6 +2376,21 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
     }
     if isinstance(patient_details, dict):
         base.update(patient_details)
+        # Normalise organisation fields so the history table always finds them
+        # regardless of which key variant the form stored.
+        if not base.get("org_name"):
+            base["org_name"] = (
+                base.get("Org. Name")
+                or base.get("organisation_name")
+                or base.get("Org.")
+                or ""
+            )
+        if not base.get("org_address"):
+            base["org_address"] = (
+                base.get("Org. Address")
+                or base.get("organisation_address")
+                or ""
+            )
 
     entries.append(base)
 
