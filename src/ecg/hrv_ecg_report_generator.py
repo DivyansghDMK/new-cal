@@ -4542,11 +4542,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 ax_psd.set_xticklabels(['0Hz', '0.1Hz', '0.2Hz', '0.3Hz', '0.4Hz', '0.5Hz'], fontsize=8)
                 ax_psd.set_yticks([])
 
-                # Draw a clear black baseline so the chart floor is visible in the PDF.
-                ax_psd.axhline(0, color='black', linewidth=1.0, zorder=0)
-                ax_psd.spines['bottom'].set_visible(True)
-                ax_psd.spines['bottom'].set_color('black')
-                ax_psd.spines['bottom'].set_linewidth(1.0)
+                ax_psd.spines['bottom'].set_visible(False)
                 for side in ('left', 'right', 'top'):
                     ax_psd.spines[side].set_visible(False)
                 ax_psd.tick_params(axis='x', colors='black', width=0.8, length=4)
