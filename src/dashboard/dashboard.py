@@ -5587,30 +5587,42 @@ class Dashboard(QWidget):
     def can_start_test(self, test_name):
         """
         Check if a test can be started. 
-        Returns True if no other test is running.
-        Returns False and shows a popup if another test is already running.
+        Automatically stops any other running test to allow seamless transitions.
         """
-        for name, is_running in self.test_states.items():
+        for name, is_running in list(self.test_states.items()):
             if is_running and name != test_name:
-                # Another test is running
-                running_test_display = name.replace("_", " ").title()
-                QMessageBox.warning(
-                    self, 
-                    "Test Already Running", 
-                    f"Cannot start {test_name.replace('_', ' ').title()} because {running_test_display} is currently running.\n\nPlease stop the running test first."
-                )
-                return False
+                # Another test is running, stop it automatically
+                print(f" Auto-stopping {name} to start {test_name}")
+                if name == '12_lead_test' and hasattr(self, 'ecg_test_page'):
+                    try:
+                        self.ecg_test_page.stop_acquisition()
+                    except Exception as e:
+                        print(f" Error auto-stopping 12_lead_test: {e}")
+                elif name == 'hrv_test' and hasattr(self, 'hrv_window'):
+                    try:
+                        self.hrv_window.stop_capture()
+                    except Exception as e:
+                        print(f" Error auto-stopping hrv_test: {e}")
+                elif name == 'hyperkalemia_test' and hasattr(self, 'hyperkalemia_window'):
+                    try:
+                        self.hyperkalemia_window.stop_capture()
+                    except Exception as e:
+                        print(f" Error auto-stopping hyperkalemia_test: {e}")
+                
+                # Force state update in case the method failed to do it
+                self.update_test_state(name, False)
+                
         return True
         
     def open_hyperkalemia_test(self):
         """Open Hyperkalemia Test window in a new window"""
-        # Ensure 12-lead serial connection is closed before opening Hyperkalemia test
-        # if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
-        #     try:
-        #         if hasattr(self.ecg_test_page, 'close_serial_connection'):
-        #             self.ecg_test_page.close_serial_connection()
-        #     except Exception as e:
-        #         print(f"Error closing 12-lead serial connection: {e}")
+        # Stop 12-lead test cleanly before opening Hyperkalemia test
+        try:
+            ecg_page = getattr(self, 'ecg_test_page', None)
+            if ecg_page and hasattr(ecg_page, 'stop_acquisition'):
+                ecg_page.stop_acquisition()
+        except Exception as e:
+            print(f" Error stopping 12-lead test: {e}")
 
         try:
             from ecg.hyperkalemia_test import HyperkalemiaTestWindow
@@ -5635,13 +5647,13 @@ class Dashboard(QWidget):
     
     def open_hrv_test(self):
         """Open HRV Test window in a new window"""
-        # # Ensure 12-lead serial connection is closed before opening HRV test
-        # if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
-        #     try:
-        #         if hasattr(self.ecg_test_page, 'close_serial_connection'):
-        #             self.ecg_test_page.close_serial_connection()
-        #     except Exception as e:
-        #         print(f"Error closing 12-lead serial connection: {e}")
+        # Stop 12-lead test cleanly before opening HRV test
+        try:
+            ecg_page = getattr(self, 'ecg_test_page', None)
+            if ecg_page and hasattr(ecg_page, 'stop_acquisition'):
+                ecg_page.stop_acquisition()
+        except Exception as e:
+            print(f" Error stopping 12-lead test: {e}")
 
         duration_minutes = None
         dlg = QDialog(self)

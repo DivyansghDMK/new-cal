@@ -38,6 +38,7 @@ ECG_FS        = 500.0
 FIXED_SPEED   = 25.0
 FIXED_GAIN    = 10.0
 MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
+REPORT_STRIP_SECONDS = 7.0
 REPORT_AC_SETTING = "50"
 REPORT_EMG_SETTING = "150"
 REPORT_DFT_SETTING = "0.5"
@@ -202,7 +203,7 @@ def generate_report(
         if auto_target_samples:
             _ts = None
         else:
-            _ts = 3500 if fmt == "12_1" else (2500 if fmt == "6_2" else 1600)
+            _ts = int(round(ECG_FS * REPORT_STRIP_SECONDS))
 
         if fmt == '12_1':
             _draw_1x12(ax, lead_mv, PW, PH, target_samples=_ts, lead_seq=lead_seq)
@@ -648,7 +649,8 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.90, target_samples=5000)
+                   PW - left_margin - MR - 25, row_h*0.90,
+                   target_samples=int(round(ECG_FS * REPORT_STRIP_SECONDS)))
 
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
@@ -707,7 +709,8 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.90, target_samples=5000)
+                   PW - left_margin - MR - 25, row_h*0.90,
+                   target_samples=int(round(ECG_FS * REPORT_STRIP_SECONDS)))
 
     # Draw column dividers AFTER all waveforms, stopping at TOP of rhythm strip
     # (rhythm strip is full-width — no dividers should cross through it)
@@ -962,6 +965,17 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
                         break
 
         work = work[chosen_start:chosen_start + core_n]
+
+    # If the selected window is longer than the strip can physically display,
+    # compress it to the strip width while keeping the newest samples.
+    visible_n = max(2, int(width_mm / MM_PER_SAMPLE) + 1)
+    if work.size > visible_n:
+        try:
+            x_src = np.linspace(0.0, 1.0, work.size)
+            x_dst = np.linspace(0.0, 1.0, visible_n)
+            work = np.interp(x_dst, x_src, work)
+        except Exception:
+            work = work[-visible_n:]
 
     # Demo-only: remove residual baseline slope so the strip starts at the baseline.
     # This keeps demo PDFs from showing an initial drifting baseline even when the

@@ -113,7 +113,8 @@ class HRVTestWindow(QWidget):
         self.y_range = 500.0  # Initial range
         self.sampling_rate = 500.0  # Default sampling rate, will be estimated
         self.sample_index = 0  # For synthetic time axis if needed
-        
+        self._plot_update_in_progress = False
+
         # Settings
         self.settings_manager = SettingsManager()
 
@@ -180,6 +181,7 @@ class HRVTestWindow(QWidget):
         
         # Timers
         self.capture_timer = QTimer(self)
+        self.capture_timer.setTimerType(Qt.PreciseTimer)
         self.capture_timer.timeout.connect(self.update_plot)
         self.duration_timer = QTimer(self)
         self.duration_timer.timeout.connect(self.check_duration)
@@ -602,7 +604,7 @@ class HRVTestWindow(QWidget):
             self._silent_data_warned = False
             
             # Start timers
-            self.capture_timer.start(50)
+            self.capture_timer.start(30)
             self.duration_timer.start(1000)
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
@@ -739,13 +741,18 @@ class HRVTestWindow(QWidget):
     def update_plot(self):
         """Update the plot with new data"""
         import pyqtgraph as pg
+        if getattr(self, "_plot_update_in_progress", False):
+            return
+        self._plot_update_in_progress = True
         if not self.is_capturing or not self.serial_reader:
+            self._plot_update_in_progress = False
             return
 
         # Check if device got disconnected suddenly
         if not self.serial_reader.running:
             print("⚠️ Device disconnected during HRV test!")
             self.stop_capture(device_disconnected=True)
+            self._plot_update_in_progress = False
             return
             
         
@@ -766,6 +773,7 @@ class HRVTestWindow(QWidget):
                     )
                     self._silent_data_warned = True
                 self.stop_capture(device_not_sending=True)
+                self._plot_update_in_progress = False
                 return
             
             # Leads required by HRV PDF header calculations:
@@ -855,6 +863,9 @@ class HRVTestWindow(QWidget):
                         'value': smoothed_value  # Reports use smoothed values for clean graphs
                     })
                 
+            if not self.is_capturing:
+                self._plot_update_in_progress = False
+                return
             # Update plot using a stable sliding window.
             # Do not drop zero-valued samples here because real ECG data can cross zero,
             # and filtering them out makes the trace reflow and jerk.
@@ -956,6 +967,8 @@ class HRVTestWindow(QWidget):
         except Exception as e:
             # Silently handle errors during capture
             pass
+        finally:
+            self._plot_update_in_progress = False
     
     def generate_report(self):
         """Generate HRV report without blocking capture or UI updates."""

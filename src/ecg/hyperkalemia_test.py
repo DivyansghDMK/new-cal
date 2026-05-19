@@ -119,6 +119,8 @@ class HyperkalemiaTestWindow(QWidget):
         self._lead_off_windows = {}  # lead -> deque[float] (recent 1s window)
         self._lead_off_state = {}  # lead -> bool
         self._last_packet_time = 0.0
+        self._plot_update_in_progress = False
+        self._plot_render_stride = 1
 
         
         # Lead mapping: name -> index in ecg_calculator.data
@@ -209,6 +211,7 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Timers
         self.capture_timer = QTimer(self)
+        self.capture_timer.setTimerType(Qt.PreciseTimer)
         self.capture_timer.timeout.connect(self.update_plot)
         self.duration_timer = QTimer(self)
         self.duration_timer.timeout.connect(self.check_duration)
@@ -723,7 +726,7 @@ class HyperkalemiaTestWindow(QWidget):
                 print(f"[HyperkalemiaTestWindow] BPM controller start error: {_bpm_err}")
             
             # Start timers
-            self.capture_timer.start(50)  # Update plot every 50ms
+            self.capture_timer.start(30)  # Update plot every 30ms
             self.duration_timer.start(1000)  # Check duration every second
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
@@ -860,13 +863,18 @@ class HyperkalemiaTestWindow(QWidget):
     
     def update_plot(self):
         """Update all plots with new data matching 12-lead dashboard style"""
+        if getattr(self, "_plot_update_in_progress", False):
+            return
+        self._plot_update_in_progress = True
         if not self.is_capturing or not self.serial_reader:
+            self._plot_update_in_progress = False
             return
 
         # Check if device got disconnected suddenly
         if not self.serial_reader.running:
             print("⚠️ Device disconnected during Hyperkalemia test!")
             self.stop_capture(device_disconnected=True)
+            self._plot_update_in_progress = False
             return
             
         
@@ -885,9 +893,11 @@ class HyperkalemiaTestWindow(QWidget):
                     )
                     self._silent_data_warned = True
                 self.stop_capture(device_not_sending=True)
+                self._plot_update_in_progress = False
                 return
 
             if not packets:
+                self._plot_update_in_progress = False
                 return
             
             # Process each packet
@@ -988,6 +998,11 @@ class HyperkalemiaTestWindow(QWidget):
             if fs < 100.0 or fs > 1000.0:
                 fs = 500.0
             
+            render_stride = max(1, int(getattr(self, "_plot_render_stride", 1)))
+            if (self.sample_index % render_stride) != 0:
+                self._plot_update_in_progress = False
+                return
+
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
                 buf = self._plot_buffers.get(lead_name)
@@ -1060,8 +1075,22 @@ class HyperkalemiaTestWindow(QWidget):
                     display_values = values[start_i:]
 
                     if len(display_times) > 1:
-                        self.plot_curves[lead_name].setData(display_times, display_values)
-                        self.plot_widgets[lead_name].setXRange(display_times[0], display_times[-1], padding=0)
+                        display_len = min(2400, max(500, int(seconds_to_show * 250)))
+                        if len(display_values) >= 2:
+                            x_src = np.linspace(0.0, 1.0, len(display_values))
+                            x_dst = np.linspace(0.0, 1.0, display_len)
+                            display_values = np.interp(x_dst, x_src, np.asarray(display_values, dtype=float))
+                        else:
+                            display_values = np.asarray(display_values, dtype=float)
+
+                        plot_buffer = np.full(display_len, np.nan, dtype=float)
+                        copy_len = min(display_len, len(display_values))
+                        if copy_len > 0:
+                            plot_buffer[-copy_len:] = display_values[-copy_len:]
+                        display_times = np.linspace(0.0, seconds_to_show, display_len)
+
+                        self.plot_curves[lead_name].setData(display_times, plot_buffer, connect='finite')
+                        self.plot_widgets[lead_name].setXRange(0.0, seconds_to_show, padding=0)
 
                         # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
                         if lead_name == 'aVR':
@@ -1071,6 +1100,8 @@ class HyperkalemiaTestWindow(QWidget):
         
         except Exception as e:
             pass
+        finally:
+            self._plot_update_in_progress = False
 
     def update_metrics(self):
         """Calculate and update ECG metrics using same stable methods as 12-lead dashboard"""

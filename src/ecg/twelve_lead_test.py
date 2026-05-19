@@ -6,6 +6,7 @@ import platform
 import numpy as np
 import logging
 import traceback
+from collections import deque
 from utils.crash_logger import get_crash_logger
 from PyQt5.QtWidgets import QMessageBox
 # Serial communication now handled by ecg.serial module
@@ -746,6 +747,11 @@ class ECGTestPage(QWidget):
         # Use GitHub version data structure: list of numpy arrays for all 12 leads
         # Initialize data buffers with memory management
         self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+        # Keep a longer session history for PDF generation so freeze/resume does
+        # not leave the report with only the latest short tail of data.
+        self._report_buffers = [deque(maxlen=30000) for _ in range(12)]
+        # Circular replay buffers used for freeze/replay playback.
+        self._replay_buffers = [deque(maxlen=8000) for _ in range(12)]
         # Multi-lead snapshot for ExpandedLeadView (Phase 4 fusion).
         # Updated continuously from the same 12-lead packet stream.
         self.latest_multilead_snapshot = {}
@@ -753,7 +759,7 @@ class ECGTestPage(QWidget):
         # Filter Pipeline Configuration (from standalone_ecg_plot.py)
         self.SAMPLE_RATE = 500
         self.SMOOTH_SIGMA = 0.8
-        self.INTERP_FACTOR = 4
+        self.INTERP_FACTOR = 2
         # 50 Hz NOTCH FILTER
         self.b_notch, self.a_notch = iirnotch(w0=50.0, Q=30.0, fs=self.SAMPLE_RATE)
 
@@ -765,6 +771,14 @@ class ECGTestPage(QWidget):
         self.max_buffer_size = 10000  # Maximum buffer size to prevent memory issues
         self.memory_check_interval = 2000  # Check memory every 2000 updates (reduced frequency for better performance)
         self.update_count = 0
+        self._plot_update_in_progress = False
+        self._plot_render_stride = 2
+        self._display_mode = "live"
+        self._grid_frozen = False
+        self._replay_cursor = 0
+        self._replay_window_sec = 10.0
+        self._replay_snapshot = None
+        self._replay_render_snapshot = None
         # Hold last displayed HR to avoid unnecessary flicker
         self._last_hr_display = None
         # HR smoothing/lock removed; use original calculation
@@ -790,7 +804,11 @@ class ECGTestPage(QWidget):
 
 
         self.timer = QTimer()
+        self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.timeout.connect(self.update_plots)
+        self._replay_timer = QTimer(self)
+        self._replay_timer.setTimerType(Qt.PreciseTimer)
+        self._replay_timer.timeout.connect(self._update_replay_plots)
         self.serial_reader = None
         self.stacked_widget = stacked_widget
         self.sampler = SamplingRateCalculator()
@@ -1202,6 +1220,8 @@ class ECGTestPage(QWidget):
             plot_widget = pg.PlotWidget()
             plot_widget.setBackground('w')
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            plot_widget.setClipToView(True)
+            plot_widget.setDownsampling(auto=True, mode='peak')
             # Hide Y-axis labels for cleaner display
             plot_widget.getAxis('left').setTicks([])
             plot_widget.getAxis('left').setLabel('')
@@ -1270,7 +1290,7 @@ class ECGTestPage(QWidget):
         self.back_btn = QPushButton("Return to Dashboard")
 
         # Make all buttons responsive and compact
-        for btn in [self.start_btn, self.stop_btn, self.generate_report_btn, 
+        for btn in [self.start_btn, self.stop_btn, self.generate_report_btn,
                    self.twelve_leads_btn, self.six_leads_btn, self.back_btn]:
             btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             btn.setMinimumHeight(32)
@@ -1329,9 +1349,9 @@ class ECGTestPage(QWidget):
         main_vbox.addLayout(btn_layout)
 
         self.start_btn.clicked.connect(self.start_acquisition)
-        self.stop_btn.clicked.connect(self.stop_acquisition)
+        self.stop_btn.clicked.connect(self.toggle_freeze_replay)
 
-        # Initial state: Disable Stop and Generate Report buttons
+        # Initial state: Disable Freeze and Generate Report buttons
         self.stop_btn.setEnabled(False)
         self.generate_report_btn.setEnabled(False)
         
@@ -1352,7 +1372,7 @@ class ECGTestPage(QWidget):
 
 
         self.start_btn.setToolTip("Start ECG recording from the selected port")
-        self.stop_btn.setToolTip("Freeze current ECG recording")
+        self.stop_btn.setToolTip("Freeze the live ECG screen, then click Resume to play the stored 12-lead history")
         # self.ports_btn.setToolTip("Configure COM port and baud rate settings") # Commented out
         self.generate_report_btn.setToolTip("Generate ECG PDF report and add to Recent Reports")
         # self.export_csv_btn.setToolTip("Export ECG data as CSV file")  # Commented out
@@ -1443,15 +1463,35 @@ class ECGTestPage(QWidget):
             if not is_acquisition_running and hasattr(self, 'serial_reader') and self.serial_reader is not None:
                 is_acquisition_running = bool(getattr(self.serial_reader, 'running', False))
 
-            return is_demo_mode or is_acquisition_running
+            frozen_snapshot = getattr(self, "_frozen_report_snapshot", None)
+            has_frozen_report = False
+            if frozen_snapshot:
+                try:
+                    has_frozen_report = any(
+                        np.asarray(arr).size > 0 for arr in frozen_snapshot
+                    )
+                except Exception:
+                    has_frozen_report = True
+
+            return is_demo_mode or is_acquisition_running or has_frozen_report
         except Exception:
             return False
 
-    def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
-        """Compatibility shim: cooldown removed; keep Generate Report immediately available."""
+    def _update_generate_report_button_state(self):
+        """Keep the Generate Report button aligned with the current capture state."""
         if not hasattr(self, "generate_report_btn"):
             return
 
+        can_enable = self._can_generate_report()
+        self.generate_report_btn.setEnabled(bool(can_enable))
+        if can_enable and hasattr(self, "green_button_style") and self.green_button_style:
+            self.generate_report_btn.setStyleSheet(self.green_button_style)
+        elif not can_enable:
+            self.generate_report_btn.setStyleSheet("background: #cccccc; color: #666666; border-radius: 10px; padding: 8px 0; font-size: 10px; font-weight: bold;")
+        self._refresh_report_btn_label()
+
+    def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
+        """Compatibility shim: cooldown removed; keep Generate Report immediately available."""
         try:
             for timer in self.countdown_timers:
                 if hasattr(timer, "stop") and timer.isActive():
@@ -1459,14 +1499,315 @@ class ECGTestPage(QWidget):
             self.countdown_timers.clear()
         except Exception:
             pass
-
-        can_enable = self._can_generate_report()
-        self.generate_report_btn.setEnabled(bool(can_enable))
-        if hasattr(self, "green_button_style") and self.green_button_style:
-            self.generate_report_btn.setStyleSheet(self.green_button_style)
-        self._refresh_report_btn_label()
+        self._update_generate_report_button_state()
         if reason:
             print(f" Generate Report cooldown skipped ({reason})")
+
+    def _capture_report_snapshot(self, window_sec: float = 7.0):
+        """Store the most recent window of waveform data for report generation."""
+        snapshot = []
+        fs = 500.0
+        try:
+            if hasattr(self, 'sampler') and getattr(self.sampler, 'sampling_rate', None):
+                fs = float(self.sampler.sampling_rate)
+        except Exception:
+            fs = 500.0
+        if fs < 100.0 or fs > 2000.0:
+            fs = 500.0
+
+        sample_count = max(2, int(round(max(1.0, float(window_sec)) * fs)))
+        for idx in range(12):
+            arr = np.array([], dtype=float)
+            try:
+                if hasattr(self, "_report_buffers") and idx < len(self._report_buffers) and len(self._report_buffers[idx]) > 0:
+                    arr = np.asarray(list(self._report_buffers[idx]), dtype=float)
+                elif idx < len(self.data):
+                    arr = np.asarray(self.data[idx], dtype=float)
+            except Exception:
+                arr = np.array([], dtype=float)
+
+            if arr.size > sample_count:
+                arr = arr[-sample_count:]
+            if arr.size > 0:
+                nz = np.flatnonzero(np.abs(arr) > 1e-6)
+                if nz.size > 0:
+                    arr = arr[nz[0]:]
+            snapshot.append(np.asarray(arr, dtype=float))
+
+        self._frozen_report_snapshot = snapshot
+        return snapshot
+
+    def _get_replay_view_seconds(self) -> float:
+        try:
+            wave_speed = float(self.settings_manager.get_wave_speed())
+        except Exception:
+            wave_speed = 25.0
+        wave_speed = max(1e-6, wave_speed)
+        return 3.0 * (25.0 / wave_speed)
+
+    def _get_sampling_rate_for_display(self) -> float:
+        fs = 500.0
+        try:
+            if hasattr(self, "sampler") and getattr(self.sampler, "sampling_rate", None):
+                fs = float(self.sampler.sampling_rate)
+        except Exception:
+            fs = 500.0
+        if fs < 100.0 or fs > 2000.0:
+            fs = 500.0
+        return fs
+
+    def _style_freeze_button(self, text: str, enabled: bool = True):
+        btn = getattr(self, "stop_btn", None)
+        if not btn:
+            return
+        btn.setText(text)
+        btn.setEnabled(enabled)
+        if enabled:
+            btn.setStyleSheet(getattr(self, "green_button_style", btn.styleSheet()))
+        else:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #e0e0e0;
+                    color: #a0a0a0;
+                    border: 2px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                font-weight: bold;
+                text-align: center;
+            }
+        """)
+
+    def _apply_snapshot_display_pipeline(self, segment, lead_index: int, sampling_rate: float):
+        """
+        Apply the same display-only transforms used by the live 12-lead grid.
+
+        This keeps replay/frozen views visually aligned with Start, including
+        baseline anchoring, optional display filters, gain, smoothing, and
+        interpolation.
+        """
+        try:
+            data = np.asarray(segment, dtype=float)
+        except Exception:
+            data = np.array([], dtype=float)
+
+        if data.size < 2:
+            return np.asarray(data, dtype=float)
+
+        if not hasattr(self, "_baseline_anchors"):
+            self._baseline_anchors = [0.0] * 12
+            self._baseline_alpha_slow = 0.0005
+
+        try:
+            from ecg.ecg_filters import apply_ac_filter, apply_baseline_wander_median_mean, apply_dft_filter, apply_emg_filter
+
+            if hasattr(self, "_last_display_dft_applied") and lead_index < len(self._last_display_dft_applied):
+                self._last_display_dft_applied[lead_index] = False
+
+            dft_setting = None
+            if hasattr(self, "settings_manager"):
+                dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+
+            if dft_setting and dft_setting not in ("off", ""):
+                if str(dft_setting).strip() == "0.5":
+                    data = apply_baseline_wander_median_mean(data, float(sampling_rate))
+                else:
+                    data = apply_dft_filter(data, float(sampling_rate), dft_setting)
+                if hasattr(self, "_last_display_dft_applied") and lead_index < len(self._last_display_dft_applied):
+                    self._last_display_dft_applied[lead_index] = True
+
+            emg_setting = None
+            if hasattr(self, "settings_manager"):
+                emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
+            if emg_setting and emg_setting.lower() != "off" and data.size >= 10:
+                data = apply_emg_filter(data, float(sampling_rate), emg_setting)
+
+            ac_setting = None
+            if hasattr(self, "settings_manager"):
+                ac_setting = str(self.settings_manager.get_setting("filter_ac", "50")).strip()
+            if ac_setting in ("50", "60") and data.size > 30:
+                data = apply_ac_filter(data, float(sampling_rate), ac_setting)
+        except Exception:
+            # Keep replay stable even if one of the optional filters is unavailable.
+            pass
+
+        try:
+            baseline_estimate = self._extract_low_frequency_baseline(data, sampling_rate)
+            current_alpha = getattr(self, "_baseline_alpha_slow", 0.0005)
+            if self._baseline_anchors[lead_index] == 0.0:
+                self._baseline_anchors[lead_index] = baseline_estimate
+            self._baseline_anchors[lead_index] = (
+                (1 - current_alpha) * self._baseline_anchors[lead_index]
+                + current_alpha * baseline_estimate
+            )
+            data = data - self._baseline_anchors[lead_index]
+            current_dc = np.nanmean(data) if data.size > 0 else 0.0
+            data = data - current_dc
+        except Exception:
+            pass
+
+        try:
+            gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
+        except Exception:
+            gain_factor = 1.0
+
+        data = np.nan_to_num(data * gain_factor, nan=0.0, posinf=0.0, neginf=0.0)
+
+        try:
+            if data.size > 5:
+                data = gaussian_filter1d(data, sigma=self.SMOOTH_SIGMA)
+        except Exception:
+            pass
+
+        try:
+            data = self.interpolate(data, self.INTERP_FACTOR)
+        except Exception:
+            pass
+
+        try:
+            edge_trim = int(0.5 * sampling_rate)
+            if data.size > 2 * edge_trim:
+                data = data[edge_trim:-edge_trim]
+        except Exception:
+            pass
+
+        return np.nan_to_num(np.asarray(data, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _render_snapshot_window(self, snapshot, end_index=None, window_sec: float = 3.0, assume_processed: bool = False):
+        if not snapshot:
+            return
+
+        fs = self._get_sampling_rate_for_display()
+        visible_seconds = max(0.5, float(window_sec))
+        visible_samples = max(2, int(round(visible_seconds * fs)))
+
+        for i in range(min(len(snapshot), len(self.data_lines))):
+            try:
+                arr = np.asarray(snapshot[i], dtype=float)
+                if arr.size < 2:
+                    continue
+
+                current_end = arr.size if end_index is None else min(arr.size, max(1, int(end_index)))
+                start = max(0, current_end - visible_samples)
+                segment = arr[start:current_end]
+                if segment.size < 2:
+                    continue
+
+                processed = segment if assume_processed else self._apply_snapshot_display_pipeline(segment, i, fs)
+
+                # Keep the live-like flow: show the actual buffered segment without
+                # left-padding, so the trace spans the full box width naturally.
+                if processed.size > visible_samples:
+                    processed = processed[-visible_samples:]
+
+                x_axis = np.linspace(0.0, visible_seconds, len(processed))
+                self.data_lines[i].setData(x_axis, processed, connect='finite')
+
+                if i < len(self.plot_widgets):
+                    y_min, y_max = -2048, 2048
+                    self.plot_widgets[i].setYRange(y_min, y_max, padding=0)
+                    try:
+                        vb = self.plot_widgets[i].getViewBox()
+                        if vb is not None:
+                            vb.setLimits(xMin=0.0, xMax=max(visible_seconds, 0.5), yMin=y_min, yMax=y_max)
+                            vb.setRange(xRange=(0.0, visible_seconds), yRange=(y_min, y_max), padding=0)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f" Error rendering snapshot window for lead {i}: {e}")
+
+    def _freeze_current_view(self):
+        """Pause the live display without stopping acquisition."""
+        try:
+            if hasattr(self, "_replay_timer") and self._replay_timer.isActive():
+                self._replay_timer.stop()
+        except Exception:
+            pass
+
+        try:
+            self._display_mode = "frozen"
+            self._grid_frozen = True
+            self._replay_cursor = 0
+            self._style_freeze_button("Resume", enabled=True)
+            if hasattr(self, "stop_btn") and self.stop_btn:
+                self.stop_btn.setToolTip("Resume live ECG plotting from the current hardware buffer")
+            self._frozen_report_snapshot = self._capture_report_snapshot(window_sec=7.0)
+            self._replay_snapshot = self._capture_replay_snapshot()
+            self._replay_render_snapshot = self._build_replay_render_snapshot(self._replay_snapshot)
+            # Keep the exact live frame on screen so Freeze does not change
+            # the window width or redraw the trace in a stretched state.
+            self._update_generate_report_button_state()
+        except Exception as e:
+            print(f" Freeze render error: {e}")
+
+    def _build_replay_render_snapshot(self, snapshot):
+        """
+        Precompute replay-ready display arrays once, instead of re-running the
+        expensive filter chain on every timer tick.
+        """
+        rendered = []
+        fs = self._get_sampling_rate_for_display()
+        for i in range(12):
+            try:
+                arr = np.asarray(snapshot[i], dtype=float) if i < len(snapshot) else np.array([], dtype=float)
+                if arr.size < 2:
+                    rendered.append(arr.copy())
+                    continue
+                rendered.append(self._apply_snapshot_display_pipeline(arr, i, fs))
+            except Exception:
+                rendered.append(np.asarray(snapshot[i], dtype=float).copy() if i < len(snapshot) else np.array([], dtype=float))
+        return rendered
+
+    def _capture_replay_snapshot(self):
+        snapshot = []
+        for idx in range(12):
+            try:
+                if hasattr(self, "_replay_buffers") and idx < len(self._replay_buffers) and len(self._replay_buffers[idx]) > 0:
+                    arr = np.asarray(list(self._replay_buffers[idx]), dtype=float)
+                else:
+                    arr = np.asarray(self.data[idx], dtype=float) if idx < len(self.data) else np.array([])
+                # Keep the last 8000 samples per lead for replay.
+                if arr.size > 8000:
+                    arr = arr[-8000:]
+            except Exception:
+                arr = np.array([], dtype=float)
+            snapshot.append(arr.copy())
+        return snapshot
+
+    def _resume_live_view(self):
+        """Return the 12-lead screen to live plotting from the current hardware buffer."""
+        try:
+            if hasattr(self, "_replay_timer") and self._replay_timer.isActive():
+                self._replay_timer.stop()
+        except Exception:
+            pass
+
+        self._display_mode = "live"
+        self._grid_frozen = False
+        self._replay_cursor = 0
+        self._style_freeze_button("Freeze", enabled=True)
+        if hasattr(self, "stop_btn") and self.stop_btn:
+            self.stop_btn.setToolTip("Freeze the live ECG screen, then click Resume to continue live plotting")
+
+        # Force an immediate redraw from the current live buffer so Resume feels instant.
+        try:
+            self.update_plots()
+        except Exception:
+            pass
+
+        self._update_generate_report_button_state()
+
+    def toggle_freeze_replay(self):
+        """Freeze live ECG or resume live plotting from the current hardware buffer."""
+        if getattr(self, "_display_mode", "live") == "frozen":
+            self._resume_live_view()
+            return
+
+        self._freeze_current_view()
+
+    def _update_replay_plots(self):
+        # Replay mode has been replaced with Resume-to-live behavior.
+        return
 
     def on_demo_toggle_changed(self, checked):
         self.update_demo_toggle_label()
@@ -5866,6 +6207,19 @@ class ECGTestPage(QWidget):
             # Set state to running
             self.dashboard_instance.update_test_state("12_lead_test", True)
 
+        # Reset any replay/freeze state before starting live acquisition again.
+        try:
+            if hasattr(self, "_replay_timer") and self._replay_timer.isActive():
+                self._replay_timer.stop()
+        except Exception:
+            pass
+        self._display_mode = "live"
+        self._grid_frozen = False
+        self._replay_cursor = 0
+        self._frozen_report_snapshot = None
+        self._replay_snapshot = None
+        self._replay_render_snapshot = None
+
         try:
             if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
                 print(" Switching from Demo to Real: turning off demo...")
@@ -5909,6 +6263,7 @@ class ECGTestPage(QWidget):
         self._lead_off_latch_on_count = 0
         self._lead_off_latch_off_count = 0
         self._set_lead_status_idle()
+        self._frozen_report_snapshot = None
 
         # --- START HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -5946,9 +6301,14 @@ class ECGTestPage(QWidget):
             # Check if this is a fresh start (no existing serial reader) or a restart
             # Only reset metrics to zero on fresh start, not on restart after stop
             is_fresh_start = (self.serial_reader is None)
-            
-            # Only reset visible metrics to zero on fresh start to avoid losing machine serial data values on restart
-            if is_fresh_start:
+            if is_fresh_start and hasattr(self, "_report_buffers"):
+                for buf in self._report_buffers:
+                    buf.clear()
+                if hasattr(self, "_replay_buffers"):
+                    for buf in self._replay_buffers:
+                        buf.clear()
+                
+                # Only reset visible metrics to zero on fresh start to avoid losing machine serial data values on restart
                 try:
                     if hasattr(self, 'metric_labels'):
                         if 'heart_rate' in self.metric_labels: self.metric_labels['heart_rate'].setText("00")
@@ -6072,7 +6432,7 @@ class ECGTestPage(QWidget):
         print(f" Serial connection established successfully on {port_to_use}!")
 
         # ── Start timers (was right after serial_reader.start() in original code) ──
-        timer_interval = 20  # 50 FPS
+        timer_interval = 30  # ~33 FPS keeps redraws steadier on slower systems
         self.timer.start(timer_interval)
         QTimer.singleShot(10, self.update_plots)   # instant first frame
 
@@ -6197,6 +6557,7 @@ class ECGTestPage(QWidget):
         """
         self.stop_btn.setEnabled(True)
         self.stop_btn.setStyleSheet(green_style)
+        self._style_freeze_button("Freeze", enabled=True)
 
         # Enable Generate Report button
         try:
@@ -6283,17 +6644,22 @@ class ECGTestPage(QWidget):
             if hasattr(timer, "stop") and timer.isActive():
                 timer.stop()
         self.countdown_timers.clear()
-        # Reset generate report button to initial state
-        if hasattr(self, "generate_report_btn"):
-            self.generate_report_btn.setEnabled(False)
-            self.generate_report_btn.setText("Generate Report")
-            # Apply disabled style
-            self.generate_report_btn.setStyleSheet("background: #cccccc; color: #666666; border-radius: 10px; padding: 8px 0; font-size: 10px; font-weight: bold;")
         if hasattr(self, '_12to1_timer'):
             self._12to1_timer.stop()
+        try:
+            if hasattr(self, "_replay_timer") and self._replay_timer.isActive():
+                self._replay_timer.stop()
+        except Exception:
+            pass
+        self._display_mode = "live"
+        self._grid_frozen = False
+        self._replay_cursor = 0
+        self._replay_render_snapshot = None
 
         # Update recording button state now that acquisition has stopped
         self.update_recording_button_state()
+        self._capture_report_snapshot(window_sec=7.0)
+        self._update_generate_report_button_state()
 
         # Pause elapsed time tracking (keep start_time for resume)
         self.elapsed_timer.stop()
@@ -6368,21 +6734,7 @@ class ECGTestPage(QWidget):
                 timer.stop()
         self.countdown_timers.clear()
         
-        # Reset generate report button to disabled state
-        self.generate_report_btn.setEnabled(False)
-        self.generate_report_btn.setStyleSheet("""
-            QPushButton {
-                background: #e0e0e0;
-                color: #a0a0a0;
-                border: 2px solid #cccccc;
-                border-radius: 6px;
-                padding: 4px 8px;
-                font-size: 10px;
-                font-weight: bold;
-                text-align: center;
-            }
-        """)
-        self.generate_report_btn.setText("Generate Report")
+        self._update_generate_report_button_state()
 
         # Disable Stop button
         self.stop_btn.setEnabled(False)
@@ -6680,15 +7032,16 @@ class ECGTestPage(QWidget):
         self._start_generate_report_cooldown(seconds=10, reason="Report Click")
         self._report_generating = True
 
-        # Snapshot ECG arrays (< 5ms on main thread)
-        snap_raw = []
+        # Snapshot ECG arrays (< 5ms on main thread).
+        # If we are frozen, reuse the frozen snapshot; otherwise always capture
+        # a fresh live window so the PDF reflects the current waveform + metrics.
         try:
-            for idx in range(12):
-                try:
-                    arr = np.array(self.data[idx], dtype=float, copy=True)                           if idx < len(self.data) else np.array([])
-                    snap_raw.append(arr)
-                except Exception:
-                    snap_raw.append(np.array([]))
+            display_mode = getattr(self, "_display_mode", "live")
+            frozen_snapshot = getattr(self, "_frozen_report_snapshot", None)
+            if display_mode == "frozen" and frozen_snapshot and any(np.asarray(arr).size > 0 for arr in frozen_snapshot):
+                snap_raw = [np.asarray(arr, dtype=float).copy() for arr in frozen_snapshot]
+            else:
+                snap_raw = self._capture_report_snapshot(window_sec=7.0)
         finally:
             self._report_generating = False
 
@@ -7082,6 +7435,15 @@ class ECGTestPage(QWidget):
     # ------------------------------------ 12 leads overlay --------------------------------------------
 
     def twelve_leads_overlay(self):
+        # Send stop command to device when opening 12:1 ECG overlay
+        try:
+            if self.serial_reader and hasattr(self.serial_reader, 'ser') and \
+                    self.serial_reader.ser and self.serial_reader.ser.is_open:
+                self.serial_reader.ser.write(b'0\r\n')
+                print(" Stop command sent to device (12:1 ECG overlay opened)")
+        except Exception as _stop_err:
+            print(f" Could not send stop command to device: {_stop_err}")
+
         if getattr(self, "_overlay_active", False):
             # If we're already in 12:1, treat this as a toggle (close overlay)
             if getattr(self, "_current_overlay_layout", None) == "12x1":
@@ -7397,7 +7759,8 @@ class ECGTestPage(QWidget):
         return max(1, samples_to_show)
 
     def _update_overlay_plots(self):
-        
+        if getattr(self, "_grid_frozen", False):
+            return
         if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
             return
         
@@ -8247,6 +8610,8 @@ class ECGTestPage(QWidget):
         self._overlay_timer.start(100)
 
     def _update_two_column_plots(self):
+        if getattr(self, "_grid_frozen", False):
+            return
         if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
             return
         
@@ -8445,14 +8810,18 @@ class ECGTestPage(QWidget):
 
     def interpolate(self, signal, factor):
         try:
-            x = np.arange(len(signal))
-            f = interp1d(x, signal, kind='cubic')
-            xi = np.linspace(0, len(signal) - 1, len(signal) * factor)
-            return f(xi)
+            signal = np.asarray(signal, dtype=float)
+            if signal.size < 3 or factor <= 1:
+                return signal
+            x = np.arange(signal.size, dtype=float)
+            xi = np.linspace(0.0, float(signal.size - 1), int(signal.size * factor), dtype=float)
+            # Linear interpolation is cheaper than cubic and avoids overshoot during fast updates.
+            return np.interp(xi, x, signal)
         except Exception:
             # Fallback to linear
-            x = np.arange(len(signal))
-            xi = np.linspace(0, len(signal) - 1, len(signal) * factor)
+            signal = np.asarray(signal, dtype=float)
+            x = np.arange(len(signal), dtype=float)
+            xi = np.linspace(0.0, float(len(signal) - 1), int(len(signal) * max(1, factor)), dtype=float)
             return np.interp(xi, x, signal)
 
     def set_display_mode(self, mode):
@@ -8816,6 +9185,9 @@ class ECGTestPage(QWidget):
 
     def update_plots(self):
         """Update all ECG plots with current data using PyQtGraph (GitHub version)"""
+        if getattr(self, '_plot_update_in_progress', False):
+            return
+        self._plot_update_in_progress = True
         try:
             # ── FIX: Skip rendering during report snapshot — prevents 12-box wave deform ──
             if getattr(self, '_report_generating', False):
@@ -8826,9 +9198,13 @@ class ECGTestPage(QWidget):
             self.update_count += 1
             if self.update_count % self.memory_check_interval == 0:
                 self._manage_memory()
+            render_stride = max(1, int(getattr(self, '_plot_render_stride', 2)))
+            render_now = (self.update_count % render_stride) == 0
 
             # DEMO branch
             if not self.serial_reader or not self.serial_reader.running:
+                if not render_now:
+                    return
                 try:
                     wave_speed = float(self.settings_manager.get_wave_speed())
                 except Exception:
@@ -9164,6 +9540,10 @@ class ECGTestPage(QWidget):
                                     self.data[i] = np.roll(self.data[i], -1)
                                     # Store raw data (filtering happens during display)
                                     self.data[i][-1] = write_value
+                                    if hasattr(self, "_report_buffers") and i < len(self._report_buffers):
+                                        self._report_buffers[i].append(write_value)
+                                    if hasattr(self, "_replay_buffers") and i < len(self._replay_buffers):
+                                        self._replay_buffers[i].append(write_value)
                             except Exception as e:
                                 print(f" Error updating data buffer {i} ({lead_name}): {e}")
                                 continue
@@ -9248,6 +9628,10 @@ class ECGTestPage(QWidget):
                                         self.data[i] = np.roll(self.data[i], -1)
                                         # Store raw data (filtering happens during display)
                                         self.data[i][-1] = all_12_leads[i]
+                                        if hasattr(self, "_report_buffers") and i < len(self._report_buffers):
+                                            self._report_buffers[i].append(float(all_12_leads[i]))
+                                        if hasattr(self, "_replay_buffers") and i < len(self._replay_buffers):
+                                            self._replay_buffers[i].append(float(all_12_leads[i]))
                                 except Exception as e:
                                     print(f" Error updating data buffer {i}: {e}")
                                     continue
@@ -9270,6 +9654,10 @@ class ECGTestPage(QWidget):
             
             # INSTANT DISPLAY: Update plots immediately if we processed any packets OR if we have any data
             # This ensures waves appear as soon as the first packet arrives
+            if not render_now:
+                return
+            if getattr(self, "_grid_frozen", False):
+                return
             has_any_data = any(len(self.data[i]) > 0 and np.any(self.data[i] != 0) for i in range(min(len(self.data), len(self.leads))))
             if packets_processed > 0 or has_any_data:
                 # Detect signal source from a representative lead for adaptive scaling
@@ -9596,6 +9984,8 @@ class ECGTestPage(QWidget):
                         self.data[i] = np.zeros(self.buffer_size if hasattr(self, 'buffer_size') else 1000)
             except Exception as recovery_error:
                 self.crash_logger.log_error("Failed to recover from update_plots error", recovery_error, "Data reset")
+        finally:
+            self._plot_update_in_progress = False
     
     def _manage_memory(self):
         """Manage memory usage to prevent crashes from large data buffers"""
