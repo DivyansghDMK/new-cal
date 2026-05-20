@@ -1032,7 +1032,7 @@ class ECGAnalysisWindow(QDialog):
 
             # ── Footer signature block ────────────────────────────────────────
             ft = PAGE_H - MB - FOOTER_H
-            ax.text(ML, ft + 9,  "Reference Report Confirmed by:",
+            ax.text(ML, ft + 9,  "Reference Report Confirmed by",
                     fontsize=7, va='top', color='black', fontweight='bold')
             ax.text(ML, ft + 14, "Doctor Name: ________________________",
                     fontsize=7, va='top', color='black')

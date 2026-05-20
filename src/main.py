@@ -763,6 +763,8 @@ class LoginRegisterDialog(QDialog):
         self.reg_name.setPlaceholderText("Full Name")
         self.reg_doctor = QLineEdit()
         self.reg_doctor.setPlaceholderText("Doctor Name")
+        self.reg_org_name = QLineEdit()
+        self.reg_org_name.setPlaceholderText("Organisation Name")
         self.reg_org_address = QLineEdit()
         self.reg_org_address.setPlaceholderText("Organisation Address")
         self.reg_phone = QLineEdit()
@@ -779,11 +781,29 @@ class LoginRegisterDialog(QDialog):
         register_btn.setObjectName("SignUpBtn")
         register_btn.clicked.connect(self.handle_register)
         
-        for w in [self.reg_serial, self.reg_name, self.reg_doctor, self.reg_org_address, self.reg_phone, self.reg_password, self.reg_confirm]:
+        for w in [
+            self.reg_serial,
+            self.reg_name,
+            self.reg_doctor,
+            self.reg_org_name,
+            self.reg_org_address,
+            self.reg_phone,
+            self.reg_password,
+            self.reg_confirm,
+        ]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             w.setMinimumHeight(44)
         
-        for w in [self.reg_serial, self.reg_name, self.reg_doctor, self.reg_org_address, self.reg_phone, self.reg_password, self.reg_confirm]:
+        for w in [
+            self.reg_serial,
+            self.reg_name,
+            self.reg_doctor,
+            self.reg_org_name,
+            self.reg_org_address,
+            self.reg_phone,
+            self.reg_password,
+            self.reg_confirm,
+        ]:
             w.setStyleSheet(register_input_style)
         
         register_btn.setStyleSheet("""
@@ -841,6 +861,7 @@ class LoginRegisterDialog(QDialog):
         layout.addWidget(self.reg_serial)
         layout.addWidget(self.reg_name)
         layout.addWidget(self.reg_doctor)
+        layout.addWidget(self.reg_org_name)
         layout.addWidget(self.reg_org_address)
         layout.addWidget(self.reg_phone)
         layout.addLayout(password_row)
@@ -1270,11 +1291,12 @@ class LoginRegisterDialog(QDialog):
         serial_id = self.reg_serial.text()
         name = self.reg_name.text()
         doctor = self.reg_doctor.text().strip()
+        org_name = self.reg_org_name.text().strip()
         org_address = self.reg_org_address.text().strip()
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        if not all([serial_id, name, doctor, org_address, phone, password, confirm]):
+        if not all([serial_id, name, doctor, org_name, org_address, phone, password, confirm]):
             QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
             return
         # Enforce numeric phone number with length up to 10 digits
@@ -1292,7 +1314,7 @@ class LoginRegisterDialog(QDialog):
             phone=phone,
             serial_id=serial_id,
             email="",
-            extra={"doctor": doctor, "org_address": org_address}
+            extra={"doctor": doctor, "org_name": org_name, "org_address": org_address}
         )
         if not ok:
             QMessageBox.warning(self, "Error", msg)
@@ -1308,6 +1330,7 @@ class LoginRegisterDialog(QDialog):
                 'username': phone,
                 'full_name': name,
                 'doctor': doctor,
+                'org_name': org_name,
                 'org_address': org_address,
                 'phone': phone,
                 'serial_number': serial_id,

@@ -2503,7 +2503,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     doctor_name_y = -12
     doctor_sign_y = -29
 
-    reference_label = String(-30, reference_y, "Reference Report Confirmed by:",
+    reference_label = String(-30, reference_y, "Reference Report Confirmed by",
                              fontSize=10, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
     master_drawing.add(reference_label)
 
@@ -4155,7 +4155,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     doctor_name_y = 70
     doctor_sign_y = 56
 
-    reference_label = String(13, reference_y, "Reference Report Confirmed by:",
+    reference_label = String(13, reference_y, "Reference Report Confirmed by",
                               fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(reference_label)
 

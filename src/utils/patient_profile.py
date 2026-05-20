@@ -9,6 +9,7 @@ SRC_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = SRC_ROOT.parent
 USERS_FILE = data_file("users.json")
 ALL_PATIENTS_FILE = PROJECT_ROOT / "all_patients.json"
+FALLBACK_USERS_FILE = SRC_ROOT / "users.json"
 
 
 def _safe_read_json(path: Path) -> Any:
@@ -17,6 +18,26 @@ def _safe_read_json(path: Path) -> Any:
             return json.load(handle)
     except Exception:
         return None
+
+
+def _load_users_db() -> Dict[str, Any]:
+    """Load users from the runtime users.json and (optionally) src/users.json.
+
+    Some entrypoints run with different CWDs, so `data_file("users.json")` may
+    point to different locations. For reporting, merge both sources so doctor/org
+    details saved during sign up are always discoverable.
+    """
+    merged: Dict[str, Any] = {}
+
+    fallback = _safe_read_json(FALLBACK_USERS_FILE)
+    if isinstance(fallback, dict):
+        merged.update(fallback)
+
+    primary = _safe_read_json(USERS_FILE)
+    if isinstance(primary, dict):
+        merged.update(primary)
+
+    return merged
 
 
 def _is_present(value: Any) -> bool:
@@ -39,31 +60,45 @@ def _split_name(full_name: str) -> Dict[str, str]:
 
 
 def _find_user_record(username: str = "", user_details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if isinstance(user_details, dict) and user_details:
-        return dict(user_details)
-
-    users = _safe_read_json(USERS_FILE)
-    if not isinstance(users, dict):
-        return {}
+    provided = dict(user_details) if isinstance(user_details, dict) and user_details else {}
+    users = _load_users_db()
+    if not isinstance(users, dict) or not users:
+        return provided
 
     key = str(username or "").strip()
     if key and isinstance(users.get(key), dict):
-        return dict(users[key])
+        record = dict(users[key])
+        for k, v in provided.items():
+            if k not in record or not _is_present(record.get(k)):
+                record[k] = v
+        return record
 
     key_lower = key.lower()
     for uname, record in users.items():
         if not isinstance(record, dict):
             continue
         if key and uname == key:
-            return dict(record)
+            merged = dict(record)
+            for k, v in provided.items():
+                if k not in merged or not _is_present(merged.get(k)):
+                    merged[k] = v
+            return merged
         full_name = str(record.get("full_name", "")).strip()
         phone = str(record.get("phone", "")).strip()
         if key and (full_name == key or phone == key):
-            return dict(record)
+            merged = dict(record)
+            for k, v in provided.items():
+                if k not in merged or not _is_present(merged.get(k)):
+                    merged[k] = v
+            return merged
         if key_lower and (full_name.lower() == key_lower or phone.lower() == key_lower):
-            return dict(record)
+            merged = dict(record)
+            for k, v in provided.items():
+                if k not in merged or not _is_present(merged.get(k)):
+                    merged[k] = v
+            return merged
 
-    return {}
+    return provided
 
 
 def _is_valid_name(name: str) -> bool:
@@ -73,33 +108,74 @@ def _is_valid_name(name: str) -> bool:
     return bool(name) and any(c.isalpha() for c in name)
 
 
+def _format_indian_phone(phone_value: Any) -> str:
+    """Return phone number as +91-XXXXXXXXXX for report display."""
+    if phone_value is None:
+        return ""
+
+    text = str(phone_value).strip()
+    if not text:
+        return ""
+
+    digits_only = "".join(ch for ch in text if ch.isdigit())
+    if digits_only.startswith("91") and len(digits_only) > 10:
+        digits_only = digits_only[2:]
+    if len(digits_only) > 10:
+        digits_only = digits_only[-10:]
+    if not digits_only:
+        return text
+    return f"+91-{digits_only}"
+
+
+def org_from_user_profile(username: str = "", user_details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return organization/contact fields from the signup user profile.
+
+    This is intentionally limited to org/address/phone metadata so we don't
+    couple patient identity (patient_name) to the login user record.
+    """
+    record = _find_user_record(username=username, user_details=user_details)
+    if not record:
+        return {}
+
+    org_name = str(record.get("org_name", "") or record.get("Org.", "") or record.get("Org. Name", "") or "").strip()
+    org_address = str(record.get("org_address", "") or record.get("Org. Address", "") or "").strip()
+    doctor_name = str(record.get("doctor", "") or record.get("doctor_name", "") or "").strip()
+    phone = str(record.get("doctor_mobile", "") or record.get("phone", "") or "").strip()
+    formatted_phone = _format_indian_phone(phone) if phone else ""
+
+    out: Dict[str, Any] = {"date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    if org_name:
+        out["Org."] = org_name
+        out["Org. Name"] = org_name
+        out["org"] = org_name
+        out["org_name"] = org_name
+    if org_address:
+        out["Org. Address"] = org_address
+        out["org_address"] = org_address
+    if formatted_phone:
+        out["doctor_mobile"] = formatted_phone
+    if doctor_name:
+        out["doctor"] = doctor_name
+    return out
+
+
 def patient_from_user_profile(username: str = "", user_details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     record = _find_user_record(username=username, user_details=user_details)
     if not record:
         return {}
 
-    raw_name = (
-        str(record.get("patient_name", "")).strip()
-        or str(record.get("full_name", "")).strip()
-        or " ".join(
-            part for part in [str(record.get("first_name", "")).strip(), str(record.get("last_name", "")).strip()] if part
-        ).strip()
-    )
-    # Reject purely numeric names (login IDs masquerading as patient names)
-    full_name = raw_name if _is_valid_name(raw_name) else ""
-    name_parts = _split_name(full_name)
+    raw_patient_name = str(record.get("patient_name", "")).strip()
+    if not _is_valid_name(raw_patient_name):
+        return {}
 
+    name_parts = _split_name(raw_patient_name)
     patient = {
         "first_name": name_parts["first_name"],
         "last_name": name_parts["last_name"],
         "patient_name": name_parts["patient_name"],
-        "age": str(record.get("age", "") or "").strip(),
-        "gender": str(record.get("gender", "") or "").strip(),
-        "phone": str(record.get("phone", "") or "").strip(),
-        "serial_id": str(record.get("serial_id", "") or "").strip(),
         "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    return {k: v for k, v in patient.items() if _is_present(v) or k == "date_time"}
+    return patient
 
 
 def get_latest_saved_patient() -> Dict[str, Any]:
@@ -144,16 +220,30 @@ def resolve_patient_profile(
     username: str = "",
     user_details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    user_fallback = org_from_user_profile(username=username, user_details=user_details)
+    user_doctor = ""
+    try:
+        user_doctor = str(user_fallback.get("doctor", "")).strip()
+    except Exception:
+        user_doctor = ""
+
     current = dict(explicit_patient or {})
     if current:
-        return merge_patient_profile(current, patient_from_user_profile(username=username, user_details=user_details))
-
-    user_patient = patient_from_user_profile(username=username, user_details=user_details)
-    if user_patient:
-        return merge_patient_profile(user_patient, {})
+        merged = merge_patient_profile(current, user_fallback)
+        if user_doctor:
+            merged["doctor"] = user_doctor
+        return merged
 
     latest_patient = get_latest_saved_patient()
     if latest_patient:
-        return merge_patient_profile(latest_patient, {})
+        merged = merge_patient_profile(latest_patient, user_fallback)
+        if user_doctor:
+            merged["doctor"] = user_doctor
+        return merged
 
+    if user_fallback:
+        merged = merge_patient_profile(user_fallback, {})
+        if user_doctor:
+            merged["doctor"] = user_doctor
+        return merged
     return {"date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
