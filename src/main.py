@@ -516,7 +516,7 @@ class LoginRegisterDialog(QDialog):
         section_title = QLabel("Sign in to continue")
         section_title.setStyleSheet("color: white; font-size: 30px; font-weight: bold;")
 
-        section_subtitle = QLabel("Use your account password or request an OTP on your phone.")
+        section_subtitle = QLabel("Use your account password to sign in.")
         section_subtitle.setWordWrap(True)
         section_subtitle.setStyleSheet("color: rgba(255,255,255,0.78); font-size: 13px;")
 
@@ -554,111 +554,113 @@ class LoginRegisterDialog(QDialog):
         login_btn.setStyleSheet(primary_button_style)
         login_btn.clicked.connect(self.handle_login)
 
-        phone_btn = QPushButton("Send OTP")
-        phone_btn.setObjectName("SignUpBtn")
-        phone_btn.setMinimumHeight(44)
-        phone_btn.setMinimumWidth(170)
-        phone_btn.setStyleSheet(secondary_button_style)
-        phone_btn.clicked.connect(self.handle_phone_login)
-        self.phone_btn = phone_btn
+        # Phone login (OTP) UI is intentionally disabled.
+        # (Kept commented for future re-enable if needed.)
+        # phone_btn = QPushButton("Send OTP")
+        # phone_btn.setObjectName("SignUpBtn")
+        # phone_btn.setMinimumHeight(44)
+        # phone_btn.setMinimumWidth(170)
+        # phone_btn.setStyleSheet(secondary_button_style)
+        # phone_btn.clicked.connect(self.handle_phone_login)
+        # self.phone_btn = phone_btn
+        #
+        # self.login_phone = QLineEdit()
+        # self.login_phone.setPlaceholderText("Phone number (10 digits)")
+        # self.login_phone.setMinimumHeight(44)
+        # self.login_phone.setMaxLength(10)
+        # self.login_phone.setValidator(QIntValidator(0, 2147483647, self))
+        #
+        # phone_row = QHBoxLayout()
+        # phone_row.setSpacing(10)
+        # phone_row.addWidget(self.login_phone, 3)
+        # phone_row.addWidget(phone_btn, 0)
+        #
+        # self.login_otp = QLineEdit()
+        # self.login_otp.setPlaceholderText("Enter 4-digit OTP")
+        # self.login_otp.setMaxLength(4)
+        # self.login_otp.setMinimumHeight(44)
+        # self.login_otp.setValidator(QIntValidator(0, 9999, self))
+        #
+        # self.verify_otp_btn = QPushButton("Verify OTP")
+        # self.verify_otp_btn.setMinimumHeight(44)
+        # self.verify_otp_btn.setMinimumWidth(132)
+        # self.verify_otp_btn.setEnabled(False)
+        # self.verify_otp_btn.setStyleSheet("""
+        #     QPushButton {
+        #         background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1f704f, stop:1 #2fa66f);
+        #         color: white;
+        #         border-radius: 14px;
+        #         padding: 11px 14px;
+        #         font-size: 14px;
+        #         font-weight: bold;
+        #         border: none;
+        #     }
+        #     QPushButton:hover { background: #2a9b67; }
+        #     QPushButton:pressed { background: #1f7b52; }
+        #     QPushButton:disabled {
+        #         background: rgba(35, 139, 92, 0.30);
+        #         color: rgba(255,255,255,0.65);
+        #     }
+        # """)
+        # self.verify_otp_btn.clicked.connect(self.verify_phone_otp)
+        #
+        # self._otp_cooldown_seconds = 60
+        # self._otp_lockout_seconds = 300
+        # self._otp_resend_available_at = 0.0
+        # self._otp_lockout_until = 0.0
+        # self._otp_failed_attempts = 0
+        # self._otp_timer = QTimer(self)
+        # self._otp_timer.timeout.connect(self._refresh_otp_controls)
+        #
+        # otp_row = QHBoxLayout()
+        # otp_row.setSpacing(10)
+        # otp_row.addWidget(self.login_otp, 3)
+        # otp_row.addWidget(self.verify_otp_btn, 1)
+        #
+        # phone_card = QWidget()
+        # phone_card.setStyleSheet("""
+        #     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        #         stop:0 rgba(255,255,255,0.10),
+        #         stop:1 rgba(255,255,255,0.05));
+        #     border: 1px solid rgba(255,255,255,0.18);
+        #     border-radius: 18px;
+        # """)
+        # phone_card_layout = QVBoxLayout(phone_card)
+        # phone_card_layout.setContentsMargins(14, 12, 14, 12)
+        # phone_card_layout.setSpacing(10)
+        # phone_card_title = QLabel("Phone Login")
+        # phone_card_title.setStyleSheet("""
+        #     color: white;
+        #     font-size: 18px;
+        #     font-weight: bold;
+        #     padding-bottom: 4px;
+        #     border-bottom: 1px solid rgba(255,255,255,0.12);
+        # """)
+        # phone_card_desc = QLabel("Enter your mobile number, request an OTP, then verify it to sign in.")
+        # phone_card_desc.setWordWrap(True)
+        # phone_card_desc.setStyleSheet("color: rgba(255,255,255,0.74); font-size: 12px;")
+        # phone_card_layout.addWidget(phone_card_title)
+        # phone_card_layout.addWidget(phone_card_desc)
+        # phone_card_layout.addLayout(phone_row)
+        # phone_card_layout.addLayout(otp_row)
 
-        self.login_phone = QLineEdit()
-        self.login_phone.setPlaceholderText("Phone number (10 digits)")
-        self.login_phone.setMinimumHeight(44)
-        self.login_phone.setMaxLength(10)
-        self.login_phone.setValidator(QIntValidator(0, 2147483647, self))
-
-        phone_row = QHBoxLayout()
-        phone_row.setSpacing(10)
-        phone_row.addWidget(self.login_phone, 3)
-        phone_row.addWidget(phone_btn, 0)
-
-        self.login_otp = QLineEdit()
-        self.login_otp.setPlaceholderText("Enter 4-digit OTP")
-        self.login_otp.setMaxLength(4)
-        self.login_otp.setMinimumHeight(44)
-        self.login_otp.setValidator(QIntValidator(0, 9999, self))
-
-        self.verify_otp_btn = QPushButton("Verify OTP")
-        self.verify_otp_btn.setMinimumHeight(44)
-        self.verify_otp_btn.setMinimumWidth(132)
-        self.verify_otp_btn.setEnabled(False)
-        self.verify_otp_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1f704f, stop:1 #2fa66f);
-                color: white;
-                border-radius: 14px;
-                padding: 11px 14px;
-                font-size: 14px;
-                font-weight: bold;
-                border: none;
-            }
-            QPushButton:hover { background: #2a9b67; }
-            QPushButton:pressed { background: #1f7b52; }
-            QPushButton:disabled {
-                background: rgba(35, 139, 92, 0.30);
-                color: rgba(255,255,255,0.65);
-            }
-        """)
-        self.verify_otp_btn.clicked.connect(self.verify_phone_otp)
-
-        self._otp_cooldown_seconds = 60
-        self._otp_lockout_seconds = 300
-        self._otp_resend_available_at = 0.0
-        self._otp_lockout_until = 0.0
-        self._otp_failed_attempts = 0
-        self._otp_timer = QTimer(self)
-        self._otp_timer.timeout.connect(self._refresh_otp_controls)
-
-        otp_row = QHBoxLayout()
-        otp_row.setSpacing(10)
-        otp_row.addWidget(self.login_otp, 3)
-        otp_row.addWidget(self.verify_otp_btn, 1)
-
-        phone_card = QWidget()
-        phone_card.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 rgba(255,255,255,0.10),
-                stop:1 rgba(255,255,255,0.05));
-            border: 1px solid rgba(255,255,255,0.18);
-            border-radius: 18px;
-        """)
-        phone_card_layout = QVBoxLayout(phone_card)
-        phone_card_layout.setContentsMargins(14, 12, 14, 12)
-        phone_card_layout.setSpacing(10)
-        phone_card_title = QLabel("Phone Login")
-        phone_card_title.setStyleSheet("""
-            color: white;
-            font-size: 18px;
-            font-weight: bold;
-            padding-bottom: 4px;
-            border-bottom: 1px solid rgba(255,255,255,0.12);
-        """)
-        phone_card_desc = QLabel("Enter your mobile number, request an OTP, then verify it to sign in.")
-        phone_card_desc.setWordWrap(True)
-        phone_card_desc.setStyleSheet("color: rgba(255,255,255,0.74); font-size: 12px;")
-        phone_card_layout.addWidget(phone_card_title)
-        phone_card_layout.addWidget(phone_card_desc)
-        phone_card_layout.addLayout(phone_row)
-        phone_card_layout.addLayout(otp_row)
-
-        for w in [self.login_email, self.login_password, self.login_phone, self.login_otp, login_btn, phone_btn, self.verify_otp_btn]:
+        for w in [self.login_email, self.login_password, login_btn]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.login_email.setStyleSheet(input_style)
         self.login_password.setStyleSheet(input_style)
-        self.login_phone.setStyleSheet(input_style)
-        self.login_otp.setStyleSheet(otp_input_style)
+        # self.login_phone.setStyleSheet(input_style)
+        # self.login_otp.setStyleSheet(otp_input_style)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet("background: rgba(255,255,255,0.10); max-height: 1px; min-height: 1px; border: none;")
+        # divider = QFrame()
+        # divider.setFrameShape(QFrame.HLine)
+        # divider.setStyleSheet("background: rgba(255,255,255,0.10); max-height: 1px; min-height: 1px; border: none;")
 
         self.login_email.returnPressed.connect(self.handle_login)
         self.login_password.returnPressed.connect(self.handle_login)
-        self.login_phone.returnPressed.connect(self.handle_phone_login)
-        self.login_otp.returnPressed.connect(self.verify_phone_otp)
-        self.login_otp.textChanged.connect(self._update_verify_otp_button)
+        # self.login_phone.returnPressed.connect(self.handle_phone_login)
+        # self.login_otp.returnPressed.connect(self.verify_phone_otp)
+        # self.login_otp.textChanged.connect(self._update_verify_otp_button)
 
         layout.addWidget(section_title)
         layout.addWidget(section_subtitle)
@@ -666,10 +668,10 @@ class LoginRegisterDialog(QDialog):
         layout.addWidget(self.login_email)
         layout.addLayout(password_row)
         layout.addWidget(login_btn)
-        layout.addSpacing(4)
-        layout.addWidget(divider)
-        layout.addSpacing(4)
-        layout.addWidget(phone_card)
+        # layout.addSpacing(4)
+        # layout.addWidget(divider)
+        # layout.addSpacing(4)
+        # layout.addWidget(phone_card)
 
         nav_row = QHBoxLayout()
         nav_row.setSpacing(10)
