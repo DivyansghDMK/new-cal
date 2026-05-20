@@ -2460,7 +2460,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     doctor_name_y = -12
     doctor_sign_y = -29
 
-    reference_label = String(-30, reference_y, "Reference Report Confirmed by:",
+    reference_label = String(-30, reference_y, "Reference Report Confirmed by",
                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(reference_label)
 
@@ -4680,7 +4680,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     doctor = patient.get("doctor", "") if patient else ""
     footer_y_base = 30 # Increased from 20 to give gap from brand footer
     
-    final_page_drawing.add(String(10, footer_y_base + 45, "Reference Report Confirmed by:",
+    final_page_drawing.add(String(10, footer_y_base + 45, "Reference Report Confirmed by",
                                 fontSize=10, fontName=FONT_TYPE, fillColor=colors.black))
     
     final_page_drawing.add(String(10, footer_y_base + 25, "Doctor Name:",

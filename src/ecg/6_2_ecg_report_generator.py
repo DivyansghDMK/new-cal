@@ -973,6 +973,7 @@ def load_latest_metrics_entry(reports_dir):
                 return data
     except Exception as e:
         print(f" Could not read metrics file for HR: {e}")
+        
 def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
     from reportlab.lib.units import mm
     
@@ -1057,6 +1058,20 @@ def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
         canvas.setFont("Helvetica", 10)
         canvas.drawString(x_pos + org_label_width + 5, y_pos, patient.get("Org.", "") if patient else "")
         
+        y_pos -= 15
+
+        canvas.setFont("Helvetica-Bold", 10)
+        address_label = "Address:"
+        canvas.drawString(x_pos, y_pos, address_label)
+
+        address_label_width = canvas.stringWidth(address_label, "Helvetica-Bold", 10)
+        canvas.setFont("Helvetica", 10)
+        canvas.drawString(
+            x_pos + address_label_width + 5,
+            y_pos,
+            (patient.get("org_address", "") or patient.get("Org. Address", "")) if patient else "",
+        )
+
         y_pos -= 15
         
         canvas.setFont("Helvetica-Bold", 10)
@@ -3677,15 +3692,16 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     label_text = "Doctor Name: "
     
     # Value from Save ECG -> passed in 'patient'
+    # Accept both keys: `doctor` (legacy) and `doctor_name` (signup/profile mapping)
     doctor = ""
     try:
         if patient:
-            doctor = str(patient.get("doctor", "")).strip()
+            doctor = str(patient.get("doctor", "") or patient.get("doctor_name", "") or "").strip()
     except Exception:
         doctor = ""
   
     # Reference Report Confirmed by (above Doctor Name)
-    confirmed_label = String(-15, 35, "Reference Report Confirmed by: ", 
+    confirmed_label = String(-15, 35, "Reference Report Confirmed by ", 
                               fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(confirmed_label)
 

@@ -990,22 +990,21 @@ class HRVTestWindow(QWidget):
         try:
             patient = resolve_patient_profile(
                 explicit_patient=getattr(self.dashboard_instance, "patient_details", None),
-                username=getattr(self, "username", "") or "",
+                username=getattr(self.dashboard_instance, "username", "") or getattr(self, "username", "") or "",
                 user_details=getattr(self.dashboard_instance, "user_details", {}) if self.dashboard_instance else {},
             )
-            if not patient.get("first_name") and not patient.get("patient_name"):
-                patient = {
-                    "first_name": "",
-                    "last_name": "",
-                    "age": "",
-                    "gender": "",
-                    "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Org.": "",
-                    "Org. Name": "",
-                    "Org. Address": "",
-                    "doctor_mobile": "",
-                    "doctor": "",
-                }
+            if not isinstance(patient, dict):
+                patient = {}
+            patient.setdefault("first_name", "")
+            patient.setdefault("last_name", "")
+            patient.setdefault("age", "")
+            patient.setdefault("gender", "")
+            patient.setdefault("date_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            patient.setdefault("Org.", "")
+            patient.setdefault("Org. Name", "")
+            patient.setdefault("Org. Address", "")
+            patient.setdefault("doctor_mobile", "")
+            patient.setdefault("doctor", "")
             if "doctor_mobile" not in patient:
                 patient["doctor_mobile"] = ""
 

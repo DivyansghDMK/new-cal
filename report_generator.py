@@ -222,7 +222,7 @@ def _generate_pdf_report(session_dir: str,
 
     # --- Doctor signature block ---
     sig_x = PAGE_W - MR - 70
-    ax.text(sig_x, ft_top - 7,  "Reference Report Confirmed by:",
+    ax.text(sig_x, ft_top - 7,  "Reference Report Confirmed by",
             fontsize=8, va='top', color='black')
     ax.text(sig_x, ft_top,      "Doctor Name: _______________________",
             fontsize=8, va='top', color='black')

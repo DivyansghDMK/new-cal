@@ -3697,15 +3697,16 @@ def generate_ecg_report(
     label_text = "Doctor Name: "
     
     # Value from Save ECG -> passed in 'patient'
+    # Accept both keys: `doctor` (legacy) and `doctor_name` (signup/profile mapping)
     doctor = ""
     try:
         if patient:
-            doctor = str(patient.get("doctor", "")).strip()
+            doctor = str(patient.get("doctor", "") or patient.get("doctor_name", "") or "").strip()
     except Exception:
         doctor = ""
   
     # Reference Report Confirmed by (above Doctor Name)
-    confirmed_label = String(3.6 * mm, 24.3 * mm, "Reference Report Confirmed by: ", 
+    confirmed_label = String(3.6 * mm, 24.3 * mm, "Reference Report Confirmed by ", 
                               fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(confirmed_label)
 

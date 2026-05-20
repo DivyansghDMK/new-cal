@@ -736,7 +736,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
 
     # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
-    _t(ax, "Reference Report Confirmed by:",
+    _t(ax, "Reference Report Confirmed by",
        ML-2.4, footer_y+13.5, 8)
     _t(ax, f"Doctor Name: {doc_name}",
        ML-2.4, footer_y+18.2, 8)
@@ -776,7 +776,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
 
     # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
-    _t(ax, "Reference Report Confirmed by:",
+    _t(ax, "Reference Report Confirmed by",
        ML+2.2, footer_top_y+0.5, 8)
     _t(ax, f"Doctor Name: {doc_name}",
        ML+2.2, footer_top_y+5.5, 8)

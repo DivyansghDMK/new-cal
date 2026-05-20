@@ -146,7 +146,7 @@ class DeviceScanWorker(QThread):
             for port in ports:
                 try:
                     desc = str(getattr(port, "description", "") or "")
-                    print(f"ðŸ”Ž Device scan: probing {port.device} ({desc})")
+                    print(f" Device scan: probing {port.device} ({desc})")
 
                     # Quick check (keep it short; this runs in a background thread).
                     ser = serial.Serial(
@@ -2105,7 +2105,7 @@ class Dashboard(QWidget):
                 if hasattr(self, 'parameters_text'):
                     self.parameters_text.setHtml(
                         "<div style='text-align:center; padding:20px; color:#666; font-size:14px;'>"
-                        "ðŸ“Š <b>LIVE METRICS</b><br><br>Waiting for ECG data...<br>"
+                        "<b>LIVE METRICS</b><br><br>Waiting for ECG data...<br>"
                         "<small>Start ECG acquisition or demo mode to see real-time metrics</small>"
                         "</div>"
                     )
@@ -2223,7 +2223,7 @@ class Dashboard(QWidget):
                 reader = getattr(self.ecg_test_page, 'serial_reader', None)
                 if reader and getattr(reader, 'running', False):
                     return True
-                # ðŸ”§ Allow metric updates even when demo/serial not running
+                # Allow metric updates even when demo/serial not running
                 # This ensures dashboard values update from Lead 2 calculation
                 return True  # Always allow updates for calibrated metrics
         except Exception:
@@ -2395,7 +2395,7 @@ class Dashboard(QWidget):
             # Simplified: QT = 400 - (BPM-60)*0.8
             qt_interval = max(300, min(440, 400 - (bpm - 60) * 0.8))
             
-            # ðŸ”§ QT Interval calibration (from calibration guide)
+            # QT Interval calibration (from calibration guide)
             # According to reference table analysis, QT is already correct
             # Adding minimal verification adjustments for perfect match
             if bpm >= 200:
@@ -3341,7 +3341,7 @@ class Dashboard(QWidget):
             
             # Only print sync message every 50th sync to reduce console spam
             if self._sync_count % 50 == 1:
-                print(f"ðŸ”„ FORCE SYNC: Dashboard -> ECG Page")
+                print(f"FORCE SYNC: Dashboard -> ECG Page")
                 
             # Force sync metric values from dashboard to ECG test page
             # Extract numeric values from dashboard labels (e.g., "100 BPM" -> "100")
@@ -4461,7 +4461,7 @@ class Dashboard(QWidget):
             "QLineEdit:focus { border: 2px solid #ff6600; background: #fff8f0; }"
         )
 
-        fields = ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name"]
+        fields = ["Doctor", "Patient Name"]
         entries = {}
         for field in fields:
             row = QHBoxLayout()
@@ -4477,11 +4477,7 @@ class Dashboard(QWidget):
             form_layout.addLayout(row)
             entries[field] = entry
 
-        entries["Org. Name"].setMaxLength(28)
-        entries["Org. Address"].setMaxLength(45)
         entries["Doctor"].setMaxLength(20)
-        entries["Phone No."].setMaxLength(10)
-        entries["Phone No."].setValidator(QIntValidator(0, 2147483647, dialog))
         entries["Patient Name"].setMaxLength(20)
 
         age_row = QHBoxLayout()
@@ -4536,14 +4532,8 @@ class Dashboard(QWidget):
 
             if prefill:
                 pd = prefill
-                if pd.get("Org.") or pd.get("Org. Name"):
-                    entries["Org. Name"].setText(pd.get("Org.") or pd.get("Org. Name") or "")
-                if pd.get("Org. Address"):
-                    entries["Org. Address"].setText(str(pd.get("Org. Address") or ""))
                 if pd.get("doctor"):
                     entries["Doctor"].setText(str(pd.get("doctor") or ""))
-                if pd.get("doctor_mobile"):
-                    entries["Phone No."].setText(str(pd.get("doctor_mobile") or ""))
                 first = str(pd.get("first_name") or "")
                 last = str(pd.get("last_name") or "")
                 full_name = (first + (" " + last if last else "")).strip()
@@ -4586,7 +4576,7 @@ class Dashboard(QWidget):
     def _submit_new_registration(self, entries, gender_menu, dialog):
         values = {
             label: entries[label].text().strip()
-            for label in ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name", "Age"]
+            for label in ["Doctor", "Patient Name", "Age"]
         }
         values["Gender"] = (gender_menu.currentText() or "").strip()
 
@@ -4610,10 +4600,6 @@ class Dashboard(QWidget):
                 "age": values["Age"],
                 "gender": values["Gender"],
                 "doctor": values["Doctor"],
-                "doctor_mobile": values["Phone No."],
-                "Org.": values.get("Org. Name", ""),
-                "Org. Name": values.get("Org. Name", ""),
-                "Org. Address": values.get("Org. Address", ""),
                 "patient_name": values.get("Patient Name", ""),
                 "date_time": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -5550,7 +5536,7 @@ class Dashboard(QWidget):
                 # Stop acquisition if running
                 if hasattr(self.ecg_test_page, 'serial_reader') and self.ecg_test_page.serial_reader:
                     try:
-                        print("ðŸ”Œ Closing serial connection on sign out...")
+                        print("Closing serial connection on sign out...")
                         self.ecg_test_page.serial_reader.stop()
                         self.ecg_test_page.serial_reader.close()
                         self.ecg_test_page.serial_reader = None
@@ -5809,7 +5795,7 @@ class Dashboard(QWidget):
 
             # Not connected, only scan if the ports list has changed (new device plugged in)
             if set(current_ports) != set(self._last_available_ports):
-                print(f"ðŸ”„ COM port change detected: {self._last_available_ports} -> {current_ports}")
+                print(f"COM port change detected: {self._last_available_ports} -> {current_ports}")
                 self._last_available_ports = current_ports
                 
                 # If a new port was added, try to scan
@@ -5876,7 +5862,7 @@ class Dashboard(QWidget):
 
             # Update hardware version if it's different from current
             if self.device_version != version:
-                print(f"ðŸ”„ Hardware version changed from {self.device_version} to {version}")
+                print(f"Hardware version changed from {self.device_version} to {version}")
                 self.device_version = version
 
             self.device_port = port
