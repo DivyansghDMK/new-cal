@@ -167,16 +167,16 @@ def main() -> None:
 
     if not server_url:
         print(
-            "\n  ✗  LICENSE_SERVER_URL is not set.\n"
-            "     Set it in license_server/.env or the project root .env, or pass --server <url>\n"
+            "\n  [ERROR] LICENSE_SERVER_URL is not set.\n"
+            "          Set it in license_server/.env or the project root .env, or pass --server <url>\n"
         )
         sys.exit(1)
 
     if not admin_token:
         print(
-            "\n  ✗  ADMIN_TOKEN is not set.\n"
-            "     Set ADMIN_TOKEN in license_server/.env or LICENSE_API_TOKEN in root .env,\n"
-            "     or pass --token <token>\n"
+            "\n  [ERROR] ADMIN_TOKEN is not set.\n"
+            "          Set ADMIN_TOKEN in license_server/.env or LICENSE_API_TOKEN in root .env,\n"
+            "          or pass --token <token>\n"
         )
         sys.exit(1)
 
@@ -231,24 +231,24 @@ def main() -> None:
         sys.exit(0)
 
     # ── Send ──────────────────────────────────────────────────────────────────
-    print(f"\n  Sending to {server_url}/admin/release/publish …")
+    print(f"\n  Sending to {server_url}/admin/release/publish ...")
     result = _push(server_url, admin_token, payload)
 
     if result.get("success"):
         data = result.get("data", {})
         published_at = data.get("published_at", datetime.now(timezone.utc).isoformat())
-        print(f"\n  ✓  Release published successfully!")
-        print(f"     Version    : {data.get('version', args.version)}")
-        print(f"     Channel    : {data.get('channel', args.channel)}")
-        print(f"     Published  : {published_at}")
+        print(f"\n  [SUCCESS] Release published successfully!")
+        print(f"            Version    : {data.get('version', args.version)}")
+        print(f"            Channel    : {data.get('channel', args.channel)}")
+        print(f"            Published  : {published_at}")
         print()
         print("  Users will see the update banner next time they open the app.\n")
     else:
         error = result.get("error", "Unknown error")
         body  = result.get("body", "")
-        print(f"\n  ✗  Failed: {error}")
+        print(f"\n  [ERROR] Failed: {error}")
         if body:
-            print(f"     Server response: {body[:200]}")
+            print(f"          Server response: {body[:200]}")
         print()
         sys.exit(1)
 
