@@ -131,36 +131,38 @@ class UpdateBannerWidget(QWidget):
         parent_widget.installEventFilter(self)
 
     def _build_ui(self) -> None:
-        version = self._info.get("version", "?")
-        notes   = self._info.get("release_notes", "") or "Improvements and bug fixes."
-        url     = self._info.get("download_url", "")
+        version        = self._info.get("version", "?")
+        notes          = self._info.get("release_notes", "") or "Improvements and bug fixes."
+        url            = self._info.get("download_url", "")
+        is_rollback    = bool(self._info.get("force_rollback", False))
 
-        self.setFixedWidth(400)
+        # Rollback = urgent red; normal update = orange
+        border_colour  = "rgba(220,60,60,0.75)"  if is_rollback else "rgba(255,140,0,0.6)"
+        bg_stop0       = "rgba(56,18,18,0.97)"   if is_rollback else "rgba(26,32,56,0.97)"
+        bg_stop1       = "rgba(52,12,12,0.97)"   if is_rollback else "rgba(36,24,52,0.97)"
+        icon           = "⚠️"                     if is_rollback else "🔔"
+        title_colour   = "#ff6b6b"               if is_rollback else "#ffb347"
+        if is_rollback:
+            title_text = f"Action Required — reinstall v{version}"
+        else:
+            title_text = f"Update available  —  v{version}"
+        dl_label       = "📥  Reinstall"         if is_rollback else "📥  Download"
+
+        self.setFixedWidth(420 if is_rollback else 400)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet("""
-            QWidget#UpdateBanner {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(26,32,56,0.97),
-                    stop:1 rgba(36,24,52,0.97)
-                );
-                border: 1px solid rgba(255,140,0,0.6);
-                border-radius: 14px;
-            }
-        """)
 
         container = QFrame(self)
         container.setObjectName("UpdateBanner")
-        container.setStyleSheet("""
-            QFrame#UpdateBanner {
+        container.setStyleSheet(f"""
+            QFrame#UpdateBanner {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(26,32,56,0.97),
-                    stop:1 rgba(36,24,52,0.97)
+                    stop:0 {bg_stop0},
+                    stop:1 {bg_stop1}
                 );
-                border: 1px solid rgba(255,140,0,0.6);
+                border: 1px solid {border_colour};
                 border-radius: 14px;
-            }
+            }}
         """)
 
         outer = QVBoxLayout(self)
@@ -173,36 +175,46 @@ class UpdateBannerWidget(QWidget):
 
         # Header row
         header_row = QHBoxLayout()
-        bell = QLabel("🔔")
-        bell.setStyleSheet("font-size: 20px; background: transparent;")
-        title = QLabel(f"Update available  —  v{version}")
+        icon_lbl = QLabel(icon)
+        icon_lbl.setStyleSheet("font-size: 20px; background: transparent;")
+        title = QLabel(title_text)
         title.setStyleSheet(
-            "color: #ffb347; font-size: 13px; font-weight: bold; background: transparent;"
+            f"color: {title_colour}; font-size: 13px; font-weight: bold; background: transparent;"
         )
-        header_row.addWidget(bell)
+        header_row.addWidget(icon_lbl)
         header_row.addWidget(title, 1)
         inner.addLayout(header_row)
 
+        # Extra warning line for rollbacks
+        if is_rollback:
+            warn_lbl = QLabel("⛔  Your current version has a critical issue. Please reinstall the stable release immediately.")
+            warn_lbl.setWordWrap(True)
+            warn_lbl.setStyleSheet("color: #ff9999; font-size: 11px; font-weight: bold; background: transparent;")
+            inner.addWidget(warn_lbl)
+
         # Release notes (truncated)
-        notes_label = QLabel(notes[:120] + ("…" if len(notes) > 120 else ""))
-        notes_label.setWordWrap(True)
-        notes_label.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 11px; background: transparent;")
-        inner.addWidget(notes_label)
+        if notes and notes != "Improvements and bug fixes.":
+            notes_label = QLabel(notes[:120] + ("…" if len(notes) > 120 else ""))
+            notes_label.setWordWrap(True)
+            notes_label.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 11px; background: transparent;")
+            inner.addWidget(notes_label)
 
         # Button row
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
         if url:
-            dl_btn = QPushButton("📥  Download")
-            dl_btn.setStyleSheet("""
-                QPushButton {
+            dl_btn = QPushButton(dl_label)
+            dl_colour = "#cc2222" if is_rollback else "#ff7a12"
+            dl_hover  = "#e03333" if is_rollback else "#ff8a26"
+            dl_btn.setStyleSheet(f"""
+                QPushButton {{
                     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                        stop:0 #ff7a12, stop:1 #ff950f);
+                        stop:0 {dl_colour}, stop:1 {dl_colour});
                     color: white; border-radius: 10px;
                     padding: 6px 14px; font-size: 12px; font-weight: bold; border: none;
-                }
-                QPushButton:hover { background: #ff8a26; }
+                }}
+                QPushButton:hover {{ background: {dl_hover}; }}
             """)
             dl_btn.setCursor(Qt.PointingHandCursor)
             dl_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
@@ -1620,7 +1632,6 @@ def main():
         # ── License Gate ─────────────────────────────────────────────────────
         # Validate license BEFORE showing login. On success the result is cached
         # locally (HMAC-protected) so subsequent starts are instant / offline.
-        '''
         try:
             from utils.license_manager import check_license, clear_license_cache, clear_stored_key, load_stored_key
             from utils.license_dialog import LicenseDialog
@@ -1660,7 +1671,6 @@ def main():
         except Exception as _lic_err:
             # If license system fails to import (e.g. first install), log and continue.
             logger.warning(f"[License] Check skipped due to error: {_lic_err}")
-        '''
         # ─────────────────────────────────────────────────────────────────────
 
         # Initialize login dialog
