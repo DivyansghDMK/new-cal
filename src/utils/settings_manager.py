@@ -1,13 +1,12 @@
 import json
 import os
 import re
+from utils.app_paths import data_file
 
 class SettingsManager:
     def __init__(self):
-        # Always resolve settings from the project root so different launch
-        # directories or machines do not pick up different config files.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        self.settings_file = os.path.join(project_root, "ecg_settings.json")
+        # Use data_file to resolve writable paths in the runtime workspace for frozen builds
+        self.settings_file = str(data_file("ecg_settings.json"))
         self.legacy_settings_file = os.path.abspath("ecg_settings.json")
         self.default_settings = {
             "wave_speed": "25",  # mm/s (default)
