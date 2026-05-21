@@ -58,6 +58,74 @@ def _prepare_runtime_workspace() -> str:
     for rel in seed_files:
         dst = os.path.join(base_dir, rel)
         if os.path.exists(dst):
+            # Special check to merge newly bundled .env keys (e.g. LICENSE_SERVER_URL)
+            # and correct localhost URLs in the persistent workspace environment file.
+            if rel == ".env":
+                try:
+                    # Read existing local keys
+                    local_keys = set()
+                    with open(dst, "r", encoding="utf-8", errors="replace") as f:
+                        local_lines = f.readlines()
+                    for line in local_lines:
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#") and "=" in stripped:
+                            key = stripped.split("=", 1)[0].strip()
+                            local_keys.add(key)
+                except Exception:
+                    local_lines = []
+
+                # Find bundled .env
+                bundled_env_path = None
+                for root in source_roots:
+                    src = os.path.join(root, rel)
+                    if os.path.exists(src):
+                        bundled_env_path = src
+                        break
+
+                if bundled_env_path:
+                    try:
+                        with open(bundled_env_path, "r", encoding="utf-8", errors="replace") as f:
+                            bundled_lines = f.readlines()
+                        
+                        to_append = []
+                        for line in bundled_lines:
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith("#") and "=" in stripped:
+                                key, val = stripped.split("=", 1)
+                                key = key.strip()
+                                val = val.strip()
+                                if key not in local_keys:
+                                    to_append.append(f"{key}={val}\n")
+                        
+                        # Overwrite if LICENSE_SERVER_URL in local_lines points to localhost
+                        modified = False
+                        new_local_lines = []
+                        for line in local_lines:
+                            stripped = line.strip()
+                            if stripped.startswith("LICENSE_SERVER_URL="):
+                                val = stripped.split("=", 1)[1].strip().lower()
+                                if "localhost" in val or "127.0.0.1" in val:
+                                    # Overwrite with bundled or default prod URL
+                                    bundled_url = "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1"
+                                    for bline in bundled_lines:
+                                        if bline.strip().startswith("LICENSE_SERVER_URL="):
+                                            bundled_url = bline.strip().split("=", 1)[1].strip()
+                                            break
+                                    new_local_lines.append(f"LICENSE_SERVER_URL={bundled_url}\n")
+                                    modified = True
+                                    continue
+                            new_local_lines.append(line)
+
+                        if modified:
+                            with open(dst, "w", encoding="utf-8") as f:
+                                f.writelines(new_local_lines)
+                        
+                        if to_append:
+                            with open(dst, "a", encoding="utf-8") as f:
+                                f.write("\n# --- Staged Keys Added on Update ---\n")
+                                f.writelines(to_append)
+                    except Exception:
+                        pass
             continue
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         for root in source_roots:

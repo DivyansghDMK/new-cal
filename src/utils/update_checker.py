@@ -94,6 +94,11 @@ def check_for_update(current_version: str, channel: str = "stable") -> Optional[
 
     server_url = os.getenv("LICENSE_SERVER_URL", "").rstrip("/")
     if not server_url:
+        try:
+            from utils.crash_logger import get_crash_logger
+            get_crash_logger().warning("Update check skipped: LICENSE_SERVER_URL is empty or not defined.", category="UPDATE_CHECK_WARNING")
+        except Exception:
+            pass
         return None
 
     url = f"{server_url}/api/v1/latest-version?channel={channel}"
@@ -102,12 +107,23 @@ def check_for_update(current_version: str, channel: str = "stable") -> Optional[
         req = urllib.request.Request(url, headers={"User-Agent": "ECGMonitor-UpdateChecker/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status != 200:
+                try:
+                    from utils.crash_logger import get_crash_logger
+                    get_crash_logger().warning(f"Update check returned HTTP {resp.status}", category="UPDATE_CHECK_WARNING")
+                except Exception:
+                    pass
                 return None
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        # Network unavailable, SSL errors, JSON parse errors → fail silently.
-        return None
-    except Exception:
+    except Exception as e:
+        try:
+            import traceback
+            from utils.crash_logger import get_crash_logger
+            get_crash_logger().warning(
+                f"Update check failed with exception: {e}\n{traceback.format_exc()}",
+                category="UPDATE_CHECK_WARNING"
+            )
+        except Exception:
+            pass
         return None
 
     remote_version = data.get("version")

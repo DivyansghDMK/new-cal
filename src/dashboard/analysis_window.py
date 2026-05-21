@@ -44,15 +44,26 @@ if src_dir not in sys.path:
 try:
     from ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
     from ecg.expanded_lead_view import PQRSTAnalyzer
-except ImportError:
+except Exception as e1:
     try:
         from src.ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
         from src.ecg.expanded_lead_view import PQRSTAnalyzer
-    except ImportError:
+    except Exception as e2:
         try:
             from ..ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
             from ..ecg.expanded_lead_view import PQRSTAnalyzer
-        except (ImportError, ValueError):
+        except Exception as e3:
+            import traceback
+            try:
+                from utils.crash_logger import get_crash_logger
+                get_crash_logger().error(
+                    f"Failed to import ArrhythmiaDetector/PQRSTAnalyzer.\n"
+                    f"Attempt 1: {e1}\nAttempt 2: {e2}\nAttempt 3: {e3}\n"
+                    f"{traceback.format_exc()}",
+                    category="IMPORT_ERROR"
+                )
+            except Exception:
+                pass
             ArrhythmiaDetector = None
             get_interpretation = None
             PQRSTAnalyzer = None

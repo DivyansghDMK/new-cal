@@ -236,6 +236,7 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--hidden-import=pymupdf",
         "--collect-submodules=PyQt5",
         "--collect-all=pyqtgraph",
+        "--collect-all=scipy",
         "--exclude-module=PyQt6",
         "--exclude-module=PySide2",
         "--exclude-module=PySide6",
