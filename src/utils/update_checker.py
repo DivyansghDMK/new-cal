@@ -128,7 +128,18 @@ def check_for_update(current_version: str, channel: str = "stable") -> Optional[
 
     remote_version = data.get("version")
     if not remote_version:
+        # AWS Lambda proxy integration wraps the actual payload in a "body" string.
+        # Unwrap it transparently so the checker works whether hosted on Lambda or a plain server.
+        raw_body = data.get("body")
+        if isinstance(raw_body, str):
+            try:
+                data = json.loads(raw_body)
+            except Exception:
+                pass
+        remote_version = data.get("version")
+    if not remote_version:
         return None
+
 
     force_notify = bool(data.get("force_notify", False))
     newer = is_newer(remote_version, current_version)
