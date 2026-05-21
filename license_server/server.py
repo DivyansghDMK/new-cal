@@ -260,24 +260,27 @@ def admin_publish_release():
     if not version:
         return jsonify({"error": "'version' is required."}), 400
 
-    channel = body.get("channel", "stable").strip().lower()
+    channel      = body.get("channel", "stable").strip().lower()
     release_notes = body.get("release_notes", "").strip()
-    download_url = body.get("download_url", "").strip()
+    download_url  = body.get("download_url", "").strip()
+    force_notify  = bool(body.get("force_notify", False))   # True = show banner even on rollback
 
     manifest = _load_release_manifest()
     manifest[channel] = {
-        "version": version,
-        "channel": channel,
+        "version":       version,
+        "channel":       channel,
         "release_notes": release_notes,
-        "download_url": download_url,
-        "published_at": datetime.now(timezone.utc).isoformat(),
+        "download_url":  download_url,
+        "force_notify":  force_notify,
+        "published_at":  datetime.now(timezone.utc).isoformat(),
     }
     _save_release_manifest(manifest)
 
+    action = "Rollback" if force_notify else "Published"
     return jsonify({
         "success": True,
-        "message": f"Published version {version} to '{channel}' channel.",
-        "data": manifest[channel],
+        "message": f"{action}: version {version} pushed to '{channel}' channel.",
+        "data":    manifest[channel],
     })
 
 

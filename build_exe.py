@@ -127,6 +127,9 @@ def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
     # Assets used by PDF/report UI
     pairs.append((project_root / "assets", "assets"))
 
+    # Config containing clinical_config.yaml
+    pairs.append((project_root / "config", "config"))
+
     # Runtime config/demo files often expected in working directory
     for filename in [
         ".env",

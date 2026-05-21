@@ -17,11 +17,26 @@ import yaml
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    # First check physical parent containing src (parents[3])
+    try_path = Path(__file__).resolve().parents[3]
+    if (try_path / "config").exists():
+        return try_path
+    # Fallback to parents[4] / "qww_new"
+    fallback_path = Path(__file__).resolve().parents[4] / "qww_new"
+    if (fallback_path / "config").exists():
+        return fallback_path
+    return try_path
 
 
 def default_clinical_config_path() -> Path:
-    return _repo_root() / "qww_new" / "config" / "clinical_config.yaml"
+    import sys
+    # 1. PyInstaller frozen path resolution
+    if getattr(sys, "frozen", False):
+        base_dir = Path(getattr(sys, "_MEIPASS", os.getcwd()))
+        return base_dir / "config" / "clinical_config.yaml"
+
+    # 2. Dynamic execution path resolution
+    return _repo_root() / "config" / "clinical_config.yaml"
 
 
 def _as_float(value: Any, default: float) -> float:
