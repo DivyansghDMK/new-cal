@@ -146,9 +146,10 @@ _RUNTIME_DIR = _prepare_runtime_workspace()
 
 # Load environment variables from .env file.
 # Priority: runtime dir (.env) -> executable dir -> _MEIPASS
+# Runtime dir is HIGHEST priority — it contains production settings
 runtime_env = os.path.join(os.getcwd(), ".env")
 if os.path.exists(runtime_env):
-    load_dotenv(runtime_env, override=False)
+    load_dotenv(runtime_env, override=True)   # override=True: runtime .env wins over any bundled values
 else:
     load_dotenv(override=False)
 if getattr(sys, "frozen", False):
@@ -159,6 +160,14 @@ if hasattr(sys, '_MEIPASS'):
     meipass_env = os.path.join(sys._MEIPASS, '.env')
     if os.path.exists(meipass_env):
         load_dotenv(meipass_env, override=False)
+
+# Safety-net: if LICENSE_SERVER_URL is still empty/localhost after all .env loading,
+# force-set the known production URL so update checking always works in frozen builds.
+_lic_url = os.environ.get("LICENSE_SERVER_URL", "").strip().lower()
+if not _lic_url or "localhost" in _lic_url or "127.0.0.1" in _lic_url:
+    os.environ["LICENSE_SERVER_URL"] = (
+        "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1"
+    )
 
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
