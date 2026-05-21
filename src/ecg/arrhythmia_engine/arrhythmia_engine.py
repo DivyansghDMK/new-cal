@@ -5,12 +5,20 @@ Priority order (highest → lowest):
   1. Asystole
   2. Ventricular Fibrillation
   3. Ventricular Tachycardia
-  4. Atrial Fibrillation
-  5. Atrial Flutter
-  6. AV Block (3rd-degree, then 1st-degree)
-  7. Bundle Branch Block (LBBB / RBBB)
-  8. Sinus rhythms (Bradycardia / NSR / Tachycardia)
-  9. QT findings
+  4. Atrial Flutter
+  5. Second-degree AV Block (Mobitz II — dropped beats)
+  6. Second-degree AV Block (Mobitz I — PR progression / RR pattern)
+  7. Atrial Fibrillation
+  8. Third-degree AV Block
+  9. First-degree AV Block (Prolonged PR)
+  10. Bundle Branch Block (LBBB / RBBB)
+  11. Sinus rhythms (Bradycardia / NSR / Tachycardia)
+  12. QT findings
+
+Mobitz checks (5 & 6) intentionally sit ABOVE the AF check (7).
+On saturated signals p_detected can be False even when P-waves exist;
+if dropped_beats or pr_progression flags are set those are more specific
+evidence than the absence of detected P-waves, so they win.
 
 Additional secondary findings (BBB, QT, etc.) are appended AFTER the
 primary rhythm — never replacing it.  The first element of the returned
@@ -143,20 +151,17 @@ class ArrhythmiaEngine:
             primary = "Ventricular Tachycardia"
         elif self._is_atrial_flutter():
             primary = "Atrial Flutter"
+        # Bug 4 fix: Mobitz checks ABOVE the AF check.
+        # AF fires when p=False + irregular — but a saturated signal causes
+        # p=False even when P-waves exist, so AF would incorrectly win.
+        # dropped_beats / pr_progression are positive evidence flags that
+        # are more specific than the absence of detected P-waves.
+        elif self.f.get("dropped_beats"):
+            primary = "Second-degree AV Block (Mobitz II)"
+        elif self.f.get("pr_progression"):
+            primary = "Second-degree AV Block (Mobitz I)"
         elif not p and self.is_irregular():
             primary = "Atrial Fibrillation"
-        elif dominant_ratio and dominant_ratio < 0.6 and self.is_irregular():
-            primary = "Atrial Fibrillation"
-        elif self.f.get("av_dissociation") and hr < 60:
-            primary = "Third-degree AV Block"
-        elif hr < 40 and not p:
-            primary = "Third-degree AV Block"
-        elif hr < 40 and p:
-            primary = "Sinus Bradycardia"
-        elif self.f.get("pr_progression") and p:
-            primary = "Second-degree AV Block (Mobitz I)"
-        elif self.f.get("dropped_beats") and p:
-            primary = "Second-degree AV Block (Mobitz II)"
         elif pr > 200 and p:
             primary = "First-degree AV Block (Prolonged PR)"
         elif 60 <= hr <= 100 and p:

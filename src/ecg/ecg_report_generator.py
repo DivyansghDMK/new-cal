@@ -345,15 +345,7 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
         else:
             qtc_line += f"; QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"  # GE/Philips/BPL: ms and seconds
 
-    # Use displayed magnitudes for RV5/SV1 math.
-    # CRITICAL: RV5 and SV1 from metrics are in mV
-    # Sokolow-Lyon criteria: RV5 + |SV1| >= 3.5 mV (35 mm on ECG paper) indicates possible LVH
-    lvh_line = None
-    if rv5 is not None and sv1 is not None:
-        total_mv = rv5_sv1 if rv5_sv1 is not None else (rv5 - abs(sv1))
-        if total_mv is not None and total_mv >= 3.5:  # 3.5 mV threshold (35 mm on ECG paper)
-            total_mm = total_mv * 10.0  # Convert to mm for display (1 mV = 10 mm)
-            lvh_line = f"Possible LVH (Sokolow-Lyon RV5+SV1 = {total_mm:.1f} mm)"
+
 
     # ST deviation (conservative)
     st_line = "ST deviation: not assessed"
@@ -397,8 +389,7 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
         for dx in engine_diagnoses[1:]:
             conclusions.append(f"  • {dx}")
     conclusions.append(qtc_line)
-    if lvh_line:
-        conclusions.append(lvh_line)
+
     conclusions.append(st_line)
     conclusions.append("Automated interpretation (conservative): Normal unless measurements suggest otherwise")
     conclusions.append(acq_info)
@@ -1451,7 +1442,7 @@ def _split_conclusion_text(text):
 def _has_abnormal_conclusion(conclusions):
     abnormal_keywords = (
         "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
-        "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole",
+        "PVC", "PAC", "Wide QRS", "Prolonged", "Short", "Asystole",
         "Ventricular"
     )
     return any(
@@ -1495,8 +1486,6 @@ def _normalize_report_conclusions(conclusions):
         "First-degree AV Block (Prolonged PR)",
         "Wide QRS",
         "Borderline Wide QRS",
-        "LVH (Sokolow-Lyon)",
-        "LVH (Cornell)",
         "Prolonged QTc",
         "Long QT Syndrome",
         "Normal Sinus Rhythm",

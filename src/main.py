@@ -96,10 +96,10 @@ from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
     QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QUrl
+from PyQt5.QtGui import QDesktopServices, QFont, QPixmap, QIntValidator
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
-from PyQt5.QtGui import QFont, QPixmap, QIntValidator
 from utils.ecg_auth_api import get_ecg_auth_api
 from utils.offline_queue import get_offline_queue
 
@@ -109,6 +109,185 @@ except Exception:
     APP_VERSION = "0.0.0"
     UPDATE_CHANNEL = "stable"
     GITHUB_REPOSITORY = ""
+
+# ── Update Notification helpers ───────────────────────────────────────────────
+
+class UpdateBannerWidget(QWidget):
+    """
+    A slim, non-blocking floating banner shown at the top of the dashboard
+    when a newer version is available.
+
+    The banner is inserted as a child of *parent_widget* (the dashboard window)
+    and positions itself at the top-right corner automatically.
+    """
+
+    def __init__(self, update_info: dict, parent_widget: QWidget) -> None:
+        super().__init__(parent_widget, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self._info = update_info
+        self._parent = parent_widget
+        self._build_ui()
+        self._reposition()
+        # Reposition when the parent window moves or resizes.
+        parent_widget.installEventFilter(self)
+
+    def _build_ui(self) -> None:
+        version = self._info.get("version", "?")
+        notes   = self._info.get("release_notes", "") or "Improvements and bug fixes."
+        url     = self._info.get("download_url", "")
+
+        self.setFixedWidth(400)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("""
+            QWidget#UpdateBanner {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(26,32,56,0.97),
+                    stop:1 rgba(36,24,52,0.97)
+                );
+                border: 1px solid rgba(255,140,0,0.6);
+                border-radius: 14px;
+            }
+        """)
+
+        container = QFrame(self)
+        container.setObjectName("UpdateBanner")
+        container.setStyleSheet("""
+            QFrame#UpdateBanner {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(26,32,56,0.97),
+                    stop:1 rgba(36,24,52,0.97)
+                );
+                border: 1px solid rgba(255,140,0,0.6);
+                border-radius: 14px;
+            }
+        """)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(container)
+
+        inner = QVBoxLayout(container)
+        inner.setContentsMargins(16, 12, 16, 12)
+        inner.setSpacing(6)
+
+        # Header row
+        header_row = QHBoxLayout()
+        bell = QLabel("🔔")
+        bell.setStyleSheet("font-size: 20px; background: transparent;")
+        title = QLabel(f"Update available  —  v{version}")
+        title.setStyleSheet(
+            "color: #ffb347; font-size: 13px; font-weight: bold; background: transparent;"
+        )
+        header_row.addWidget(bell)
+        header_row.addWidget(title, 1)
+        inner.addLayout(header_row)
+
+        # Release notes (truncated)
+        notes_label = QLabel(notes[:120] + ("…" if len(notes) > 120 else ""))
+        notes_label.setWordWrap(True)
+        notes_label.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 11px; background: transparent;")
+        inner.addWidget(notes_label)
+
+        # Button row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        if url:
+            dl_btn = QPushButton("📥  Download")
+            dl_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                        stop:0 #ff7a12, stop:1 #ff950f);
+                    color: white; border-radius: 10px;
+                    padding: 6px 14px; font-size: 12px; font-weight: bold; border: none;
+                }
+                QPushButton:hover { background: #ff8a26; }
+            """)
+            dl_btn.setCursor(Qt.PointingHandCursor)
+            dl_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+            btn_row.addWidget(dl_btn)
+
+        dismiss_btn = QPushButton("Dismiss")
+        dismiss_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(80,80,80,0.55);
+                color: rgba(255,255,255,0.75);
+                border-radius: 10px; padding: 6px 12px;
+                font-size: 12px; border: none;
+            }
+            QPushButton:hover { background: rgba(110,110,110,0.75); }
+        """)
+        dismiss_btn.clicked.connect(self.close)
+        btn_row.addStretch(1)
+        btn_row.addWidget(dismiss_btn)
+        inner.addLayout(btn_row)
+
+        self.adjustSize()
+
+    def _reposition(self) -> None:
+        """Place the banner at the top-right of the parent window."""
+        try:
+            parent_rect = self._parent.geometry()
+            x = parent_rect.x() + parent_rect.width() - self.width() - 24
+            y = parent_rect.y() + 60
+            self.move(x, y)
+        except Exception:
+            pass
+
+    def eventFilter(self, obj, event) -> bool:
+        from PyQt5.QtCore import QEvent
+        if obj is self._parent and event.type() in (
+            QEvent.Move, QEvent.Resize, QEvent.Show
+        ):
+            self._reposition()
+        return super().eventFilter(obj, event)
+
+
+# Session-level set of versions already shown (so the banner doesn't reappear).
+_update_versions_shown: set = set()
+
+
+def _launch_update_checker(dashboard: QWidget, app_version: str, channel: str) -> None:
+    """
+    Start the background update checker after the dashboard is shown.
+    Fires 5 seconds after being called so the dashboard fully renders first.
+    """
+    try:
+        from utils.update_checker import UpdateCheckerThread
+
+        def _on_update_available(info: dict) -> None:
+            version = info.get("version", "")
+            if version in _update_versions_shown:
+                return
+            _update_versions_shown.add(version)
+            try:
+                banner = UpdateBannerWidget(info, dashboard)
+                banner.show()
+                # Keep a reference so GC doesn't collect it.
+                if not hasattr(dashboard, "_update_banners"):
+                    dashboard._update_banners = []
+                dashboard._update_banners.append(banner)
+            except Exception as _be:
+                logger.warning(f"[UpdateChecker] Could not show banner: {_be}")
+
+        _checker = UpdateCheckerThread(
+            current_version=app_version,
+            channel=channel,
+            delay_seconds=5.0,
+            parent=None,   # No parent — we manage lifetime manually via stop()
+        )
+        _checker.update_available.connect(_on_update_available)
+        _checker.start()
+        # Keep a strong reference and wire clean shutdown to dashboard close.
+        dashboard._update_checker = _checker
+        try:
+            dashboard.destroyed.connect(lambda: _checker.stop())
+        except Exception:
+            pass
+        logger.info("[UpdateChecker] Background update check scheduled (5s delay).")
+    except Exception as e:
+        logger.warning(f"[UpdateChecker] Could not start update checker: {e}")
 
 # Import core modules  
 try:
@@ -1626,6 +1805,9 @@ def main():
                         QTimer.singleShot(1500, _revalidate_license)
                     except Exception as e:
                         logger.warning(f"Could not start license watchdog: {e}")
+
+                    # ── Background update availability check ──────────────────
+                    _launch_update_checker(dashboard, APP_VERSION, UPDATE_CHANNEL)
 
                     # Run application
                     app.exec_()

@@ -5,13 +5,15 @@ CardioX License Validation Server (Flask).
 
 Endpoints
 ---------
-POST /api/v1/activate     First-time activation (ties key to hardware).
-POST /api/v1/validate     Validate an already-activated key.
-POST /api/v1/deactivate   Release a seat.
-GET  /api/v1/status       Health-check.
-GET  /admin/keys          List all keys (requires admin token).
-POST /admin/keys/create   Create a new license key.
-POST /admin/keys/revoke   Revoke a license key.
+POST /api/v1/activate          First-time activation (ties key to hardware).
+POST /api/v1/validate          Validate an already-activated key.
+POST /api/v1/deactivate        Release a seat.
+GET  /api/v1/status            Health-check.
+GET  /api/v1/latest-version    Public — returns latest published release info.
+GET  /admin/keys               List all keys (requires admin token).
+POST /admin/keys/create        Create a new license key.
+POST /admin/keys/revoke        Revoke a license key.
+POST /admin/release/publish    Publish a new release manifest (admin only).
 
 Setup
 -----
@@ -56,8 +58,9 @@ HMAC_SECRET: bytes = os.getenv(
     "LICENSE_HMAC_SECRET", "CHANGE_ME_32_BYTES_RANDOM_SECRET!"
 ).encode()
 ADMIN_TOKEN: str   = os.getenv("ADMIN_TOKEN", "CHANGE_THIS_ADMIN_TOKEN")
-PORT: int          = int(os.getenv("PORT", 5000))
-DB_FILE: Path      = Path(os.getenv("LICENSE_DB", "license_db.json"))
+PORT: int               = int(os.getenv("PORT", 5000))
+DB_FILE: Path           = Path(os.getenv("LICENSE_DB", "license_db.json"))
+RELEASE_FILE: Path      = Path(os.getenv("RELEASE_MANIFEST", "release_manifest.json"))
 
 # Base-32 alphabet (no ambiguous 0/O, 1/I)
 _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -196,6 +199,85 @@ def status():
         "status": "ok",
         "product": "CardioX License Server",
         "time": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ── Release Manifest helpers ───────────────────────────────────────────────────
+
+def _load_release_manifest() -> dict:
+    """Load the release manifest from disk, or return an empty dict."""
+    if RELEASE_FILE.exists():
+        try:
+            return json.loads(RELEASE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_release_manifest(data: dict) -> None:
+    RELEASE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@app.get("/api/v1/latest-version")
+def latest_version():
+    """
+    Public endpoint — no authentication required.
+    Returns the most-recently published release for the requested channel.
+
+    Query params:
+      channel  (optional) — 'stable' or 'beta'. Defaults to 'stable'.
+    """
+    channel = request.args.get("channel", "stable").strip().lower()
+    manifest = _load_release_manifest()
+    channel_data = manifest.get(channel)
+    if not channel_data:
+        return jsonify({
+            "channel": channel,
+            "version": None,
+            "message": "No release published yet for this channel.",
+        }), 404
+    return jsonify(channel_data)
+
+
+@app.post("/admin/release/publish")
+@_require_admin
+def admin_publish_release():
+    """
+    Admin-only endpoint.
+    The designated reviewer calls this (via push_release.py) after testing a
+    new build to make it visible to all licensed users.
+
+    Expected JSON body:
+      {
+        "version": "2026.05.21.1003",
+        "channel": "stable",          // optional, default 'stable'
+        "release_notes": "...",        // optional
+        "download_url": "https://..." // optional
+      }
+    """
+    body = request.get_json(silent=True) or {}
+    version = body.get("version", "").strip()
+    if not version:
+        return jsonify({"error": "'version' is required."}), 400
+
+    channel = body.get("channel", "stable").strip().lower()
+    release_notes = body.get("release_notes", "").strip()
+    download_url = body.get("download_url", "").strip()
+
+    manifest = _load_release_manifest()
+    manifest[channel] = {
+        "version": version,
+        "channel": channel,
+        "release_notes": release_notes,
+        "download_url": download_url,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_release_manifest(manifest)
+
+    return jsonify({
+        "success": True,
+        "message": f"Published version {version} to '{channel}' channel.",
+        "data": manifest[channel],
     })
 
 

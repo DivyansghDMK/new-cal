@@ -2815,7 +2815,7 @@ class ExpandedLeadView(QDialog):
         # Color code based on severity
         abnormal_keywords = (
             "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
-            "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short"
+            "PVC", "PAC", "Wide QRS", "Prolonged", "Short"
         )
         is_normal = (
             "Normal Sinus Rhythm" in arrhythmia_text
@@ -2844,7 +2844,7 @@ class ExpandedLeadView(QDialog):
 
             # ── Lethal rhythm short-circuit ──────────────────────────────────
             # When Asystole / VF / VT is the primary diagnosis, save ONLY that
-            # label.  No secondary findings (Wide QRS, LVH, etc.) should be
+            # label.  No secondary findings (Wide QRS, etc.) should be
             # stored alongside — they are meaningless on a flat/absent signal.
             _LETHAL = {"Asystole", "Ventricular Fibrillation", "Ventricular Tachycardia"}
             if findings and findings[0] in _LETHAL:
@@ -2852,7 +2852,7 @@ class ExpandedLeadView(QDialog):
 
             abnormal_keywords = (
                 "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
-                "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole"
+                "PVC", "PAC", "Wide QRS", "Prolonged", "Short", "Asystole"
             )
             has_abnormal = any(
                 any(keyword.lower() in label.lower() for keyword in abnormal_keywords)

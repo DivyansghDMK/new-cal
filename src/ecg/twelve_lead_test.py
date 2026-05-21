@@ -2580,17 +2580,18 @@ class ECGTestPage(QWidget):
         elif smoothed_pr_value == 0:
             pass  # keep prev_pr — do not zero out a good reading
         
-        # FIX-TL3: QRS single source of truth.
-        # Priority: user_metrics["qrs_duration"] from ecg_calculations.py
-        # (uses qrs_duration_from_raw_signal — HR-adaptive, Curtin 2018 on raw signal).
-        # Fallback: measure_qrs_duration_from_median_beat (same algorithm, median beat).
-        # Only ONE value enters the smoothing buffer — no race condition.
-        if user_metrics["qrs_duration"] is not None and user_metrics["qrs_duration"] > 0:
-            qrs_duration_raw = user_metrics["qrs_duration"]
+        # FIX-TL3: QRS Blended Approach for LBBB Support
+        # Reference devices use slope-based onset. Threshold-based onset misses slow LBBB initial deflections.
+        # Blended QRS - more stable than either alone.
+        user_metrics_qrs = user_metrics.get("qrs_duration") or 0
+        median_beat_qrs = measure_qrs_duration_from_median_beat(
+            median_beat_ii, time_axis, fs, tp_baseline_ii
+        ) or 0
+        
+        if median_beat_qrs > 120 and user_metrics_qrs > 0:
+            qrs_duration_raw = int(0.4 * user_metrics_qrs + 0.6 * median_beat_qrs)
         else:
-            qrs_duration_raw = measure_qrs_duration_from_median_beat(
-                median_beat_ii, time_axis, fs, tp_baseline_ii
-            )
+            qrs_duration_raw = median_beat_qrs or user_metrics_qrs
 
         if not hasattr(self, '_qrs_print_count'):
             self._qrs_print_count = 0

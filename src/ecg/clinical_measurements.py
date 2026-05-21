@@ -618,8 +618,6 @@ def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
         rv5_mv  ≥ 0   (positive R amplitude)
         sv1_mv  ≤ 0   (negative S depth)
         Either may be None if the lead has insufficient data.
-
-    Sokolow-Lyon criterion:  rv5_mv + abs(sv1_mv)  ≥ 3.5 mV  → possible LVH
     """
     v5  = np.asarray(v5_raw,  dtype=float)
     v1  = np.asarray(v1_raw,  dtype=float)
@@ -648,16 +646,12 @@ def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
         measure_rv5_sv1_from_median_beat._dbg = 0
     measure_rv5_sv1_from_median_beat._dbg += 1
     if measure_rv5_sv1_from_median_beat._dbg % 50 == 1:
-        sokolow = (rv5_mv + abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
         rv5_text = f"{rv5_mv:.3f}" if rv5_mv is not None else "---"
         sv1_text = f"{sv1_mv:.3f}" if sv1_mv is not None else "---"
-        sokolow_text = f"{sokolow:.3f}" if sokolow is not None else "---"
         print(
             f"╔═══════════════════════════════════════╗\n"
             f"║  RV5 = {rv5_text} mV  (R wave in V5)\n"
             f"║  SV1 = {sv1_text} mV  (S wave in V1)\n"
-            f"║  Sokolow-Lyon = {sokolow_text} mV\n"
-            f"║  {'⚠️ LVH POSSIBLE' if sokolow is not None and sokolow >= 3.5 else '✓ Normal range'}\n"
             f"╚═══════════════════════════════════════╝"
         )
 
@@ -1364,7 +1358,7 @@ def calculate_qrs_t_angle(qrs_axis_deg, t_axis_deg):
     Clinical Interpretation:
     - <45°:   Normal
     - 45-90°: Borderline
-    - >90°:   High risk (ischaemia, LVH, cardiomyopathy)
+    - >90°:   High risk (ischaemia, cardiomyopathy)
 
     Args:
         qrs_axis_deg: QRS axis in degrees (-180 to +180).

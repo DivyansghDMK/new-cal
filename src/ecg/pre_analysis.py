@@ -238,10 +238,17 @@ def pre_analyze(
     if reason:
         return sig, 0.0, reason
 
-    # ── Hard reject: saturation ───────────────────────────────────────────────
-    reason = _check_saturation(sig)
-    if reason:
-        return sig, 0.2, reason
+    # ── Soft clip: saturation ─────────────────────────────────────────────────
+    # Instead of hard-rejecting, clip saturated samples to the 1st–99th percentile
+    # rail and continue through the cleaning pipeline.  Downstream R-peak detection
+    # still works on the clipped signal; the low quality score (0.2 deduction)
+    # is propagated so report layers know the data is degraded.
+    _sat_reason = _check_saturation(sig)
+    _sat_penalty = 0.0
+    if _sat_reason:
+        lo, hi = np.percentile(sig, 1.0), np.percentile(sig, 99.0)
+        sig = np.clip(sig, lo, hi)
+        _sat_penalty = 0.4  # applied after the normal quality score
 
     # ── Cleaning pipeline ─────────────────────────────────────────────────────
     clean = sig.copy()
@@ -257,9 +264,14 @@ def pre_analyze(
 
     # ── Quality score on cleaned signal ───────────────────────────────────────
     score = compute_quality_score(clean, fs)
+    # Apply saturation penalty on top of the normal score
+    score = max(0.0, min(1.0, score - _sat_penalty))
 
     reject_reason: Optional[str] = None
-    if score < 0.5:
+    # Always surface the saturation warning when present
+    if _sat_reason:
+        reject_reason = _sat_reason
+    elif score < 0.5:
         # Collect the most relevant reason
         for check_fn in (
             lambda s: _check_baseline_wander(s, fs)[0],

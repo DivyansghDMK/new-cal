@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import (
+from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider,
     QRadioButton, QButtonGroup, QGraphicsDropShadowEffect
@@ -3418,30 +3418,76 @@ class Dashboard(QWidget):
                 return
             if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'get_current_metrics'):
                 ecg_metrics = self.ecg_test_page.get_current_metrics()
-                hr_text = ecg_metrics.get('heart_rate', '0')
-                pr_text = ecg_metrics.get('pr_interval', '0')
-                qrs_text = ecg_metrics.get('qrs_duration', '0')
-                p_text = ecg_metrics.get('st_interval', '0')
-                qt_text = ecg_metrics.get('qt_interval', '')
-                qtc_text = ecg_metrics.get('qtc_interval', '0')
+                hr_raw = str(ecg_metrics.get('heart_rate', '0')).strip()
+                pr_raw = str(ecg_metrics.get('pr_interval', '0')).strip()
+                qrs_raw = str(ecg_metrics.get('qrs_duration', '0')).strip()
+                p_raw = str(ecg_metrics.get('st_interval', '0')).replace(' ms', '').replace('mV', '').strip()
+                qt_raw = str(ecg_metrics.get('qt_interval', '')).replace(' ms', '').strip()
+                qtc_raw = str(ecg_metrics.get('qtc_interval', '0')).replace(' ms', '').strip()
+                
+                # Check validity
+                def is_valid(val):
+                    return val not in ('', '0', '00', '0.0', '--', 'None')
+                
                 if 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText(f"{hr_text} BPM")
+                    if is_valid(hr_raw):
+                        self._last_hr = hr_raw
+                        self.metric_labels['heart_rate'].setText(f"{hr_raw} BPM")
+                    else:
+                        cached = getattr(self, '_last_hr', None)
+                        if cached:
+                            self.metric_labels['heart_rate'].setText(f"{cached} BPM (Unstable)")
+                        else:
+                            self.metric_labels['heart_rate'].setText("0 BPM")
+                            
                 if 'pr_interval' in self.metric_labels:
-                    self.metric_labels['pr_interval'].setText(f"{pr_text} ms")
+                    if is_valid(pr_raw):
+                        self._last_pr = pr_raw
+                        self.metric_labels['pr_interval'].setText(f"{pr_raw} ms")
+                    else:
+                        cached = getattr(self, '_last_pr', None)
+                        if cached:
+                            self.metric_labels['pr_interval'].setText(f"{cached} ms")
+                        else:
+                            self.metric_labels['pr_interval'].setText("0 ms")
+                            
                 if 'qrs_duration' in self.metric_labels:
-                    self.metric_labels['qrs_duration'].setText(f"{qrs_text} ms")
+                    if is_valid(qrs_raw):
+                        self._last_qrs = qrs_raw
+                        self.metric_labels['qrs_duration'].setText(f"{qrs_raw} ms")
+                    else:
+                        cached = getattr(self, '_last_qrs', None)
+                        if cached:
+                            self.metric_labels['qrs_duration'].setText(f"{cached} ms")
+                        else:
+                            self.metric_labels['qrs_duration'].setText("0 ms")
+                            
                 key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
                 if key in self.metric_labels:
-                    # Display P duration with ms unit (remove any existing units first)
-                    p_val = str(p_text).replace(' ms', '').replace('mV', '').strip()
-                    self.metric_labels[key].setText(f"{p_val} ms")
-                if 'qtc_interval' in self.metric_labels:
-                    qt_clean  = str(qt_text).replace(' ms', '').strip()
-                    qtc_clean = str(qtc_text).replace(' ms', '').strip()
-                    if qt_clean and qt_clean != '0' and qtc_clean and qtc_clean != '0':
-                        self.metric_labels['qtc_interval'].setText(f"{qt_clean}/{qtc_clean}")
+                    if is_valid(p_raw):
+                        self._last_p = p_raw
+                        self.metric_labels[key].setText(f"{p_raw} ms")
                     else:
-                        self.metric_labels['qtc_interval'].setText(qtc_clean if qtc_clean else "0")
+                        cached = getattr(self, '_last_p', None)
+                        if cached:
+                            self.metric_labels[key].setText(f"{cached} ms")
+                        else:
+                            self.metric_labels[key].setText("0 ms")
+                            
+                if 'qtc_interval' in self.metric_labels:
+                    if is_valid(qt_raw) and is_valid(qtc_raw):
+                        val = f"{qt_raw}/{qtc_raw}"
+                        self._last_qtc = val
+                        self.metric_labels['qtc_interval'].setText(val)
+                    elif is_valid(qtc_raw):
+                        self._last_qtc = qtc_raw
+                        self.metric_labels['qtc_interval'].setText(qtc_raw)
+                    else:
+                        cached = getattr(self, '_last_qtc', None)
+                        if cached:
+                            self.metric_labels['qtc_interval'].setText(cached)
+                        else:
+                            self.metric_labels['qtc_interval'].setText("0")
                 self._last_metrics_update_ts = _time.time()
                 # Ensure dashboard interpretation updates as soon as live metrics arrive.
                 # Previously this only refreshed after visiting the expanded lead view.
@@ -3496,6 +3542,7 @@ class Dashboard(QWidget):
             if not text:
                 return default
             if strip_units:
+                text = text.replace(" (Unstable)", "")
                 for unit in ("BPM", "bpm", "ms", "mV", "°"):
                     text = text.replace(unit, "")
             return text.strip() or default
@@ -4040,7 +4087,7 @@ class Dashboard(QWidget):
                         "block", "fibrillation", "flutter", "tachycardia", "bradycardia",
                         "pvc", "pac", "asystole"
                     )
-                    # NOTE: LVH, Wide QRS, Prolonged QTc, ST changes are MORPHOLOGICAL findings,
+                    # NOTE: Wide QRS, Prolonged QTc, ST changes are MORPHOLOGICAL findings,
                     # not rhythm abnormalities — they coexist with Normal Sinus Rhythm.
                     is_normal_rhythm = any(
                         keyword in rhythm_clean.lower()
@@ -4135,6 +4182,34 @@ class Dashboard(QWidget):
                     </p>
                 """
 
+            # ── Significant-rhythm override ─────────────────────────────────────
+            # If the arrhythmia engine's latest analysis contains a clinically
+            # significant rhythm (AV Block / AF / AFL) but the rhythm_text from
+            # the UI label still says NSR (smoothing lag), force CASE 2 so the
+            # finding is shown prominently instead of being hidden under NSR.
+            _SIGNIFICANT_LABELS = {
+                "Second-degree AV Block (Mobitz I)",
+                "Second-degree AV Block (Mobitz II)",
+                "Third-degree AV Block",
+                "First-degree AV Block (Prolonged PR)",
+                "Atrial Fibrillation",
+                "Atrial Flutter",
+            }
+            if is_normal_rhythm:
+                try:
+                    if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                        _last_sig = getattr(self.ecg_test_page, '_last_analysis', None) or {}
+                        _sig_arr = _last_sig.get('arrhythmias', [])
+                        _sig_found = [x for x in _sig_arr if x in _SIGNIFICANT_LABELS]
+                        if _sig_found:
+                            rhythm_issue = _sig_found[0]
+                            is_normal_rhythm = False
+                except Exception:
+                    pass
+
+            if (rhythm_clean in ignore_values or not rhythm_clean) and not has_metric_data:
+                pass  # already set conclusion_html above
+
             elif is_normal_rhythm and not any_metric_abnormal:
                 # ── CASE 1: Everything is normal → show Normal Sinus Rhythm only
                 conclusion_html = (
@@ -4157,7 +4232,7 @@ class Dashboard(QWidget):
                 )
                 findings.append("Normal Sinus Rhythm")
 
-                # ── Also collect morphological findings (LVH, ST, BBB) from
+                # ── Also collect morphological findings (ST, BBB) from
                 # ArrhythmiaEngine — these coexist with Normal Sinus Rhythm.
                 try:
                     if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
@@ -4168,7 +4243,8 @@ class Dashboard(QWidget):
                             "Bradycardia (non-sinus)", "Tachycardia (non-sinus)",
                             "Rhythm Undetermined",
                         }
-                        _morph_dx = [x for x in _engine_dx1 if x not in _rhythm_only_labels]
+                        _morph_dx = [x for x in _engine_dx1
+                                     if x not in _rhythm_only_labels and x not in _SIGNIFICANT_LABELS]
                         if _morph_dx:
                             findings.extend(_morph_dx)
                 except Exception:
@@ -4352,7 +4428,7 @@ class Dashboard(QWidget):
                                 clean_findings.append(label)
 
                     # Only strip "Normal Sinus Rhythm" when a true RHYTHM abnormality is present.
-                    # Morphological findings (LVH, ST elevation, Wide QRS, QTc) are independent
+                    # Morphological findings (ST elevation, Wide QRS, QTc) are independent
                     # and can legitimately coexist with Normal Sinus Rhythm.
                     rhythm_abnormal_keywords = (
                         "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",

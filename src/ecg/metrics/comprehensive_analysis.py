@@ -518,7 +518,9 @@ def calculate_comprehensive_metrics(lead_data: np.ndarray, fs: float = 500.0) ->
         dropped_beats = False
         if len(rr_values) >= 3:
             median_rr = float(np.median(rr_values))
-            dropped_beats = bool(median_rr > 0 and max(rr_values) > 2.0 * median_rr)
+            # Bug 1 fix (mirror of arrhythmia_detector.py): lower threshold
+            # from 2.0x → 1.5x so Wenckebach pauses are caught here too.
+            dropped_beats = bool(median_rr > 0 and max(rr_values) > 1.5 * median_rr)
 
         features = {
             "hr":             results["heart_rate"] or 0,
