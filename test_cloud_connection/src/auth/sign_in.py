@@ -4,8 +4,8 @@ from typing import Dict, Any, Optional, Tuple
 from PyQt5.QtWidgets import (
     QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QStackedWidget, QWidget, QSizePolicy
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, QRegularExpression
+from PyQt5.QtGui import QFont, QRegularExpressionValidator
 
 
 def get_asset_path(asset_name):
@@ -384,6 +384,39 @@ class LoginRegisterDialog(QDialog):
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
         self.reg_serial.setStyleSheet(self.login_username.styleSheet())
+        # Machine Serial ID must start with "RUM"
+        self._serial_prefix_guard = False
+        def _enforce_serial_prefix(text: str):
+            if self._serial_prefix_guard:
+                return
+            try:
+                self._serial_prefix_guard = True
+                raw = text or ""
+                if raw == "":
+                    return
+
+                raw_upper = raw.upper()
+                if raw_upper in ("R", "RU", "RUM"):
+                    if raw != raw_upper:
+                        self.reg_serial.setText(raw_upper)
+                        self.reg_serial.setCursorPosition(len(raw_upper))
+                    return
+
+                if raw_upper.startswith("RUM"):
+                    normalized = "RUM" + raw[3:]
+                    if raw != normalized:
+                        self.reg_serial.setText(normalized)
+                        self.reg_serial.setCursorPosition(len(normalized))
+                    return
+
+                forced = "RUM" + raw
+                self.reg_serial.setText(forced)
+                self.reg_serial.setCursorPosition(len(forced))
+            finally:
+                self._serial_prefix_guard = False
+        self.reg_serial.textEdited.connect(_enforce_serial_prefix)
+        self.reg_serial.setText("RUM")
+        self.reg_serial.setCursorPosition(3)
 
         self.reg_password = QLineEdit()
         self.reg_password.setPlaceholderText("Password")
@@ -410,6 +443,11 @@ class LoginRegisterDialog(QDialog):
         self.reg_contact = QLineEdit()
         self.reg_contact.setPlaceholderText("Contact Number")
         self.reg_contact.setStyleSheet(self.login_username.styleSheet())
+
+        # Signup field limits (UI-level)
+        self.reg_fullname.setMaxLength(20)
+        self.reg_contact.setMaxLength(10)
+        self.reg_contact.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
         
         self.reg_email = QLineEdit()
         self.reg_email.setPlaceholderText("Email Address")
@@ -453,20 +491,26 @@ class LoginRegisterDialog(QDialog):
         username = self.reg_username.text()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        serial_id = self.reg_serial.text()
-        fullname = self.reg_fullname.text()
+        serial_id = self.reg_serial.text().strip()
+        fullname = self.reg_fullname.text().strip()
         age = self.reg_age.text()
         gender = self.reg_gender.text()
-        contact = self.reg_contact.text()
+        contact = self.reg_contact.text().strip()
         email = self.reg_email.text()
         if not username or not password or not serial_id:
             QMessageBox.warning(self, "Error", "Username, password and machine serial ID are required.")
+            return
+        if not serial_id.upper().startswith("RUM"):
+            QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
             return
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")
             return
         if not fullname or not age or not gender or not contact or not email:
             QMessageBox.warning(self, "Error", "All details are required.")
+            return
+        if not contact.isdigit() or len(contact) != 10:
+            QMessageBox.warning(self, "Error", "Contact number must be exactly 10 digits.")
             return
         ok, msg = self.sign_in_logic.register_user_with_details(
             username=username,

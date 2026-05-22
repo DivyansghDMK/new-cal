@@ -503,6 +503,15 @@ class Dashboard(QWidget):
         self.admin_btn.setVisible(False)
 
         # Patient registration moved from ECG menu ("Save ECG") to outer dashboard header.
+        self.doctor_profile_btn = QPushButton("Doctor Profile")
+        self.doctor_profile_btn.setStyleSheet(
+            "background: #444; color: white; border-radius: 10px; padding: 4px 12px; margin-right: 8px;"
+        )
+        self.doctor_profile_btn.setToolTip("Edit doctor profile (name, organisation, password)")
+        self.doctor_profile_btn.clicked.connect(self.show_doctor_profile_dialog)
+        self.doctor_profile_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        header.addWidget(self.doctor_profile_btn)
+
         self.new_registration_btn = QPushButton("Patient registration")
         self.new_registration_btn.setStyleSheet(
             "background: #ff6600; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
@@ -561,20 +570,9 @@ class Dashboard(QWidget):
         
         # --- Greeting and Date Row ---
         greet_row = QHBoxLayout()
-        from datetime import datetime
-        hour = datetime.now().hour
-        if hour < 12:
-            greeting = "Good Morning"
-        elif hour < 18:
-            greeting = "Good Afternoon"
-        else:
-            greeting = "Good Evening"
-        
         # Show full name if available, otherwise username
-
-         
         display_name = self.user_details.get('full_name', username) or username or 'User'
-        user_info_lines = [f"<span style='font-size:18pt;font-weight:bold;'>{greeting}, {display_name}</span>"]
+        user_info_lines = [f"<span style='font-size:18pt;font-weight:bold;'>{self._compute_greeting()}, {display_name}</span>"]
         
         # Add user details if available
         if self.user_details:
@@ -589,10 +587,10 @@ class Dashboard(QWidget):
         
         user_info_lines.append("<span style='color:#888;'>Welcome to your ECG dashboard</span>")
         
-        greet = QLabel("<br>".join(user_info_lines))
-        greet.setFont(QFont("Arial", 16))
-        greet.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        greet_row.addWidget(greet)
+        self.greet_label = QLabel("<br>".join(user_info_lines))
+        self.greet_label.setFont(QFont("Arial", 16))
+        self.greet_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        greet_row.addWidget(self.greet_label)
         greet_row.addStretch()
         
         # History button (orange dark suede, left of Hyperkalemia)
@@ -3905,6 +3903,59 @@ class Dashboard(QWidget):
             self.set_heartbeat_sound_enabled(value)
         elif key == "system_language":
             self.apply_language(value)
+
+    def _compute_greeting(self) -> str:
+        from datetime import datetime
+
+        hour = datetime.now().hour
+        if hour < 12:
+            return "Good Morning"
+        if hour < 18:
+            return "Good Afternoon"
+        return "Good Evening"
+
+    def refresh_greeting_label(self) -> None:
+        if not hasattr(self, "greet_label") or self.greet_label is None:
+            return
+
+        display_name = (self.user_details or {}).get("full_name") or self.username or "User"
+        user_info_lines = [f"<span style='font-size:18pt;font-weight:bold;'>{self._compute_greeting()}, {display_name}</span>"]
+
+        if self.user_details:
+            details = []
+            if self.user_details.get("age"):
+                details.append(f"Age: {self.user_details.get('age')}")
+            if self.user_details.get("gender"):
+                details.append(f"Gender: {self.user_details.get('gender')}")
+            if details:
+                user_info_lines.append(f"<span style='color:#666; font-size:11pt;'>{' | '.join(details)}</span>")
+
+        user_info_lines.append("<span style='color:#888;'>Welcome to your ECG dashboard</span>")
+        self.greet_label.setText("<br>".join(user_info_lines))
+
+    def show_doctor_profile_dialog(self) -> None:
+        try:
+            from dashboard.doctor_profile_dialog import DoctorProfileDialog
+        except Exception as e:
+            QMessageBox.warning(self, "Doctor Profile", f"Could not open Doctor Profile dialog: {e}")
+            return
+
+        dlg = DoctorProfileDialog(username=self.username or "", user_details=self.user_details or {}, parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        updated = dlg.get_updated_user_details()
+        if isinstance(updated, dict) and updated:
+            self.user_details = dict(self.user_details or {})
+            self.user_details.update(updated)
+            self.refresh_greeting_label()
+
+            # Keep other pages (ECG test, report generators) synced with the latest in-memory profile.
+            try:
+                if hasattr(self, "ecg_test_page") and self.ecg_test_page:
+                    setattr(self.ecg_test_page, "user_details", dict(self.user_details))
+            except Exception:
+                pass
     def handle_sign(self):
         if self.sign_btn.text() == "Sign In":
             dialog = SignInDialog(self)

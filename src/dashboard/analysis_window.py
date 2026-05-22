@@ -1082,7 +1082,7 @@ class ECGAnalysisWindow(QDialog):
         # Filter settings
         self.filter_ac = "50"
         self.filter_emg = "150"
-        self.filter_dft = "0.5"
+        self.filter_dft = "off"
         try:
             from utils.settings_manager import SettingsManager
             sm = SettingsManager()
@@ -3018,7 +3018,7 @@ class ECGAnalysisWindow(QDialog):
             # Read current filter settings
             filter_ac = getattr(self, "filter_ac", "50")
             filter_emg = getattr(self, "filter_emg", "150")
-            filter_dft = getattr(self, "filter_dft", "0.5")
+            filter_dft = getattr(self, "filter_dft", "off")
             try:
                 from utils.settings_manager import SettingsManager
                 sm = SettingsManager()
@@ -3074,7 +3074,7 @@ class ECGAnalysisWindow(QDialog):
                 'age': '' if anonymize_pdf else patient_age,
                 'gender': '' if anonymize_pdf else patient_gender,
                 'date_time': pat.get('report_date') or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'doctor_name': '' if anonymize_pdf else pat.get('doctor', ''),
+                'doctor_name': '' if anonymize_pdf else (pat.get('doctor_name', '') or pat.get('doctor', '')),
                 'org': '' if anonymize_pdf else pat.get('Org.', ''),
                 'phone': '' if anonymize_pdf else (pat.get('phone', '') or pat.get('doctor_mobile', '')),
                 'name': '' if anonymize_pdf else patient_name,

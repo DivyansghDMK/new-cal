@@ -173,10 +173,10 @@ from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
     QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer, QUrl
-from PyQt5.QtGui import QDesktopServices, QFont, QPixmap, QIntValidator
+from PyQt5.QtCore import Qt, QTimer, QUrl, QRegularExpression
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
+from PyQt5.QtGui import QDesktopServices, QFont, QPixmap, QIntValidator, QRegularExpressionValidator
 from utils.ecg_auth_api import get_ecg_auth_api
 from utils.offline_queue import get_offline_queue
 
@@ -1044,6 +1044,13 @@ class LoginRegisterDialog(QDialog):
         self.reg_confirm = QLineEdit()
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
+
+        self.reg_name.setMaxLength(20)
+        self.reg_doctor.setMaxLength(20)
+        self.reg_org_name.setMaxLength(28)
+        self.reg_org_address.setMaxLength(45)
+        self.reg_phone.setMaxLength(10)
+        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
         
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
@@ -1557,7 +1564,7 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text()
-        name = self.reg_name.text()
+        name = self.reg_name.text().strip()
         doctor = self.reg_doctor.text().strip()
         org_name = self.reg_org_name.text().strip()
         org_address = self.reg_org_address.text().strip()
@@ -1567,9 +1574,9 @@ class LoginRegisterDialog(QDialog):
         if not all([serial_id, name, doctor, org_name, org_address, phone, password, confirm]):
             QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
             return
-        # Enforce numeric phone number with length up to 10 digits
-        if not phone.isdigit() or len(phone) > 10:
-            QMessageBox.warning(self, "Error", "Phone number must be numbers only and at most 10 digits.")
+        # Enforce numeric phone number with exact 10 digits
+        if not phone.isdigit() or len(phone) != 10:
+            QMessageBox.warning(self, "Error", "Phone number must be exactly 10 digits.")
             return
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")

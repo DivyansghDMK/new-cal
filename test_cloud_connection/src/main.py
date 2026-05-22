@@ -28,7 +28,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
-from PyQt5.QtGui import QFont, QPixmap, QIntValidator
+from PyQt5.QtGui import QFont, QPixmap, QIntValidator, QRegularExpressionValidator
+from PyQt5.QtCore import QRegularExpression
 
 # Import core modules  
 try:
@@ -441,6 +442,39 @@ class LoginRegisterDialog(QDialog):
         layout = QVBoxLayout()
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
+        # Machine Serial ID must start with "RUM"
+        self._serial_prefix_guard = False
+        def _enforce_serial_prefix(text: str):
+            if self._serial_prefix_guard:
+                return
+            try:
+                self._serial_prefix_guard = True
+                raw = text or ""
+                if raw == "":
+                    return
+
+                raw_upper = raw.upper()
+                if raw_upper in ("R", "RU", "RUM"):
+                    if raw != raw_upper:
+                        self.reg_serial.setText(raw_upper)
+                        self.reg_serial.setCursorPosition(len(raw_upper))
+                    return
+
+                if raw_upper.startswith("RUM"):
+                    normalized = "RUM" + raw[3:]
+                    if raw != normalized:
+                        self.reg_serial.setText(normalized)
+                        self.reg_serial.setCursorPosition(len(normalized))
+                    return
+
+                forced = "RUM" + raw
+                self.reg_serial.setText(forced)
+                self.reg_serial.setCursorPosition(len(forced))
+            finally:
+                self._serial_prefix_guard = False
+        self.reg_serial.textEdited.connect(_enforce_serial_prefix)
+        self.reg_serial.setText("RUM")
+        self.reg_serial.setCursorPosition(3)
         self.reg_name = QLineEdit()
         self.reg_name.setPlaceholderText("Full Name")
         self.reg_age = QLineEdit()
@@ -458,6 +492,12 @@ class LoginRegisterDialog(QDialog):
         self.reg_confirm = QLineEdit()
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
+
+        # Signup field limits (UI-level)
+        self.reg_name.setMaxLength(20)
+        self.reg_address.setMaxLength(45)
+        self.reg_phone.setMaxLength(10)
+        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
         
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
@@ -603,20 +643,23 @@ class LoginRegisterDialog(QDialog):
             self.accept()
 
     def handle_register(self):
-        serial_id = self.reg_serial.text()
-        name = self.reg_name.text()
+        serial_id = self.reg_serial.text().strip()
+        name = self.reg_name.text().strip()
         age = self.reg_age.text()
         gender = self.reg_gender.text()
-        address = self.reg_address.text()
+        address = self.reg_address.text().strip()
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
         if not all([serial_id, name, age, gender, address, phone, password, confirm]):
             QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
             return
-        # Enforce numeric phone number with length up to 10 digits
-        if not phone.isdigit() or len(phone) > 10:
-            QMessageBox.warning(self, "Error", "Phone number must be numbers only and at most 10 digits.")
+        if not serial_id.upper().startswith("RUM"):
+            QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
+            return
+        # Enforce numeric phone number with exact 10 digits
+        if not phone.isdigit() or len(phone) != 10:
+            QMessageBox.warning(self, "Error", "Phone number must be exactly 10 digits.")
             return
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")

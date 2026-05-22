@@ -884,7 +884,7 @@ class HRVTestWindow(QWidget):
                 # Get filter settings from SettingsManager
                 ac_val = self.settings_manager.get_setting("filter_ac", "50")
                 emg_val = self.settings_manager.get_setting("filter_emg", "150")
-                dft_val = self.settings_manager.get_setting("filter_dft", "0.5")
+                dft_val = self.settings_manager.get_setting("filter_dft", "off")
 
                 # Pad data to reduce transient response at the edges.
                 pad_len = 50

@@ -138,7 +138,7 @@ def generate_report(
 
     ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
     emg_setting = _get_filter_setting("filter_emg", "150")  # "25".."150" or "off"
-    dft_setting = _get_filter_setting("filter_dft", "0.5")  # "0.05", "0.5", or "off"
+    dft_setting = _get_filter_setting("filter_dft", "off")  # "0.05", "0.5", or "off"
     REPORT_AC_SETTING = ac_setting
     REPORT_EMG_SETTING = emg_setting
     REPORT_DFT_SETTING = dft_setting
