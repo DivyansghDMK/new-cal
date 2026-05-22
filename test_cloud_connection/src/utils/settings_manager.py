@@ -20,7 +20,7 @@ class SettingsManager:
             # Filter settings
             "filter_ac": "50",
             "filter_emg": "150",
-            "filter_dft": "0.5",
+            "filter_dft": "off",
 
             # System Setup settings
             "system_beat_vol": "off",

@@ -24,7 +24,8 @@ class SettingsManager:
             "filter_ac": "50",
             # Default EMG cutoff for all modes (user can change in settings).
             "filter_emg": "150",
-            "filter_dft": "0.5",
+            # Default baseline HP (DFT) cutoff for all modes (user can change in settings).
+            "filter_dft": "off",
 
             # System Setup settings
             "system_beat_vol": "off",
@@ -77,7 +78,7 @@ class SettingsManager:
                     return "0.05"
                 if abs(val - 0.5) < 1e-6:
                     return "0.5"
-            return self.default_settings.get("filter_dft", "0.5") if hasattr(self, "default_settings") else "0.5"
+            return self.default_settings.get("filter_dft", "off") if hasattr(self, "default_settings") else "off"
 
         return value
     

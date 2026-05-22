@@ -155,6 +155,9 @@ def org_from_user_profile(username: str = "", user_details: Optional[Dict[str, A
     if formatted_phone:
         out["doctor_mobile"] = formatted_phone
     if doctor_name:
+        # Canonical key for reports is `doctor_name`.
+        # Keep `doctor` populated for backward compatibility with older generators.
+        out["doctor_name"] = doctor_name
         out["doctor"] = doctor_name
     return out
 
@@ -212,6 +215,17 @@ def merge_patient_profile(base_patient: Optional[Dict[str, Any]], fallback_patie
             merged["last_name"] = name_parts["last_name"]
 
     merged["date_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Normalize doctor naming: `doctor_name` is canonical, but some flows still write `doctor`.
+    try:
+        doc = str(merged.get("doctor", "") or "").strip()
+        doc_name = str(merged.get("doctor_name", "") or "").strip()
+        if doc and not doc_name:
+            merged["doctor_name"] = doc
+        elif doc_name and not doc:
+            merged["doctor"] = doc_name
+    except Exception:
+        pass
     return merged
 
 
@@ -223,27 +237,62 @@ def resolve_patient_profile(
     user_fallback = org_from_user_profile(username=username, user_details=user_details)
     user_doctor = ""
     try:
-        user_doctor = str(user_fallback.get("doctor", "")).strip()
+        user_doctor = str(user_fallback.get("doctor_name", "") or user_fallback.get("doctor", "")).strip()
     except Exception:
         user_doctor = ""
+    user_org = ""
+    user_addr = ""
+    try:
+        user_org = str(user_fallback.get("org_name", "") or user_fallback.get("Org.", "") or "").strip()
+        user_addr = str(user_fallback.get("org_address", "") or user_fallback.get("Org. Address", "") or "").strip()
+    except Exception:
+        user_org, user_addr = "", ""
 
     current = dict(explicit_patient or {})
     if current:
         merged = merge_patient_profile(current, user_fallback)
         if user_doctor:
+            merged["doctor_name"] = user_doctor
             merged["doctor"] = user_doctor
+        # Always prefer the logged-in doctor's organisation details for report headers.
+        if user_org:
+            merged["Org."] = user_org
+            merged["Org. Name"] = user_org
+            merged["org"] = user_org
+            merged["org_name"] = user_org
+        if user_addr:
+            merged["Org. Address"] = user_addr
+            merged["org_address"] = user_addr
         return merged
 
     latest_patient = get_latest_saved_patient()
     if latest_patient:
         merged = merge_patient_profile(latest_patient, user_fallback)
         if user_doctor:
+            merged["doctor_name"] = user_doctor
             merged["doctor"] = user_doctor
+        if user_org:
+            merged["Org."] = user_org
+            merged["Org. Name"] = user_org
+            merged["org"] = user_org
+            merged["org_name"] = user_org
+        if user_addr:
+            merged["Org. Address"] = user_addr
+            merged["org_address"] = user_addr
         return merged
 
     if user_fallback:
         merged = merge_patient_profile(user_fallback, {})
         if user_doctor:
+            merged["doctor_name"] = user_doctor
             merged["doctor"] = user_doctor
+        if user_org:
+            merged["Org."] = user_org
+            merged["Org. Name"] = user_org
+            merged["org"] = user_org
+            merged["org_name"] = user_org
+        if user_addr:
+            merged["Org. Address"] = user_addr
+            merged["org_address"] = user_addr
         return merged
     return {"date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}

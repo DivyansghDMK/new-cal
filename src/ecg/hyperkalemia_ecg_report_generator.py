@@ -1770,7 +1770,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
                 try:
                     from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
                     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
                     if dft_setting not in ("off", ""):
@@ -2193,7 +2193,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
                 try:
                     from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
                     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
                     if dft_setting not in ("off", ""):
@@ -2491,11 +2491,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     from reportlab.pdfbase.pdfmetrics import stringWidth
     label_text = "Doctor Name: "
     
-    # Value from Save ECG -> passed in 'patient'
+    # Value from Save ECG / signup profile -> passed in 'patient'
     doctor = ""
     try:
         if patient:
-            doctor = str(patient.get("doctor", "")).strip()
+            doctor = str(patient.get("doctor_name", "") or patient.get("doctor", "") or "").strip()
     except Exception:
         doctor = ""
   
@@ -3503,7 +3503,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     from datetime import datetime
     date_time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     date_time = date_time_now
-    doctor = pick("doctor") or ""
+    doctor = pick("doctor_name") or pick("doctor") or ""
     doctor_mobile = pick("doctor_mobile") or ""
     org_name = pick("Org. Name") or pick("Org.") or pick("org") or ""
     org_address = pick("Org. Address") or ""

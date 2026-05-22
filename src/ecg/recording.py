@@ -1868,8 +1868,8 @@ class ECGMenu(QGroupBox):
             (self.tr("Hardware Version"), hardware_version),
             (self.tr("Firmware Version"), "V.3.0.1"),
             (self.tr("Build Date"), "2024-08-26"),
-            (self.tr("Manufacturer"), "Modular ECG Systems"),
-            (self.tr("Model"), "ECG-121 Pro"),
+            (self.tr("Manufacturer"), "Deckmount Electronics Pvt Ltd"),
+            (self.tr("Model"), "CardioX"),
             (self.tr("Serial Number"), "MF-2024-001"),
             (self.tr("License"), "Professional Edition")
         ]

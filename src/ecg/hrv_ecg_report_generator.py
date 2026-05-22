@@ -1827,7 +1827,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
                 try:
                     from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
                     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
                     if dft_setting not in ("off", ""):
@@ -2448,11 +2448,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     from reportlab.pdfbase.pdfmetrics import stringWidth
     label_text = "Doctor Name: "
     
-    # Value from Save ECG -> passed in 'patient'
+    # Value from Save ECG / signup profile -> passed in 'patient'
     doctor = ""
     try:
         if patient:
-            doctor = str(patient.get("doctor", "")).strip()
+            doctor = str(patient.get("doctor_name", "") or patient.get("doctor", "") or "").strip()
     except Exception:
         doctor = ""
   
@@ -3397,7 +3397,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     samples_per_strip = int(12.0 * float(sampling_rate)) if 'sampling_rate' in locals() else 6000
     segment_duration = (samples_per_strip / float(sampling_rate)) if 'sampling_rate' in locals() else 12.0
-    num_segments = 5
+
+    # Use only the captured duration (3 min vs 5 min) — do not force 5 strips.
+    total_duration = max((d.get('time', 0) for d in captured_data), default=0) if captured_data else 0
+    num_segments = max(1, min(5, int(total_duration // 60.0) + (1 if total_duration % 60.0 >= 1.0 else 0)))
 
     print(f"📊 HRV Report Configuration:")
     print(f"   Samples per strip: {samples_per_strip} ADC samples (sampling_rate={sampling_rate} Hz)")
@@ -3722,7 +3725,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     story.append(master_drawing)
     # story.append(Spacer(1, 15))  # REMOVED - was creating unwanted 3rd page
     
-    print(f"📊 Added master drawing with {successful_graphs}/5 selected-lead strips using hyperkalemia-style plotting!")
+    print(f"📊 Added master drawing with {successful_graphs}/{num_segments} selected-lead strips using hyperkalemia-style plotting!")
     
     # ==================== PAGE 2: TIME DOMAIN & FREQUENCY DOMAIN ANALYSIS (LANDSCAPE MODE) ====================
     
@@ -3846,20 +3849,35 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             return None, None, []
     
     sampling_rate = 500.0
-    values_all = np.array([d['value'] for d in captured_data], dtype=float) if captured_data else np.array([])
-    per_minute_samples = int(sampling_rate * 60)
-    total_samples = len(values_all)
-    num_minutes_exact = min(5, total_samples // per_minute_samples)
+
+    # For 3-minute HRV tests, compute per-minute RR/HR using TIME windows so all 3 bars show
+    # even if sampling drops below the assumed 500Hz. Keep the 5-minute behavior unchanged.
+    total_duration = max((d.get('time', 0) for d in captured_data), default=0) if captured_data else 0
+    is_three_min_test = 120.0 <= float(total_duration) < 240.0
+
     minute_value_arrays = []
-    if num_minutes_exact >= 1:
-        for i in range(num_minutes_exact):
-            start = i * per_minute_samples
-            end = start + per_minute_samples
-            minute_value_arrays.append(values_all[start:end])
-    elif total_samples > 100:
-        num_minutes_exact = 1
-        minute_value_arrays.append(values_all)
-    
+    if is_three_min_test:
+        # Build 3 minute windows: [0-60), [60-120), [120-180)
+        for minute_idx in range(3):
+            start_t = minute_idx * 60.0
+            end_t = (minute_idx + 1) * 60.0
+            seg_values = np.array([d['value'] for d in captured_data if start_t <= d.get('time', 0) < end_t], dtype=float)
+            minute_value_arrays.append(seg_values)
+        num_minutes_exact = 3
+    else:
+        values_all = np.array([d['value'] for d in captured_data], dtype=float) if captured_data else np.array([])
+        per_minute_samples = int(sampling_rate * 60)
+        total_samples = len(values_all)
+        num_minutes_exact = min(5, total_samples // per_minute_samples)
+        if num_minutes_exact >= 1:
+            for i in range(num_minutes_exact):
+                start = i * per_minute_samples
+                end = start + per_minute_samples
+                minute_value_arrays.append(values_all[start:end])
+        elif total_samples > 100:
+            num_minutes_exact = 1
+            minute_value_arrays.append(values_all)
+
     for seg_idx in range(num_minutes_exact):
         seg_values = minute_value_arrays[seg_idx]
         if seg_values.size > 100:
@@ -3961,21 +3979,25 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Chart 1: Avg. RR Interval per minute (Bar Chart) - Standard professional colors
     fig1, ax1 = plt.subplots(figsize=(6.5, 3.5))
-    rr_source_all = avg_rr_per_minute if ('avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list)) else []
-    minutes = [f"Min {i+1}" for i in range(5)]
-    rr_values_plot = [(rr_source_all[i] if i < len(rr_source_all) else 0) for i in range(5)]
-    rr_colors = [('#6497b1' if i < len(rr_source_all) else (0,0,0,0)) for i in range(5)]
-    rr_edges = [('#6497b1' if i < len(rr_source_all) else (0,0,0,0)) for i in range(5)]
-    x_pos = np.arange(5)
-    bars1 = ax1.bar(x_pos, rr_values_plot, width=0.6, color=rr_colors, edgecolor=rr_edges, linewidth=1.5)
+    rr_source_all = (
+        rr_per_minute
+        if 'rr_per_minute' in locals() and isinstance(rr_per_minute, list)
+        else (avg_rr_per_minute if ('avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list)) else [])
+    )
+    minutes_count = max(1, min(5, len(rr_source_all)))
+    rr_source_all = rr_source_all[:minutes_count]
+    minutes = [f"Min {i+1}" for i in range(minutes_count)]
+    rr_values_plot = list(rr_source_all)
+    x_pos = np.arange(minutes_count)
+    bars1 = ax1.bar(x_pos, rr_values_plot, width=0.6, color='#6497b1', edgecolor='#6497b1', linewidth=1.5)
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(minutes)
     ax1.set_xlabel('Minutes', fontsize=10, fontweight='bold')
     ax1.set_ylabel('Milliseconds', fontsize=10, fontweight='bold')
     ax1.set_title('Avg. RR Interval per minute', fontsize=12, fontweight='bold')
     ax1.grid(axis='y', alpha=0.3)
-    ax1.set_xlim(-0.5, 4.5)
-    rr_max = max(rr_values_plot) if len(rr_values_plot) > 0 else 0
+    ax1.set_xlim(-0.5, max(0.5, minutes_count - 0.5))
+    rr_max = max(rr_values_plot) if rr_values_plot else 0
     rr_upper = int(np.ceil(rr_max * 1.10)) if rr_max > 0 else 3000
     rr_upper = max(200, min(3000, rr_upper))
     ax1.set_ylim(0, rr_upper)
@@ -4008,8 +4030,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Chart 2: Avg. Heart Rate per minute (Bar Chart) - Standard professional colors
     fig2, ax2 = plt.subplots(figsize=(6.5, 3.5))
-    hr_values_plot = [(60000 / (rr_source_all[i]) if i < len(rr_source_all) and rr_source_all[i] > 0 else 0) for i in range(5)]
-    x_pos2 = np.arange(5)
+    hr_values_plot = [(60000 / r if r and r > 0 else 0) for r in rr_source_all]
+    x_pos2 = np.arange(minutes_count)
     bars2 = ax2.bar(x_pos2, hr_values_plot, width=0.6, color='#6497b1', edgecolor='#6497b1', linewidth=1.5)
     ax2.set_xticks(x_pos2)
     ax2.set_xticklabels(minutes)
@@ -4017,7 +4039,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     ax2.set_ylabel('Beats per minute', fontsize=10, fontweight='bold')
     ax2.set_title('Avg. Heart Rate per minute', fontsize=12, fontweight='bold')
     ax2.grid(axis='y', alpha=0.3)
-    ax2.set_xlim(-0.5, 4.5)
+    ax2.set_xlim(-0.5, max(0.5, minutes_count - 0.5))
     hr_max = max(hr_values_plot) if len(hr_values_plot) > 0 else 0
     hr_upper = int(np.ceil(hr_max * 1.10)) if hr_max > 0 else 300
     hr_upper = max(20, min(300, hr_upper))
@@ -4109,7 +4131,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             rr_for_metrics = np.convolve(rr_intervals_calc, kernel, mode='valid')
         average_nn_intervals = float(np.mean(rr_for_metrics))
         sdnn = float(np.std(rr_for_metrics, ddof=1))
-        segment_length = max(1, len(rr_for_metrics) // 5)
+        # For a 3-minute test, compute SDANN across 3 segments (not hard-coded 5).
+        seg_count_for_sdann = 5
+        try:
+            seg_count_for_sdann = max(1, min(5, int(minutes_count_page2))) if 'minutes_count_page2' in locals() else 5
+        except Exception:
+            seg_count_for_sdann = 5
+        segment_length = max(1, len(rr_for_metrics) // seg_count_for_sdann)
         segment_averages = []
         for i in range(0, len(rr_for_metrics), segment_length):
             segment = rr_for_metrics[i:i + segment_length]
@@ -4459,7 +4487,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             if current_seg and len(current_seg) > 5:
                 segments_rr.append(np.array(current_seg))
             
-            segments_rr = segments_rr[:5]
+            seg_limit = 5
+            try:
+                seg_limit = max(1, min(5, int(minutes_count_page2))) if 'minutes_count_page2' in locals() else 5
+            except Exception:
+                seg_limit = 5
+            segments_rr = segments_rr[:seg_limit]
             
             all_psds = []
             common_freqs = None

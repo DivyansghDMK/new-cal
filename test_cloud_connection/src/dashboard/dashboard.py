@@ -2791,7 +2791,7 @@ class Dashboard(QWidget):
 
                         ac_setting  = str(self.settings_manager.get_setting("filter_ac",  "50")).strip()
                         emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
-                        dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.5")).strip()
+                        dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
 
                         # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz.
                         # Disable gracefully rather than letting the filter raise an error.

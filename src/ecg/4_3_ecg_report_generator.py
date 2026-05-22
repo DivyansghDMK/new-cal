@@ -304,7 +304,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
         work = np.pad(arr, pad_width=pad, mode="reflect")
     else:
         work = arr
-    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
     dft_param = dft_setting if dft_setting not in ("off", "") else None
@@ -2005,7 +2005,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                     
                     ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
                     emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
                     if ac_setting in ("50", "60"):
