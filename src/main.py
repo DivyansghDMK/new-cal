@@ -171,14 +171,16 @@ if not _lic_url or "localhost" in _lic_url or "127.0.0.1" in _lic_url:
 
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
-    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea
+    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea,
+    QFormLayout
 )
-from PyQt5.QtCore import Qt, QTimer, QUrl, QRegularExpression
+from PyQt5.QtCore import Qt, QTimer, QUrl, QRegularExpression, QThread, pyqtSignal
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QDesktopServices, QFont, QPixmap, QIntValidator, QRegularExpressionValidator
 from utils.ecg_auth_api import get_ecg_auth_api
 from utils.offline_queue import get_offline_queue
+from utils.settings_manager import SettingsManager
 
 try:
     from version import APP_VERSION, UPDATE_CHANNEL, GITHUB_REPOSITORY
@@ -364,14 +366,22 @@ def _launch_update_checker(dashboard: QWidget, app_version: str, channel: str) -
             current_version=app_version,
             channel=channel,
             delay_seconds=5.0,
-            parent=None,   # No parent — we manage lifetime manually via stop()
+            parent=dashboard,   # Set dashboard as parent so it's deleted WITH the dashboard
         )
         _checker.update_available.connect(_on_update_available)
         _checker.start()
         # Keep a strong reference and wire clean shutdown to dashboard close.
         dashboard._update_checker = _checker
+        
+        def safe_stop():
+            try:
+                if _checker and not _checker.isFinished():
+                    _checker.stop()
+            except (RuntimeError, ReferenceError):
+                pass
+        
         try:
-            dashboard.destroyed.connect(lambda: _checker.stop())
+            dashboard.destroyed.connect(safe_stop)
         except Exception:
             pass
         logger.info("[UpdateChecker] Background update check scheduled (5s delay).")
@@ -542,6 +552,88 @@ def save_users(users):
         raise ECGError(f"Failed to save user data: {e}")
 
 
+class DeviceScanWorker(QThread):
+    """Worker thread for non-blocking serial port scanning"""
+    scan_finished = pyqtSignal(bool, str, str, str) # success, port, version, serial
+
+    def __init__(self, settings_manager=None):
+        super().__init__()
+        self.settings_manager = settings_manager
+
+    def run(self):
+        try:
+            import serial
+            import serial.tools.list_ports
+            from ecg.serial.hardware_commands import HardwareCommandHandler
+
+            ports = list(serial.tools.list_ports.comports())
+            if sys.platform == "darwin":
+                ports = [p for p in ports if ("usbserial" in p.device) or ("usbmodem" in p.device)]
+            else:
+                # Avoid probing non-USB / legacy ports that frequently hang or always fail.
+                filtered = []
+                for p in ports:
+                    desc = str(getattr(p, "description", "") or "")
+                    dev = str(getattr(p, "device", "") or "")
+                    if dev.upper() == "COM1" and "Communications Port" in desc:
+                        continue
+                    if "Bluetooth" in desc:
+                        continue
+                    filtered.append(p)
+                ports = filtered
+            
+            if not ports:
+                self.scan_finished.emit(False, "", "", "")
+                return
+
+            # Prioritize the last saved port
+            if self.settings_manager:
+                saved_port = self.settings_manager.get_setting("serial_port")
+                if saved_port:
+                    ports.sort(key=lambda p: 0 if p.device == saved_port else 1)
+
+            for port in ports:
+                try:
+                    desc = str(getattr(port, "description", "") or "")
+                    print(f" Device scan: probing {port.device} ({desc})")
+
+                    # Quick check (keep it short; this runs in a background thread).
+                    ser = serial.Serial(
+                        port.device,
+                        115200,
+                        timeout=0.2,
+                        write_timeout=0.2,
+                    )
+                    try:
+                        handler = HardwareCommandHandler(ser)
+                        # 1. Preferred detection: VERSION command
+                        success_v, version, _ = handler.send_version_command(timeout=0.4)
+                        
+                        # 2. Also try to get MACHINE SERIAL while we have the port open
+                        serial_num = ""
+                        if success_v:
+                            success_s, serial_num, _ = handler.send_machine_serial_command(timeout=0.4)
+                            if not success_s:
+                                serial_num = ""
+                        
+                        if success_v and version:
+                            self.scan_finished.emit(True, port.device, version, serial_num)
+                            return
+                    finally:
+                        try:
+                            ser.close()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"⚠️ Device scan: {port.device} probe failed: {e}")
+                    continue
+
+            self.scan_finished.emit(False, "", "", "")
+        except Exception as e:
+            print(f"Error in DeviceScanWorker: {e}")
+            self.scan_finished.emit(False, "", "", "")
+
+
 # Login/Register Dialog
 class LoginRegisterDialog(QDialog):
     def __init__(self):
@@ -559,6 +651,13 @@ class LoginRegisterDialog(QDialog):
         SignIn, _ = get_auth_modules()
         self.sign_in_logic = SignIn()
 
+        # Connection monitoring for auto-populating serial ID
+        self.settings_manager = SettingsManager()
+        self._device_scan_in_progress = False
+        self.device_check_timer = QTimer(self)
+        self.device_check_timer.timeout.connect(self.check_device_connection)
+        self.device_check_timer.start(1000) # Check every 1 second
+        
         # Resize according to current screen size (~90% of available geometry)
         try:
             screen_geom = QApplication.primaryScreen().availableGeometry()
@@ -698,6 +797,40 @@ class LoginRegisterDialog(QDialog):
         # Ensure background is always visible
         self.ensure_background_visible()
 
+    def check_device_connection(self):
+        """Monitor USB connection to auto-populate machine serial ID"""
+        if self._device_scan_in_progress:
+            return
+
+        try:
+            import serial.tools.list_ports
+            current_ports = [p.device for p in serial.tools.list_ports.comports()]
+            
+            # Simple heuristic: only scan if ports changed or we haven't found a device yet
+            if not hasattr(self, '_last_ports') or current_ports != self._last_ports:
+                self._last_ports = current_ports
+                
+                self._device_scan_in_progress = True
+                self.scan_worker = DeviceScanWorker(self.settings_manager)
+                self.scan_worker.scan_finished.connect(self.on_scan_finished)
+                self.scan_worker.start()
+        except Exception as e:
+            print(f"Error checking connection: {e}")
+
+    def on_scan_finished(self, success, port, version, serial_num):
+        """Update Sign Up serial field when device is detected"""
+        self._device_scan_in_progress = False
+        
+        if success and serial_num:
+            if hasattr(self, 'reg_serial'):
+                self.reg_serial.setText(serial_num)
+                self.reg_serial.setReadOnly(True)
+                self.reg_serial.setStyleSheet(self.reg_serial.styleSheet() + " color: #27ae60; font-weight: bold;")
+        else:
+            if hasattr(self, 'reg_serial'):
+                self.reg_serial.setText("Please connect your RhythmUlta device")
+                self.reg_serial.setReadOnly(False)
+                self.reg_serial.setStyleSheet(self.reg_serial.styleSheet().replace(" color: #27ae60; font-weight: bold;", ""))
 
     def _resize_bg(self, event):
         """Handle window resize to maintain background coverage"""

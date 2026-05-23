@@ -31,6 +31,7 @@ PACKET_LENGTH = 0x11  # 17 bytes
 FRAME_LEN = 22  # Total frame length (22 bytes)
 ACK_CODE = 0x21
 DATA_CODE_VERSION = 0x24  # Version data response
+DATA_CODE_MACHINE_SERIAL = 0x23  # Machine serial number data response
 
 # Command OpCodes
 OPCODE_START = 0x10
@@ -93,9 +94,11 @@ class HardwareCommandHandler:
         code_map = {
             0x10: "START",
             0x11: "STOP",
+            0x13: "MACHINE_SERIAL",
             0x14: "VERSION",
             0x15: "CLOSE",
             0x21: "ACK",
+            0x23: "MACHINE_SERIAL_DATA",
             0x24: "VERSION_DATA"
         }
         return code_map.get(code, f"UNKNOWN(0x{code:02X})")
@@ -188,6 +191,9 @@ class HardwareCommandHandler:
         # Handle Version DATA code (0x24)
         elif packet[3] == DATA_CODE_VERSION:
             response["type"] = "version_data"
+        # Handle Machine Serial DATA code (0x23)
+        elif packet[3] == DATA_CODE_MACHINE_SERIAL:
+            response["type"] = "machine_serial_data"
         # Handle device-specific code (0x20) - device uses this for both ACK and DATA
         elif packet[3] == 0x20:
             # Check byte 5 to determine if it's ACK (contains echoed OpCode) or DATA
@@ -413,7 +419,10 @@ class HardwareCommandHandler:
         
         t0 = time.time()
         while time.time() - t0 < timeout:
-            frame = self._read_packet(timeout=0.5)
+            try:
+                frame = self._read_packet(timeout=0.5)
+            except TimeoutError:
+                continue
             code = frame[3]
             
             # Ignore ECG streaming frames
@@ -430,12 +439,13 @@ class HardwareCommandHandler:
         
         raise TimeoutError(f"No ACK for opcode 0x{expected_opcode:02X}")
     
-    def _wait_for_data(self, timeout: float = 3.0) -> bytes:
+    def _wait_for_data(self, timeout: float = 3.0, expected_code: int = DATA_CODE_VERSION) -> bytes:
         """
         Wait for DATA frame, filtering out ECG streaming frames (0x20)
         
         Args:
             timeout: Maximum time to wait (seconds)
+            expected_code: Expected DATA code in byte 3 (default: VERSION 0x24)
             
         Returns:
             bytes: DATA frame
@@ -444,11 +454,14 @@ class HardwareCommandHandler:
             TimeoutError: If DATA frame not received within timeout
         """
         ECG_STREAM = 0x20
-        DATA_CODE = 0x24
+        DATA_CODE = int(expected_code) & 0xFF
         
         t0 = time.time()
         while time.time() - t0 < timeout:
-            frame = self._read_packet(timeout=0.5)
+            try:
+                frame = self._read_packet(timeout=0.5)
+            except TimeoutError:
+                continue
             code = frame[3]
             
             # Ignore ECG streaming frames
@@ -572,7 +585,7 @@ class HardwareCommandHandler:
             print(f"🔍 VERSION COMMAND (Attempt {attempt + 1}): Requesting device version...")
             print("="*60)
             
-            CMD_VERSION = OPCODE_VERSION  # 0x14
+            CMD_VERSION = OPCODE_VERSION  # 0x13
             
             try:
                 # First, stop the device if it's streaming

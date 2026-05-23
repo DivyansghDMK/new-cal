@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QDialog,
+    QFrame,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -110,75 +111,162 @@ class DoctorProfileDialog(QDialog):
         self._prefill()
 
     def _build_ui(self) -> None:
+        self.setStyleSheet(
+            """
+            QDialog { background: #f7f8fa; }
+            QLabel { color: #1f2d3d; font-family: Arial; }
+            QLineEdit {
+                font: 10pt Arial;
+                color: #ff6600;
+                background: #ffffff;
+                padding: 8px 10px;
+                border: 1px solid #d8dde6;
+                border-radius: 8px;
+                min-height: 26px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #ff6600;
+                background: #fff8f0;
+            }
+            QTextEdit {
+                font: 10pt Arial;
+                color: #ff6600;
+                background: #ffffff;
+                padding: 8px 10px;
+                border: 1px solid #d8dde6;
+                border-radius: 8px;
+            }
+            QTextEdit:focus {
+                border: 2px solid #ff6600;
+                background: #fff8f0;
+            }
+            QPushButton {
+                font: bold 10pt Arial;
+                padding: 8px 18px;
+                border-radius: 10px;
+            }
+            """
+        )
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         title = QLabel("Doctor Profile")
-        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setFont(QFont("Arial", 16, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color:#111; padding: 6px;")
+        title.setStyleSheet(
+            "color:#111; padding: 10px; background:#ffffff; border:1px solid #e6eaf0; border-radius: 12px;"
+        )
         layout.addWidget(title)
 
+        label_style = "QLabel { font: bold 10pt Arial; color:#2c3e50; }"
+
+        # ---------------- Profile card ----------------
+        profile_card = QFrame()
+        profile_card.setStyleSheet("QFrame { background:#ffffff; border:1px solid #e6eaf0; border-radius: 12px; }")
+        profile_layout = QVBoxLayout(profile_card)
+        profile_layout.setContentsMargins(16, 14, 16, 16)
+        profile_layout.setSpacing(10)
+
+        section_title = QLabel("Doctor Profile")
+        section_title.setFont(QFont("Arial", 11, QFont.Bold))
+        section_title.setStyleSheet("color:#333; border: none; background: transparent;")
+        profile_layout.addWidget(section_title)
+
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
-        form.setFormAlignment(Qt.AlignTop)
         form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
+        form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
         self.full_name_edit = QLineEdit()
         self.full_name_edit.setPlaceholderText("Full name (used in dashboard greeting)")
-        form.addRow("Full name", self.full_name_edit)
+        full_name_lbl = QLabel("Full name")
+        full_name_lbl.setStyleSheet(label_style)
+        form.addRow(full_name_lbl, self.full_name_edit)
 
         self.doctor_name_edit = QLineEdit()
         self.doctor_name_edit.setPlaceholderText("Doctor name (printed on reports)")
-        form.addRow("Doctor name", self.doctor_name_edit)
+        doctor_lbl = QLabel("Doctor name")
+        doctor_lbl.setStyleSheet(label_style)
+        form.addRow(doctor_lbl, self.doctor_name_edit)
 
         self.org_name_edit = QLineEdit()
         self.org_name_edit.setPlaceholderText("Organisation / clinic name")
-        form.addRow("Organisation name", self.org_name_edit)
+        org_lbl = QLabel("Organisation name")
+        org_lbl.setStyleSheet(label_style)
+        form.addRow(org_lbl, self.org_name_edit)
 
         self.org_address_edit = QTextEdit()
         self.org_address_edit.setPlaceholderText("Organisation address (printed on reports)")
-        self.org_address_edit.setFixedHeight(80)
-        form.addRow("Organisation address", self.org_address_edit)
+        self.org_address_edit.setFixedHeight(88)
+        org_addr_lbl = QLabel("Organisation address")
+        org_addr_lbl.setStyleSheet(label_style)
+        form.addRow(org_addr_lbl, self.org_address_edit)
 
-        layout.addLayout(form)
+        profile_layout.addLayout(form)
+        layout.addWidget(profile_card)
+
+        # ---------------- Security card ----------------
+        security_card = QFrame()
+        security_card.setStyleSheet("QFrame { background:#ffffff; border:1px solid #e6eaf0; border-radius: 12px; }")
+        security_layout = QVBoxLayout(security_card)
+        security_layout.setContentsMargins(16, 14, 16, 14)
+        security_layout.setSpacing(10)
 
         sec_title = QLabel("Security")
         sec_title.setFont(QFont("Arial", 11, QFont.Bold))
-        sec_title.setStyleSheet("color:#333; padding-top: 6px;")
-        layout.addWidget(sec_title)
+        sec_title.setStyleSheet("color:#333; border: none; background: transparent;")
+        security_layout.addWidget(sec_title)
 
         sec_form = QFormLayout()
         sec_form.setHorizontalSpacing(14)
-        sec_form.setVerticalSpacing(10)
+        sec_form.setVerticalSpacing(12)
+        sec_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        sec_form.setLabelAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
         self.current_password_edit = QLineEdit()
         self.current_password_edit.setEchoMode(QLineEdit.Password)
-        sec_form.addRow("Current password", self.current_password_edit)
+        cur_lbl = QLabel("Current password")
+        cur_lbl.setStyleSheet(label_style)
+        sec_form.addRow(cur_lbl, self.current_password_edit)
 
         self.new_password_edit = QLineEdit()
         self.new_password_edit.setEchoMode(QLineEdit.Password)
-        sec_form.addRow("New password", self.new_password_edit)
+        new_lbl = QLabel("New password")
+        new_lbl.setStyleSheet(label_style)
+        sec_form.addRow(new_lbl, self.new_password_edit)
 
         self.confirm_password_edit = QLineEdit()
         self.confirm_password_edit.setEchoMode(QLineEdit.Password)
-        sec_form.addRow("Confirm password", self.confirm_password_edit)
+        conf_lbl = QLabel("Confirm password")
+        conf_lbl.setStyleSheet(label_style)
+        sec_form.addRow(conf_lbl, self.confirm_password_edit)
 
-        layout.addLayout(sec_form)
+        security_layout.addLayout(sec_form)
+        layout.addWidget(security_card)
 
+        # ---------------- Buttons ----------------
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
-        self.cancel_btn.setStyleSheet("background:#eee; padding:8px 18px; border-radius:8px;")
+        self.cancel_btn.setStyleSheet(
+            "QPushButton { background:#eef1f5; color:#111; border:1px solid #d8dde6; }"
+            "QPushButton:hover { background:#e6ebf2; }"
+            "QPushButton:pressed { background:#dde3ec; }"
+        )
         btn_row.addWidget(self.cancel_btn)
 
         self.save_btn = QPushButton("Save")
         self.save_btn.clicked.connect(self._on_save)
-        self.save_btn.setStyleSheet("background:#ff6600; color:#fff; padding:8px 22px; border-radius:8px; font-weight:bold;")
+        self.save_btn.setStyleSheet(
+            "QPushButton { background:#ff6600; color:#fff; border:2px solid #ff7a26; }"
+            "QPushButton:hover { background:#ff7a26; border:2px solid #ff8e47; }"
+            "QPushButton:pressed { background:#e65c00; }"
+        )
         btn_row.addWidget(self.save_btn)
 
         layout.addLayout(btn_row)

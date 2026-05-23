@@ -1835,6 +1835,7 @@ class ECGMenu(QGroupBox):
             # Reload settings to ensure we have the latest version from disk
             self.settings_manager.settings = self.settings_manager.load_settings()
         hardware_version = ""
+        machine_serial_number = ""
         
         # Determine if physically disconnected at the dashboard level
         is_connected = True
@@ -1848,29 +1849,39 @@ class ECGMenu(QGroupBox):
                     # Try getting the cached device version
                     if hasattr(self.ecg_test_page.serial_reader, 'device_version') and self.ecg_test_page.serial_reader.device_version:
                         hardware_version = self.ecg_test_page.serial_reader.device_version
+                    if hasattr(self.ecg_test_page.serial_reader, 'device_serial_number') and self.ecg_test_page.serial_reader.device_serial_number:
+                        machine_serial_number = self.ecg_test_page.serial_reader.device_serial_number
     
             # 2. Fallback to settings
             if not hardware_version and self.settings_manager:
                 hardware_version = self.settings_manager.get_setting("hardware_version", "")
+            if not machine_serial_number and self.settings_manager:
+                machine_serial_number = self.settings_manager.get_setting("machine_serial_number", "")
                 
             # 3. Cache it back to settings if we received a valid one
             if hardware_version and hardware_version != "Not Detected" and self.settings_manager:
                 current_saved = self.settings_manager.get_setting("hardware_version", "")
                 if current_saved != hardware_version:
                     self.settings_manager.set_setting("hardware_version", hardware_version)
+            if machine_serial_number and machine_serial_number != "Not Detected" and self.settings_manager:
+                current_saved = self.settings_manager.get_setting("machine_serial_number", "")
+                if current_saved != machine_serial_number:
+                    self.settings_manager.set_setting("machine_serial_number", machine_serial_number)
 
         if not hardware_version:
             hardware_version = "Not Detected"
+        if not machine_serial_number:
+            machine_serial_number = "Not Detected"
 
         # Version details
         version_info = [
             (self.tr("Software Version"), "V 1.1.1"),
             (self.tr("Hardware Version"), hardware_version),
+            (self.tr("Machine Serial Number"), machine_serial_number),
             (self.tr("Firmware Version"), "V.3.0.1"),
             (self.tr("Build Date"), "2024-08-26"),
             (self.tr("Manufacturer"), "Deckmount Electronics Pvt Ltd"),
             (self.tr("Model"), "CardioX"),
-            (self.tr("Serial Number"), "MF-2024-001"),
             (self.tr("License"), "Professional Edition")
         ]
 
