@@ -234,6 +234,11 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--hidden-import=PyQt5.sip",
         "--hidden-import=fitz",
         "--hidden-import=pymupdf",
+        # PyYAML is required by clinical_config.py to load arrhythmia thresholds.
+        # Without this, the frozen app silently uses Python defaults and arrhythmia
+        # detection produces "Rhythm Undetermined" instead of the correct diagnosis.
+        "--hidden-import=yaml",
+        "--collect-all=PyYAML",
         "--collect-submodules=PyQt5",
         "--collect-all=pyqtgraph",
         "--collect-all=scipy",

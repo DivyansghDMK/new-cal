@@ -13,7 +13,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
+import logging
 import yaml
+
+_logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> Path:
@@ -225,12 +228,24 @@ class ClinicalConfig:
 
 def _load_yaml_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
+        _logger.warning(
+            "[ClinicalConfig] clinical_config.yaml NOT FOUND at %s — "
+            "using Python hardcoded defaults. Arrhythmia detection thresholds "
+            "may differ from expected clinical values.",
+            path,
+        )
         return {}
-    with open(path, "r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+        if not isinstance(data, dict):
+            _logger.warning("[ClinicalConfig] clinical_config.yaml is not a valid mapping — using defaults.")
+            return {}
+        _logger.info("[ClinicalConfig] Loaded clinical_config.yaml from %s", path)
+        return data
+    except Exception as exc:
+        _logger.error("[ClinicalConfig] Failed to load clinical_config.yaml: %s — using defaults.", exc)
         return {}
-    return data
 
 
 @lru_cache(maxsize=8)
