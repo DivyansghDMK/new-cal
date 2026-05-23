@@ -6368,6 +6368,7 @@ class ECGTestPage(QWidget):
                 parent=self,
             )
             self._start_worker.version_ready.connect(self._on_device_version)
+            self._start_worker.serial_ready.connect(self._on_device_serial_number)
             self._start_worker.connected.connect(
                 lambda ok, p, err: self._on_device_connected(ok, p, err, baud_int)
             )
@@ -6391,6 +6392,20 @@ class ECGTestPage(QWidget):
                     self.version_label.setText(version)
                 except Exception:
                     pass
+
+    def _on_device_serial_number(self, serial_number: str):
+        """Slot: machine serial number received from background worker."""
+        if not serial_number:
+            return
+
+        print(f" 🏷️ ECG Machine Serial Number: {serial_number}")
+
+        # Persist it so other UI panels (e.g., Version Information) can display it.
+        try:
+            if hasattr(self, "settings_manager") and self.settings_manager:
+                self.settings_manager.set_setting("machine_serial_number", serial_number)
+        except Exception:
+            pass
 
     def _on_device_connected(self, success: bool, port_to_use: str, error_msg: str, baud_int: int):
         """

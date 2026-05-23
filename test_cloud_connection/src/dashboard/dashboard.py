@@ -99,7 +99,7 @@ class MplCanvas(FigureCanvas):
 
 class DeviceScanWorker(QThread):
     """Worker thread for non-blocking serial port scanning"""
-    scan_finished = pyqtSignal(bool, str, str) # success, port, version
+    scan_finished = pyqtSignal(bool, str, str, str) # success, port, version, serial
 
     def __init__(self, settings_manager=None):
         super().__init__()
@@ -116,7 +116,7 @@ class DeviceScanWorker(QThread):
                 ports = [p for p in ports if ("usbserial" in p.device) or ("usbmodem" in p.device)]
             
             if not ports:
-                self.scan_finished.emit(False, "", "")
+                self.scan_finished.emit(False, "", "", "")
                 return
 
             # Prioritize the last saved port
@@ -130,19 +130,28 @@ class DeviceScanWorker(QThread):
                     # Quick check
                     ser = serial.Serial(port.device, 115200, timeout=0.1)
                     handler = HardwareCommandHandler(ser)
-                    success, version, _ = handler.send_version_command(timeout=0.2)
+                    # 1. Preferred detection: VERSION command
+                    success_v, version, _ = handler.send_version_command(timeout=0.2)
+                    
+                    # 2. Also try to get MACHINE SERIAL while we have the port open
+                    serial_num = ""
+                    if success_v:
+                        success_s, serial_num, _ = handler.send_machine_serial_command(timeout=0.2)
+                        if not success_s:
+                            serial_num = ""
+                            
                     ser.close()
                     
-                    if success and version:
-                        self.scan_finished.emit(True, port.device, version)
+                    if success_v and version:
+                        self.scan_finished.emit(True, port.device, version, serial_num)
                         return
                 except Exception:
                     continue
 
-            self.scan_finished.emit(False, "", "")
+            self.scan_finished.emit(False, "", "", "")
         except Exception as e:
             print(f"Error in DeviceScanWorker: {e}")
-            self.scan_finished.emit(False, "", "")
+            self.scan_finished.emit(False, "", "", "")
 class SignInDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4329,18 +4338,27 @@ class Dashboard(QWidget):
             dialog.exec_()
         else:
             hw_v = ""
+            sn_v = ""
             if hasattr(self, 'device_version') and self.device_version:
                 hw_v = self.device_version
+            
+            if hasattr(self, 'machine_serial_number') and self.machine_serial_number:
+                sn_v = self.machine_serial_number
                 
-            if not hw_v and hasattr(self, 'settings_manager'):
+            if (not hw_v or not sn_v) and hasattr(self, 'settings_manager'):
                 # Reload settings to ensure we have the latest from disk
                 self.settings_manager.settings = self.settings_manager.load_settings()
-                hw_v = self.settings_manager.get_setting("hardware_version", "Not Detected")
+                if not hw_v:
+                    hw_v = self.settings_manager.get_setting("hardware_version", "Not Detected")
+                if not sn_v:
+                    sn_v = self.settings_manager.get_setting("machine_serial_number", "Not Detected")
                 
             if not hw_v:
                 hw_v = "Not Detected"
+            if not sn_v:
+                sn_v = "Not Detected"
                 
-            QMessageBox.information(self, "Version Information", f"Software Version: V 1.1.1\nHardware Version: {hw_v}")
+            QMessageBox.information(self, "Version Information", f"Software Version: V 1.1.1\nHardware Version: {hw_v}\nSerial Number: {sn_v}")
 
     def handle_sign_out(self):
         # User label removed per request
@@ -4580,7 +4598,7 @@ class Dashboard(QWidget):
         if self.page_stack.currentWidget() == getattr(self, 'ecg_test_page', None):
             return
 
-    def on_scan_finished(self, success, port, version):
+    def on_scan_finished(self, success, port, version, serial_num):
         """Callback for background device scan"""
         self._device_scan_in_progress = False
         self._initial_scan_completed = True
@@ -4594,6 +4612,11 @@ class Dashboard(QWidget):
             if self.device_version != version:
                 print(f"🔄 Hardware version changed from {self.device_version} to {version}")
                 self.device_version = version
+            
+            # Update machine serial number if provided
+            if serial_num:
+                self.machine_serial_number = serial_num
+                print(f"Machine serial number detected: {serial_num}")
 
             self.device_port = port
             self.device_connected = True
@@ -4604,8 +4627,10 @@ class Dashboard(QWidget):
                 self.settings_manager.set_setting("serial_port", port)
                 self.settings_manager.set_setting("baud_rate", "115200")
                 self.settings_manager.set_setting("hardware_version", version)
+                if serial_num:
+                    self.settings_manager.set_setting("machine_serial_number", serial_num)
                 self.settings_manager.save_settings()
-                print(f"✅ Device found on {port} and saved to settings with version {version}.")
+                print(f"✅ Device found on {port} and saved to settings with version {version} and serial {serial_num or 'N/A'}.")
         else:
             self.update_device_ui(False)
 
@@ -4634,8 +4659,10 @@ class Dashboard(QWidget):
             # Reset hardware version in settings when disconnected
             if hasattr(self, 'settings_manager'):
                 self.settings_manager.set_setting("hardware_version", "")
+                self.settings_manager.set_setting("machine_serial_number", "")
                 # set_setting already calls save_settings()
             self.device_version = None
+            self.machine_serial_number = None
             
             # Disable test buttons
             

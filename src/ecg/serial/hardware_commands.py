@@ -13,11 +13,13 @@ Protocol Specification:
 Command OpCodes:
 - 0x10: Start command
 - 0x11: Stop command
+- 0x13: Machine serial number check
 - 0x14: Version check
 - 0x15: Software close
 
 Response Codes:
 - 0x21: ACK (acknowledgment)
+- 0x23: Machine serial number data response
 - 0x24: Actual data (for version response)
 """
 
@@ -31,10 +33,12 @@ PACKET_LENGTH = 0x11  # 17 bytes
 FRAME_LEN = 22  # Total frame length (22 bytes)
 ACK_CODE = 0x21
 DATA_CODE_VERSION = 0x24  # Version data response
+DATA_CODE_MACHINE_SERIAL = 0x23  # Machine serial number data response
 
 # Command OpCodes
 OPCODE_START = 0x10
 OPCODE_STOP = 0x11
+OPCODE_MACHINE_SERIAL = 0x13
 OPCODE_VERSION = 0x14
 OPCODE_CLOSE = 0x15
 
@@ -93,9 +97,11 @@ class HardwareCommandHandler:
         code_map = {
             0x10: "START",
             0x11: "STOP",
+            0x13: "MACHINE_SERIAL",
             0x14: "VERSION",
             0x15: "CLOSE",
             0x21: "ACK",
+            0x23: "MACHINE_SERIAL_DATA",
             0x24: "VERSION_DATA"
         }
         return code_map.get(code, f"UNKNOWN(0x{code:02X})")
@@ -105,7 +111,7 @@ class HardwareCommandHandler:
         Build a command packet according to protocol
         
         Args:
-            opcode: Operation code (0x10, 0x11, 0x14, 0x15)
+            opcode: Operation code (0x10, 0x11, 0x13, 0x15)
             
         Returns:
             bytes: Complete command packet (22 bytes)
@@ -188,6 +194,9 @@ class HardwareCommandHandler:
         # Handle Version DATA code (0x24)
         elif packet[3] == DATA_CODE_VERSION:
             response["type"] = "version_data"
+        # Handle Machine Serial DATA code (0x23)
+        elif packet[3] == DATA_CODE_MACHINE_SERIAL:
+            response["type"] = "machine_serial_data"
         # Handle device-specific code (0x20) - device uses this for both ACK and DATA
         elif packet[3] == 0x20:
             # Check byte 5 to determine if it's ACK (contains echoed OpCode) or DATA
@@ -394,13 +403,17 @@ class HardwareCommandHandler:
         
         raise TimeoutError("Timeout waiting for packet")
     
-    def _wait_for_ack(self, expected_opcode: int, timeout: float = 3.0) -> bytes:
+    def _wait_for_ack(
+        self, expected_opcode: int, timeout: float = 3.0, allow_device_code_0x20: bool = False
+    ) -> bytes:
         """
         Wait for ACK frame, filtering out ECG streaming frames (0x20)
         
         Args:
             expected_opcode: Expected opcode in ACK response (byte 5)
             timeout: Maximum time to wait (seconds)
+            allow_device_code_0x20: If True, also accept device-specific ACK frames where
+                byte[3] == 0x20 and byte[5] == expected_opcode.
             
         Returns:
             bytes: ACK frame
@@ -413,29 +426,32 @@ class HardwareCommandHandler:
         
         t0 = time.time()
         while time.time() - t0 < timeout:
-            frame = self._read_packet(timeout=0.5)
+            try:
+                frame = self._read_packet(timeout=0.5)
+            except TimeoutError:
+                continue
             code = frame[3]
-            
-            # Ignore ECG streaming frames
-            if code == ECG_STREAM:
-                continue
-            
-            if code != ACK_CODE:
-                continue
-            
-            if frame[5] != expected_opcode:
-                continue
-            
-            return frame
+
+            # Standard ACK
+            if code == ACK_CODE and frame[5] == expected_opcode:
+                return frame
+
+            # Device-specific ACK (some firmware uses 0x20 for ACK too)
+            if allow_device_code_0x20 and code == ECG_STREAM and frame[5] == expected_opcode:
+                return frame
+
+            # Otherwise ignore (includes normal streaming frames with code 0x20)
+            continue
         
         raise TimeoutError(f"No ACK for opcode 0x{expected_opcode:02X}")
     
-    def _wait_for_data(self, timeout: float = 3.0) -> bytes:
+    def _wait_for_data(self, timeout: float = 3.0, expected_code: int = DATA_CODE_VERSION) -> bytes:
         """
         Wait for DATA frame, filtering out ECG streaming frames (0x20)
         
         Args:
             timeout: Maximum time to wait (seconds)
+            expected_code: Expected DATA code in byte 3 (default: VERSION 0x24)
             
         Returns:
             bytes: DATA frame
@@ -444,11 +460,14 @@ class HardwareCommandHandler:
             TimeoutError: If DATA frame not received within timeout
         """
         ECG_STREAM = 0x20
-        DATA_CODE = 0x24
+        DATA_CODE = int(expected_code) & 0xFF
         
         t0 = time.time()
         while time.time() - t0 < timeout:
-            frame = self._read_packet(timeout=0.5)
+            try:
+                frame = self._read_packet(timeout=0.5)
+            except TimeoutError:
+                continue
             code = frame[3]
             
             # Ignore ECG streaming frames
@@ -572,7 +591,7 @@ class HardwareCommandHandler:
             print(f"🔍 VERSION COMMAND (Attempt {attempt + 1}): Requesting device version...")
             print("="*60)
             
-            CMD_VERSION = OPCODE_VERSION  # 0x14
+            CMD_VERSION = OPCODE_VERSION  # 0x13
             
             try:
                 # First, stop the device if it's streaming
@@ -638,6 +657,103 @@ class HardwareCommandHandler:
                     print("="*60 + "\n")
                     return False, None, None
         
+        return False, None, None
+
+    def send_machine_serial_command(
+        self, counter: int = 0, timeout: float = 1.0, retries: int = 2
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """
+        Hardware protocol:
+        App → 0x13
+        Device → 0x21 (ACK, byte[5]=0x13)
+        Device → 0x23 (DATA, bytes[5:21]=ASCII serial number)
+
+        First sends STOP to put device in IDLE, then requests machine serial number.
+        Filters out ECG streaming frames (0x20) that might interfere.
+
+        Args:
+            counter: Packet counter (kept for API symmetry; this path uses 1 for the request frame)
+            timeout: Timeout in seconds
+            retries: Number of retry attempts
+
+        Returns:
+            tuple: (success: bool, serial_number: str or None, response: dict or None)
+        """
+        _ = counter  # counter is fixed in the request packet for stability/compatibility
+
+        for attempt in range(retries + 1):
+            if attempt > 0:
+                print(
+                    f"🔄 Retrying MACHINE SERIAL command (attempt {attempt + 1}/{retries + 1})..."
+                )
+                time.sleep(0.2)
+
+            print("\n" + "=" * 60)
+            print(
+                f"🔍 MACHINE SERIAL COMMAND (Attempt {attempt + 1}): Requesting machine serial number..."
+            )
+            print("=" * 60)
+
+            CMD_SERIAL = OPCODE_MACHINE_SERIAL  # 0x13
+
+            try:
+                # Stop streaming first so ACK/DATA aren't mixed with 0x20 frames.
+                try:
+                    self._send_stop(timeout=timeout)
+                    print("✅ STOP confirmed")
+                    time.sleep(0.1)
+                except TimeoutError:
+                    print("⚠️ STOP ACK timeout (device may already be stopped)")
+
+                self.ser.reset_input_buffer()
+
+                pkt = self._build_simple_packet(1, CMD_SERIAL)
+                print("📤 MACHINE SERIAL →", pkt.hex(" ").upper())
+                self.ser.write(pkt)
+                self.ser.flush()
+
+                ack = self._wait_for_ack(CMD_SERIAL, timeout=timeout, allow_device_code_0x20=True)
+                print("📥 MACHINE SERIAL ACK ←", ack.hex(" ").upper())
+
+                data = self._wait_for_data(timeout=timeout, expected_code=DATA_CODE_MACHINE_SERIAL)
+                print("📥 MACHINE SERIAL DATA ←", data.hex(" ").upper())
+
+                try:
+                    serial_number = data[5:21].decode("ascii").rstrip("\x00").strip()
+                except UnicodeDecodeError:
+                    serial_number = data[5:21].hex().upper()
+
+                print("\n" + "=" * 60)
+                print("✅ MACHINE SERIAL COMMAND SUCCESS")
+                print("=" * 60)
+                print("✅ MACHINE SERIAL NUMBER:", serial_number)
+                print("=" * 60 + "\n")
+
+                data_response = {
+                    "type": "machine_serial_data",
+                    "counter": data[1],
+                    "length": data[2],
+                    "code": data[3],
+                    "checksum": data[4],
+                    "data": data[5:21],
+                }
+
+                return True, serial_number, data_response
+
+            except TimeoutError as e:
+                print(f"❌ MACHINE SERIAL COMMAND: {e}")
+                if attempt == retries:
+                    print("=" * 60 + "\n")
+                    return False, None, None
+            except Exception as e:
+                print(f"❌ MACHINE SERIAL COMMAND: Error occurred: {e}")
+                if attempt == retries:
+                    import traceback
+
+                    print(f"   Traceback: {traceback.format_exc()}")
+                    print("=" * 60 + "\n")
+                    return False, None, None
+
         return False, None, None
     
     def send_close_command(self) -> Tuple[bool, Optional[Dict]]:

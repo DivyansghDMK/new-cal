@@ -49,6 +49,7 @@ else:
         def send_start_command(self): return (False, None)
         def send_stop_command(self): return (False, None)
         def send_version_command(self): return (False, None, None)
+        def send_machine_serial_command(self): return (False, None, None)
         def send_close_command(self): return (False, None)
 
 class GlobalHardwareManager:
@@ -287,6 +288,7 @@ class SerialStreamReader:
         else:
             self.command_handler = None
         self.device_version = None
+        self.device_serial_number = None
         print(f" SerialStreamReader initialized: Port={port}, Baud={baudrate}")
 
     def is_device_silent(self, silence_seconds: float = None) -> bool:
@@ -376,6 +378,41 @@ class SerialStreamReader:
             print("=" * 60 + "\n")
             return None
 
+    def get_device_serial_number(self) -> Optional[str]:
+        """
+        Get machine serial number from hardware using MACHINE SERIAL (0x13) command.
+
+        Returns:
+            str or None: Serial number string if available, otherwise None.
+        """
+        if not hasattr(self, "command_handler") or not self.command_handler:
+            print("❌ MACHINE SERIAL COMMAND: Command handler not available")
+            return None
+
+        try:
+            print("\n" + "=" * 60)
+            print("🔍 MACHINE SERIAL COMMAND: Requesting machine serial number...")
+            print("=" * 60)
+
+            success, serial_number, response = self.command_handler.send_machine_serial_command()
+            if success and serial_number:
+                self.device_serial_number = serial_number
+                print(f"✅ MACHINE SERIAL COMMAND: Success! Serial number: '{serial_number}'")
+                print("=" * 60 + "\n")
+                return serial_number
+
+            print("⚠️ MACHINE SERIAL COMMAND: Failed or no serial number received")
+            print(f"   Success: {success}, Serial: {serial_number}, Response: {response}")
+            print("=" * 60 + "\n")
+            return None
+        except Exception as e:
+            print(f"❌ MACHINE SERIAL COMMAND: Error getting serial number: {e}")
+            import traceback
+
+            print(f"   Traceback: {traceback.format_exc()}")
+            print("=" * 60 + "\n")
+            return None
+
     def start(self, skip_hardware_start=False):
         """Start data acquisition using packet‑based protocol + hardware START command."""
         print(" Starting packet-based ECG data acquisition...")
@@ -442,6 +479,14 @@ class SerialStreamReader:
                 version = self.get_device_version()
                 if version:
                     print(f" 🧬 ECG Device Version: {version}")
+                    # After VERSION is confirmed (device idle), request machine serial number
+                    # before starting streaming so handshake frames aren't stolen by the stream reader.
+                    try:
+                        serial_number = self.get_device_serial_number()
+                        if serial_number:
+                            print(f" 🏷️ ECG Machine Serial Number: {serial_number}")
+                    except Exception as sn_err:
+                        print(f" ⚠️ MACHINE SERIAL COMMAND skipped due to error: {sn_err}")
             except Exception as e:
                 print(f" ⚠️ VERSION COMMAND skipped due to error: {e}")
         else:
@@ -897,6 +942,7 @@ class DeviceStartWorker(QThread):
     """
     connected = pyqtSignal(bool, str, str)   # success, port, error_msg
     version_ready = pyqtSignal(str)           # version string (may be empty)
+    serial_ready = pyqtSignal(str)            # machine serial number (may be empty)
 
     def __init__(self, port: str, baud_int: int, reader, parent=None):
         """
@@ -920,7 +966,7 @@ class DeviceStartWorker(QThread):
         return self._port_to_use
 
     def run(self):
-        """Background work: port scan (if needed) → open → VERSION → START."""
+        """Background work: port scan (if needed) → open → VERSION/START → (if version ok) SERIAL → connected."""
         try:
             port = self._port
             baud_int = self._baud_int
@@ -1003,9 +1049,17 @@ class DeviceStartWorker(QThread):
                 reader.start()
                 port_to_use = scanned_port
 
-            # Emit version (may be None)
+            # VERSION must succeed to consider the device connected (per requirement).
             version = reader.device_version or ""
             self.version_ready.emit(version)
+
+            if not version:
+                self.serial_ready.emit("")
+                self.connected.emit(False, port_to_use, "VERSION handshake failed (no version received)")
+                return
+
+            # Serial number is fetched inside reader.start() right after VERSION and before START.
+            self.serial_ready.emit(reader.device_serial_number or "")
 
             self.connected.emit(True, port_to_use, "")
 

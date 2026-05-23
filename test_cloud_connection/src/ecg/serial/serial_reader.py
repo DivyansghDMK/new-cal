@@ -251,6 +251,7 @@ class SerialStreamReader:
         else:
             self.command_handler = None
         self.device_version = None
+        self.device_serial_number = None
         print(f" SerialStreamReader initialized: Port={port}, Baud={baudrate}")
 
     def is_device_silent(self, silence_seconds: float = None) -> bool:
@@ -340,6 +341,41 @@ class SerialStreamReader:
             print("=" * 60 + "\n")
             return None
 
+    def get_device_serial_number(self) -> Optional[str]:
+        """
+        Get machine serial number from hardware using MACHINE SERIAL (0x13) command.
+
+        Returns:
+            str or None: Serial number string if available, otherwise None.
+        """
+        if not hasattr(self, "command_handler") or not self.command_handler:
+            print("❌ MACHINE SERIAL COMMAND: Command handler not available")
+            return None
+
+        try:
+            print("\n" + "=" * 60)
+            print("🔍 MACHINE SERIAL COMMAND: Requesting machine serial number...")
+            print("=" * 60)
+
+            success, serial_number, response = self.command_handler.send_machine_serial_command()
+            if success and serial_number:
+                self.device_serial_number = serial_number
+                print(f"✅ MACHINE SERIAL COMMAND: Success! Serial number: '{serial_number}'")
+                print("=" * 60 + "\n")
+                return serial_number
+
+            print("⚠️ MACHINE SERIAL COMMAND: Failed or no serial number received")
+            print(f"   Success: {success}, Serial: {serial_number}, Response: {response}")
+            print("=" * 60 + "\n")
+            return None
+        except Exception as e:
+            print(f"❌ MACHINE SERIAL COMMAND: Error getting serial number: {e}")
+            import traceback
+
+            print(f"   Traceback: {traceback.format_exc()}")
+            print("=" * 60 + "\n")
+            return None
+
     def start(self, skip_hardware_start=False):
         """Start data acquisition using packet‑based protocol + hardware START command."""
         print(" Starting packet-based ECG data acquisition...")
@@ -406,6 +442,14 @@ class SerialStreamReader:
                 version = self.get_device_version()
                 if version:
                     print(f" 🧬 ECG Device Version: {version}")
+                    # After VERSION is confirmed (device idle), request machine serial number
+                    # before starting streaming so handshake frames aren't stolen by the stream reader.
+                    try:
+                        serial_number = self.get_device_serial_number()
+                        if serial_number:
+                            print(f" 🏷️ ECG Machine Serial Number: {serial_number}")
+                    except Exception as sn_err:
+                        print(f" ⚠️ MACHINE SERIAL COMMAND skipped due to error: {sn_err}")
             except Exception as e:
                 print(f" ⚠️ VERSION COMMAND skipped due to error: {e}")
         else:

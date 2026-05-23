@@ -12,6 +12,7 @@ class SettingsManager:
             "serial_port": "Select Port",
             "baud_rate": "115200",
             "hardware_version": "",
+            "machine_serial_number": "",
 
             # Report Setup settings
             "report_format": "12_1",
@@ -60,10 +61,12 @@ class SettingsManager:
         print(f"Setting updated: {key} = {value}")  # Terminal verification
 
     def reset_to_defaults(self):
-        """Restore every persisted setting to its original factory default, preserving hardware version."""
+        """Restore every persisted setting to its original factory default, preserving hardware and serial info."""
         current_hw_version = self.settings.get("hardware_version", "")
+        current_sn = self.settings.get("machine_serial_number", "")
         self.settings = self.default_settings.copy()
         self.settings["hardware_version"] = current_hw_version
+        self.settings["machine_serial_number"] = current_sn
         self.save_settings()
         return self.settings.copy()
     
