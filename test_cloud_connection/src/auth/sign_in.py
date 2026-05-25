@@ -383,41 +383,9 @@ class LoginRegisterDialog(QDialog):
         
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
+        self.reg_serial.setReadOnly(True)
         self.reg_serial.setStyleSheet(self.login_username.styleSheet())
-        # Machine Serial ID must start with "RUM"
-        self._serial_prefix_guard = False
-        def _enforce_serial_prefix(text: str):
-            if self._serial_prefix_guard:
-                return
-            try:
-                self._serial_prefix_guard = True
-                raw = text or ""
-                if raw == "":
-                    return
-
-                raw_upper = raw.upper()
-                if raw_upper in ("R", "RU", "RUM"):
-                    if raw != raw_upper:
-                        self.reg_serial.setText(raw_upper)
-                        self.reg_serial.setCursorPosition(len(raw_upper))
-                    return
-
-                if raw_upper.startswith("RUM"):
-                    normalized = "RUM" + raw[3:]
-                    if raw != normalized:
-                        self.reg_serial.setText(normalized)
-                        self.reg_serial.setCursorPosition(len(normalized))
-                    return
-
-                forced = "RUM" + raw
-                self.reg_serial.setText(forced)
-                self.reg_serial.setCursorPosition(len(forced))
-            finally:
-                self._serial_prefix_guard = False
-        self.reg_serial.textEdited.connect(_enforce_serial_prefix)
-        self.reg_serial.setText("RUM")
-        self.reg_serial.setCursorPosition(3)
-
+        
         self.reg_password = QLineEdit()
         self.reg_password.setPlaceholderText("Password")
         self.reg_password.setEchoMode(QLineEdit.Password)
@@ -493,7 +461,7 @@ class LoginRegisterDialog(QDialog):
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
         serial_id = self.reg_serial.text().strip()
-        if serial_id == "Please connect your RhythmUltra device" or serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", ""):
             serial_id = ""
         fullname = self.reg_fullname.text().strip()
         age = self.reg_age.text()
@@ -502,9 +470,6 @@ class LoginRegisterDialog(QDialog):
         email = self.reg_email.text()
         if not username or not password:
             QMessageBox.warning(self, "Error", "Username and password are required.")
-            return
-        if serial_id and not serial_id.upper().startswith("RUM"):
-            QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
             return
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")

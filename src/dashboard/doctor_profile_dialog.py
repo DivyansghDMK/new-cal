@@ -256,6 +256,7 @@ class DoctorProfileDialog(QDialog):
 
         self.confirm_password_edit = QLineEdit()
         self.confirm_password_edit.setEchoMode(QLineEdit.Password)
+        self.confirm_password_edit.returnPressed.connect(self._on_save)
         self.conf_eye_btn = self._create_eye_btn(self.confirm_password_edit)
         add_password_row("Confirm Password", self.confirm_password_edit, self.conf_eye_btn)
 
@@ -424,5 +425,10 @@ class DoctorProfileDialog(QDialog):
         msg_box.setStyleSheet("QLabel { color: #1f2d3d; font-weight: bold; }")
         
         from PyQt5.QtCore import QTimer
-        QTimer.singleShot(1500, lambda: (msg_box.close(), self.accept()))
-        msg_box.exec_()
+        
+        def close_all():
+            msg_box.accept()
+            self.accept()
+            
+        QTimer.singleShot(1500, close_all)
+        msg_box.show()
