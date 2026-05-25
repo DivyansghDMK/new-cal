@@ -301,7 +301,7 @@ class LoginRegisterDialog(QDialog):
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet() + " color: #27ae60; font-weight: bold;")
         else:
             if hasattr(self, 'reg_serial'):
-                self.reg_serial.setText("Please connect your RhythmUlta device")
+                self.reg_serial.setText("Please connect your RhythmUltra device")
                 self.reg_serial.setReadOnly(False)
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet().replace(" color: #27ae60; font-weight: bold;", ""))
 
@@ -624,7 +624,7 @@ class LoginRegisterDialog(QDialog):
         self.reg_name.setMaxLength(20)
         self.reg_address.setMaxLength(45)
         self.reg_phone.setMaxLength(10)
-        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
+        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^[0-9]{0,10}$"), self))
         
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
@@ -771,6 +771,8 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text().strip()
+        if serial_id == "Please connect your RhythmUltra device" or serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+            serial_id = ""
         name = self.reg_name.text().strip()
         age = self.reg_age.text()
         gender = self.reg_gender.text()
@@ -778,10 +780,10 @@ class LoginRegisterDialog(QDialog):
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        if not all([serial_id, name, age, gender, address, phone, password, confirm]):
-            QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
+        if not all([name, age, gender, address, phone, password, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required.")
             return
-        if not serial_id.upper().startswith("RUM"):
+        if serial_id and not serial_id.upper().startswith("RUM"):
             QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
             return
         # Enforce numeric phone number with exact 10 digits

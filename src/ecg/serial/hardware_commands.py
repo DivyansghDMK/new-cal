@@ -80,7 +80,7 @@ class HardwareCommandHandler:
         details.append(f"{'='*70}")
         details.append(f"Raw Hex: {packet.hex().upper()}")
         details.append(f"Byte-by-byte breakdown:")
-        details.append(f"  [0] Start Byte:     0x{packet[0]:02X} ({'✓' if packet[0] == START_BYTE else '✗'})")
+        details.append(f"  [0] Start Byte:     0x{packet[0]:02X} ({'Y' if packet[0] == START_BYTE else 'N'})")
         details.append(f"  [1] Counter:       0x{packet[1]:02X} ({packet[1]})")
         details.append(f"  [2] Length:        0x{packet[2]:02X} ({packet[2]} bytes)")
         details.append(f"  [3] OpCode/Code:    0x{packet[3]:02X} ({self._get_code_name(packet[3])})")
@@ -88,7 +88,7 @@ class HardwareCommandHandler:
         details.append(f"  [5-20] Data:        {packet[5:21].hex().upper()}")
         if packet[3] == ACK_CODE and len(packet) > 5:
             details.append(f"      └─ Echoed OpCode: 0x{packet[5]:02X} ({self._get_code_name(packet[5])})")
-        details.append(f"  [21] End Byte:      0x{packet[21]:02X} ({'✓' if packet[21] == END_BYTE else '✗'})")
+        details.append(f"  [21] End Byte:      0x{packet[21]:02X} ({'Y' if packet[21] == END_BYTE else 'N'})")
         details.append(f"{'='*70}\n")
         return "\n".join(details)
     
@@ -230,7 +230,7 @@ class HardwareCommandHandler:
         
         if not quiet:
             print("\n" + "="*70)
-            print("🚀 START COMMAND: Initiating communication with device")
+            print("[START] START COMMAND: Initiating communication with device")
             print("="*70)
         
         try:
@@ -239,30 +239,30 @@ class HardwareCommandHandler:
             
             # Log what SOFTWARE is SENDING
             if not quiet:
-                print(self._format_packet_details(cmd_packet, "SOFTWARE → DEVICE", "START Command"))
-                print(f"📤 Software sending START command to device...")
+                print(self._format_packet_details(cmd_packet, "SOFTWARE -> DEVICE", "START Command"))
+                print(f"[SEND] Software sending START command to device...")
             
             self.ser.write(cmd_packet)
             self.ser.flush()
             
             if not quiet:
-                print(f"✅ Command packet written to serial port ({len(cmd_packet)} bytes)")
-                print(f"⏳ Waiting for device response (timeout: {timeout}s)...")
+                print(f"[OK] Command packet written to serial port ({len(cmd_packet)} bytes)")
+                print(f"[WAIT] Waiting for device response (timeout: {timeout}s)...")
             
             # Wait for ACK
             response_packet = self._read_response(timeout=timeout)
             if response_packet:
                 # Log what DEVICE is SENDING BACK
                 if not quiet:
-                    print(self._format_packet_details(response_packet, "DEVICE → SOFTWARE", "START ACK Response"))
-                    print(f"📥 Device responded with packet ({len(response_packet)} bytes)")
+                    print(self._format_packet_details(response_packet, "DEVICE -> SOFTWARE", "START ACK Response"))
+                    print(f"[RECV] Device responded with packet ({len(response_packet)} bytes)")
                 
                 response = self._parse_response(response_packet)
                 if not quiet:
-                    print(f"📋 Parsed response: {response}")
+                    print(f"[PARSED] Parsed response: {response}")
                 elif quiet:
                     # In quiet mode, still show minimal info for debugging
-                    print(f"   📥 Response: Code=0x{response.get('code', 0):02X}, Type={response.get('type')}, OpCode=0x{response.get('opcode', 0):02X}")
+                    print(f"   [RECV] Response: Code=0x{response.get('code', 0):02X}, Type={response.get('type')}, OpCode=0x{response.get('opcode', 0):02X}")
                 
                 is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_START:
@@ -272,30 +272,30 @@ class HardwareCommandHandler:
                     
                 if is_ack:
                     if not quiet:
-                        print(f"✅ START COMMAND: Success! Device acknowledged START command")
+                        print(f"[OK] START COMMAND: Success! Device acknowledged START command")
                         print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
                         print("="*70 + "\n")
                     return True, response
                 else:
                     if not quiet:
-                        print(f"⚠️ START COMMAND: Unexpected response type or OpCode mismatch")
+                        print(f"[WARN] START COMMAND: Unexpected response type or OpCode mismatch")
                         print(f"   Expected: ACK with OpCode 0x{OPCODE_START:02X}")
                         print(f"   Received: {response}")
                         print("="*70 + "\n")
                     elif quiet:
                         # In quiet mode, show why it failed
-                        print(f"   ❌ Failed: Expected ACK with OpCode 0x{OPCODE_START:02X}, got {response.get('type')} with OpCode 0x{response.get('opcode', 0):02X}")
+                        print(f"   [ERROR] Failed: Expected ACK with OpCode 0x{OPCODE_START:02X}, got {response.get('type')} with OpCode 0x{response.get('opcode', 0):02X}")
                     return False, response
             else:
                 if not quiet:
-                    print("❌ START COMMAND: No response received from device (timeout)")
+                    print("[ERROR] START COMMAND: No response received from device (timeout)")
                     print(f"   Device did not respond within {timeout} seconds")
                     print("="*70 + "\n")
                 return False, None
                 
         except Exception as e:
             if not quiet:
-                print(f"❌ START COMMAND: Error occurred: {e}")
+                print(f"[ERROR] START COMMAND: Error occurred: {e}")
                 import traceback
                 print(f"   Traceback: {traceback.format_exc()}")
                 print("="*70 + "\n")
@@ -309,7 +309,7 @@ class HardwareCommandHandler:
             tuple: (success: bool, response: dict or None)
         """
         print("\n" + "="*70)
-        print("🛑 STOP COMMAND: Requesting device to stop")
+        print("[STOP] STOP COMMAND: Requesting device to stop")
         print("="*70)
         
         try:
@@ -317,24 +317,24 @@ class HardwareCommandHandler:
             cmd_packet = self._build_command_packet(OPCODE_STOP)
             
             # Log what SOFTWARE is SENDING
-            print(self._format_packet_details(cmd_packet, "SOFTWARE → DEVICE", "STOP Command"))
-            print(f"📤 Software sending STOP command to device...")
+            print(self._format_packet_details(cmd_packet, "SOFTWARE -> DEVICE", "STOP Command"))
+            print(f"[SEND] Software sending STOP command to device...")
             
             self.ser.write(cmd_packet)
             self.ser.flush()
             
-            print(f"✅ Command packet written to serial port ({len(cmd_packet)} bytes)")
-            print(f"⏳ Waiting for device response (timeout: {RESPONSE_TIMEOUT}s)...")
+            print(f"[OK] Command packet written to serial port ({len(cmd_packet)} bytes)")
+            print(f"[WAIT] Waiting for device response (timeout: {RESPONSE_TIMEOUT}s)...")
             
             # Wait for ACK
             response_packet = self._read_response()
             if response_packet:
                 # Log what DEVICE is SENDING BACK
-                print(self._format_packet_details(response_packet, "DEVICE → SOFTWARE", "STOP ACK Response"))
-                print(f"📥 Device responded with packet ({len(response_packet)} bytes)")
+                print(self._format_packet_details(response_packet, "DEVICE -> SOFTWARE", "STOP ACK Response"))
+                print(f"[RECV] Device responded with packet ({len(response_packet)} bytes)")
                 
                 response = self._parse_response(response_packet)
-                print(f"📋 Parsed response: {response}")
+                print(f"[PARSED] Parsed response: {response}")
                 
                 is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_STOP:
@@ -343,24 +343,24 @@ class HardwareCommandHandler:
                     is_ack = True
                     
                 if is_ack:
-                    print(f"✅ STOP COMMAND: Success! Device acknowledged STOP command")
+                    print(f"[OK] STOP COMMAND: Success! Device acknowledged STOP command")
                     print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
                     print("="*70 + "\n")
                     return True, response
                 else:
-                    print(f"⚠️ STOP COMMAND: Unexpected response type or OpCode mismatch")
+                    print(f"[WARN] STOP COMMAND: Unexpected response type or OpCode mismatch")
                     print(f"   Expected: ACK with OpCode 0x{OPCODE_STOP:02X}")
                     print(f"   Received: {response}")
                     print("="*70 + "\n")
                     return False, response
             else:
-                print("❌ STOP COMMAND: No response received from device (timeout)")
+                print("[ERROR] STOP COMMAND: No response received from device (timeout)")
                 print(f"   Device did not respond within {RESPONSE_TIMEOUT} seconds")
                 print("="*70 + "\n")
                 return False, None
                 
         except Exception as e:
-            print(f"❌ STOP COMMAND: Error occurred: {e}")
+            print(f"[ERROR] STOP COMMAND: Error occurred: {e}")
             import traceback
             print(f"   Traceback: {traceback.format_exc()}")
             print("="*70 + "\n")
@@ -544,32 +544,35 @@ class HardwareCommandHandler:
         pkt[21] = END_BYTE
         return bytes(pkt)
     
-    def _send_stop(self, timeout: float = 3.0) -> bool:
+    def _send_stop(self, timeout: float = 3.0, quiet: bool = False) -> bool:
         """
         Send STOP command to put device in IDLE state
 
         Args:
             timeout: Timeout in seconds
+            quiet: If True, suppress console printing
         
         Returns:
             bool: True if STOP ACK received successfully
         """
         self.ser.reset_input_buffer()
         pkt = self._build_simple_packet(0, OPCODE_STOP)
-        print("📤 STOP →", pkt.hex(" ").upper())
+        if not quiet:
+            print("[SEND] STOP ->", pkt.hex(" ").upper())
         self.ser.write(pkt)
         self.ser.flush()
         
         ack = self._wait_for_ack(OPCODE_STOP, timeout=timeout)
-        print("📥 STOP ACK ←", ack.hex(" ").upper())
+        if not quiet:
+            print("[RECV] STOP ACK <-", ack.hex(" ").upper())
         return True
     
-    def send_version_command(self, counter: int = 0, timeout: float = 1.0, retries: int = 2) -> Tuple[bool, Optional[str], Optional[Dict]]:
+    def send_version_command(self, counter: int = 0, timeout: float = 1.0, retries: int = 2, quiet: bool = False) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """
         Hardware protocol:
-        App → 0x14
-        Device → 0x21 (ACK, byte[5]=0x14)
-        Device → 0x24 (DATA, bytes[5:21]=ASCII version)
+        App -> 0x14
+        Device -> 0x21 (ACK, byte[5]=0x14)
+        Device -> 0x24 (DATA, bytes[5:21]=ASCII version)
         
         First sends STOP to put device in IDLE, then requests version.
         Filters out ECG streaming frames (0x20) that might interfere.
@@ -578,47 +581,55 @@ class HardwareCommandHandler:
             counter: Packet counter (default: 0, but uses 1 for VERSION packet)
             timeout: Timeout in seconds (increased for stability)
             retries: Number of retry attempts
+            quiet: If True, suppress console printing
         
         Returns:
             tuple: (success: bool, version_string: str or None, response: dict or None)
         """
         for attempt in range(retries + 1):
             if attempt > 0:
-                print(f"🔄 Retrying VERSION command (attempt {attempt + 1}/{retries + 1})...")
+                if not quiet:
+                    print(f"[RETRY] Retrying VERSION command (attempt {attempt + 1}/{retries + 1})...")
                 time.sleep(0.2) # Wait before retry
 
-            print("\n" + "="*60)
-            print(f"🔍 VERSION COMMAND (Attempt {attempt + 1}): Requesting device version...")
-            print("="*60)
+            if not quiet:
+                print("\n" + "="*60)
+                print(f"[SCAN] VERSION COMMAND (Attempt {attempt + 1}): Requesting device version...")
+                print("="*60)
             
             CMD_VERSION = OPCODE_VERSION  # 0x13
             
             try:
                 # First, stop the device if it's streaming
                 try:
-                    self._send_stop(timeout=timeout)
-                    print("✅ STOP confirmed")
+                    self._send_stop(timeout=timeout, quiet=quiet)
+                    if not quiet:
+                        print("[OK] STOP confirmed")
                     time.sleep(0.1)
                 except TimeoutError:
                     # Device might already be stopped, continue anyway
-                    print("⚠️ STOP ACK timeout (device may already be stopped)")
+                    if not quiet:
+                        print("[WARN] STOP ACK timeout (device may already be stopped)")
                 
                 # Reset buffer before sending VERSION
                 self.ser.reset_input_buffer()
                 
                 # Send VERSION command
                 pkt = self._build_simple_packet(1, CMD_VERSION)
-                print("📤 VERSION →", pkt.hex(" ").upper())
+                if not quiet:
+                    print("[SEND] VERSION ->", pkt.hex(" ").upper())
                 self.ser.write(pkt)
                 self.ser.flush()
                 
                 # Wait for ACK (filters out ECG_STREAM frames)
                 ack = self._wait_for_ack(CMD_VERSION, timeout=timeout)
-                print("📥 VERSION ACK ←", ack.hex(" ").upper())
+                if not quiet:
+                    print("[RECV] VERSION ACK <-", ack.hex(" ").upper())
                 
                 # Wait for DATA (filters out ECG_STREAM frames)
                 data = self._wait_for_data(timeout=timeout)
-                print("📥 VERSION DATA ←", data.hex(" ").upper())
+                if not quiet:
+                    print("[RECV] VERSION DATA <-", data.hex(" ").upper())
                 
                 # Decode version from bytes 5-21
                 try:
@@ -626,11 +637,12 @@ class HardwareCommandHandler:
                 except UnicodeDecodeError:
                     version = data[5:21].hex().upper()
                 
-                print("\n" + "="*60)
-                print("✅ VERSION COMMAND SUCCESS")
-                print("="*60)
-                print("✅ DEVICE VERSION:", version)
-                print("="*60 + "\n")
+                if not quiet:
+                    print("\n" + "="*60)
+                    print("[OK] VERSION COMMAND SUCCESS")
+                    print("="*60)
+                    print("[OK] DEVICE VERSION:", version)
+                    print("="*60 + "\n")
                 
                 # Create response dict for compatibility
                 data_response = {
@@ -645,28 +657,32 @@ class HardwareCommandHandler:
                 return True, version, data_response
                     
             except TimeoutError as e:
-                print(f"❌ VERSION COMMAND: {e}")
+                if not quiet:
+                    print(f"[ERROR] VERSION COMMAND: {e}")
                 if attempt == retries:
-                    print("="*60 + "\n")
+                    if not quiet:
+                        print("="*60 + "\n")
                     return False, None, None
             except Exception as e:
-                print(f"❌ VERSION COMMAND: Error occurred: {e}")
+                if not quiet:
+                    print(f"[ERROR] VERSION COMMAND: Error occurred: {e}")
                 if attempt == retries:
-                    import traceback
-                    print(f"   Traceback: {traceback.format_exc()}")
-                    print("="*60 + "\n")
+                    if not quiet:
+                        import traceback
+                        print(f"   Traceback: {traceback.format_exc()}")
+                        print("="*60 + "\n")
                     return False, None, None
         
         return False, None, None
 
     def send_machine_serial_command(
-        self, counter: int = 0, timeout: float = 1.0, retries: int = 2
+        self, counter: int = 0, timeout: float = 1.0, retries: int = 2, quiet: bool = False
     ) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """
         Hardware protocol:
-        App → 0x13
-        Device → 0x21 (ACK, byte[5]=0x13)
-        Device → 0x23 (DATA, bytes[5:21]=ASCII serial number)
+        App -> 0x13
+        Device -> 0x21 (ACK, byte[5]=0x13)
+        Device -> 0x23 (DATA, bytes[5:21]=ASCII serial number)
 
         First sends STOP to put device in IDLE, then requests machine serial number.
         Filters out ECG streaming frames (0x20) that might interfere.
@@ -675,6 +691,7 @@ class HardwareCommandHandler:
             counter: Packet counter (kept for API symmetry; this path uses 1 for the request frame)
             timeout: Timeout in seconds
             retries: Number of retry attempts
+            quiet: If True, suppress all console output (use for background scanning)
 
         Returns:
             tuple: (success: bool, serial_number: str or None, response: dict or None)
@@ -683,16 +700,18 @@ class HardwareCommandHandler:
 
         for attempt in range(retries + 1):
             if attempt > 0:
-                print(
-                    f"🔄 Retrying MACHINE SERIAL command (attempt {attempt + 1}/{retries + 1})..."
-                )
+                if not quiet:
+                    print(
+                        f"[RETRY] Retrying MACHINE SERIAL command (attempt {attempt + 1}/{retries + 1})..."
+                    )
                 time.sleep(0.2)
 
-            print("\n" + "=" * 60)
-            print(
-                f"🔍 MACHINE SERIAL COMMAND (Attempt {attempt + 1}): Requesting machine serial number..."
-            )
-            print("=" * 60)
+            if not quiet:
+                print("\n" + "=" * 60)
+                print(
+                    f"[SCAN] MACHINE SERIAL COMMAND (Attempt {attempt + 1}): Requesting machine serial number..."
+                )
+                print("=" * 60)
 
             CMD_SERIAL = OPCODE_MACHINE_SERIAL  # 0x13
 
@@ -700,34 +719,40 @@ class HardwareCommandHandler:
                 # Stop streaming first so ACK/DATA aren't mixed with 0x20 frames.
                 try:
                     self._send_stop(timeout=timeout)
-                    print("✅ STOP confirmed")
+                    if not quiet:
+                        print("[OK] STOP confirmed")
                     time.sleep(0.1)
                 except TimeoutError:
-                    print("⚠️ STOP ACK timeout (device may already be stopped)")
+                    if not quiet:
+                        print("[WARN] STOP ACK timeout (device may already be stopped)")
 
                 self.ser.reset_input_buffer()
 
                 pkt = self._build_simple_packet(1, CMD_SERIAL)
-                print("📤 MACHINE SERIAL →", pkt.hex(" ").upper())
+                if not quiet:
+                    print("[SEND] MACHINE SERIAL ->", pkt.hex(" ").upper())
                 self.ser.write(pkt)
                 self.ser.flush()
 
                 ack = self._wait_for_ack(CMD_SERIAL, timeout=timeout, allow_device_code_0x20=True)
-                print("📥 MACHINE SERIAL ACK ←", ack.hex(" ").upper())
+                if not quiet:
+                    print("[RECV] MACHINE SERIAL ACK <-", ack.hex(" ").upper())
 
                 data = self._wait_for_data(timeout=timeout, expected_code=DATA_CODE_MACHINE_SERIAL)
-                print("📥 MACHINE SERIAL DATA ←", data.hex(" ").upper())
+                if not quiet:
+                    print("[RECV] MACHINE SERIAL DATA <-", data.hex(" ").upper())
 
                 try:
                     serial_number = data[5:21].decode("ascii").rstrip("\x00").strip()
                 except UnicodeDecodeError:
                     serial_number = data[5:21].hex().upper()
 
-                print("\n" + "=" * 60)
-                print("✅ MACHINE SERIAL COMMAND SUCCESS")
-                print("=" * 60)
-                print("✅ MACHINE SERIAL NUMBER:", serial_number)
-                print("=" * 60 + "\n")
+                if not quiet:
+                    print("\n" + "=" * 60)
+                    print("[OK] MACHINE SERIAL COMMAND SUCCESS")
+                    print("=" * 60)
+                    print("[OK] MACHINE SERIAL NUMBER:", serial_number)
+                    print("=" * 60 + "\n")
 
                 data_response = {
                     "type": "machine_serial_data",
@@ -741,17 +766,20 @@ class HardwareCommandHandler:
                 return True, serial_number, data_response
 
             except TimeoutError as e:
-                print(f"❌ MACHINE SERIAL COMMAND: {e}")
+                if not quiet:
+                    print(f"[ERROR] MACHINE SERIAL COMMAND: {e}")
                 if attempt == retries:
-                    print("=" * 60 + "\n")
+                    if not quiet:
+                        print("=" * 60 + "\n")
                     return False, None, None
             except Exception as e:
-                print(f"❌ MACHINE SERIAL COMMAND: Error occurred: {e}")
+                if not quiet:
+                    print(f"[ERROR] MACHINE SERIAL COMMAND: Error occurred: {e}")
                 if attempt == retries:
-                    import traceback
-
-                    print(f"   Traceback: {traceback.format_exc()}")
-                    print("=" * 60 + "\n")
+                    if not quiet:
+                        import traceback
+                        print(f"   Traceback: {traceback.format_exc()}")
+                        print("=" * 60 + "\n")
                     return False, None, None
 
         return False, None, None
@@ -764,7 +792,7 @@ class HardwareCommandHandler:
             tuple: (success: bool, response: dict or None)
         """
         print("\n" + "="*70)
-        print("🔒 CLOSE COMMAND: Requesting device to close connection")
+        print("[CLOSE] CLOSE COMMAND: Requesting device to close connection")
         print("="*70)
         
         try:
@@ -777,24 +805,24 @@ class HardwareCommandHandler:
             cmd_packet = self._build_command_packet(OPCODE_CLOSE)
             
             # Log what SOFTWARE is SENDING
-            print(self._format_packet_details(cmd_packet, "SOFTWARE → DEVICE", "CLOSE Command"))
-            print(f"📤 Software sending CLOSE command to device...")
+            print(self._format_packet_details(cmd_packet, "SOFTWARE -> DEVICE", "CLOSE Command"))
+            print(f"[SEND] Software sending CLOSE command to device...")
             
             self.ser.write(cmd_packet)
             self.ser.flush()
             
-            print(f"✅ Command packet written to serial port ({len(cmd_packet)} bytes)")
-            print(f"⏳ Waiting for device response (timeout: {RESPONSE_TIMEOUT}s)...")
+            print(f"[OK] Command packet written to serial port ({len(cmd_packet)} bytes)")
+            print(f"[WAIT] Waiting for device response (timeout: {RESPONSE_TIMEOUT}s)...")
             
             # Wait for ACK
             response_packet = self._read_response()
             if response_packet:
                 # Log what DEVICE is SENDING BACK
-                print(self._format_packet_details(response_packet, "DEVICE → SOFTWARE", "CLOSE ACK Response"))
-                print(f"📥 Device responded with packet ({len(response_packet)} bytes)")
+                print(self._format_packet_details(response_packet, "DEVICE -> SOFTWARE", "CLOSE ACK Response"))
+                print(f"[RECV] Device responded with packet ({len(response_packet)} bytes)")
                 
                 response = self._parse_response(response_packet)
-                print(f"📋 Parsed response: {response}")
+                print(f"[PARSED] Parsed response: {response}")
                 
                 is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_CLOSE:
@@ -803,24 +831,24 @@ class HardwareCommandHandler:
                     is_ack = True
                     
                 if is_ack:
-                    print(f"✅ CLOSE COMMAND: Success! Device acknowledged CLOSE command")
+                    print(f"[OK] CLOSE COMMAND: Success! Device acknowledged CLOSE command")
                     print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
                     print("="*70 + "\n")
                     return True, response
                 else:
-                    print(f"⚠️ CLOSE COMMAND: Unexpected response type or OpCode mismatch")
+                    print(f"[WARN] CLOSE COMMAND: Unexpected response type or OpCode mismatch")
                     print(f"   Expected: ACK with OpCode 0x{OPCODE_CLOSE:02X}")
                     print(f"   Received: {response}")
                     print("="*70 + "\n")
                     return False, response
             else:
-                print("❌ CLOSE COMMAND: No response received from device (timeout)")
+                print("[ERROR] CLOSE COMMAND: No response received from device (timeout)")
                 print(f"   Device did not respond within {RESPONSE_TIMEOUT} seconds")
                 print("="*70 + "\n")
                 return False, None
                 
         except Exception as e:
-            print(f"❌ CLOSE COMMAND: Error occurred: {e}")
+            print(f"[ERROR] CLOSE COMMAND: Error occurred: {e}")
             import traceback
             print(f"   Traceback: {traceback.format_exc()}")
             print("="*70 + "\n")

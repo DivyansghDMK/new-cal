@@ -1,25 +1,30 @@
 """
 utils/license_manager.py
 ========================
-Client-side license validation for CardioX / ECG Monitor.
+CardioX client-side license validation — v2.0 (Three-Pillar Architecture).
 
-Flow:
-  1. On startup, read cached license (HMAC-integrity-checked).
-  2. If cache is valid, not expired, and within offline-grace window → allow.
-  3. Otherwise contact license server to (re-)validate.
-  4. Server response is HMAC-signed; client verifies signature.
-  5. Valid response is written back to encrypted cache.
+Pillar 1 — Hardware Fingerprint
+    SHA-256 of 5 WMI fields: BIOS serial, Motherboard UUID, CPU ID,
+    Disk serial, MAC address.  Stable across reboots; cannot move to
+    another machine without hardware spoofing.
 
-License key format  (displayed as XXXXX-XXXXX-XXXXX-XXXXX):
-  20 base-32 chars (no ambiguous 0/O, 1/I) encoding:
-    tier      1 byte   (0=trial, 1=standard, 2=pro, 3=enterprise)
-    expiry    4 bytes  (Unix timestamp, seconds — 0 = perpetual)
-    nonce     4 bytes  (random, makes each key unique)
-    checksum  3 bytes  (first 3 bytes of HMAC-SHA256(payload, SECRET))
-  Total: 12 bytes → 20 base-32 chars
+Pillar 2 — RhythmUlta Device Lock
+    USB scan for matching VID/PID on every startup.  Serial number is
+    compared against the bound serial stored in the token.  Missing or
+    mismatched device = blocked immediately.
 
-The server performs the authoritative validation; the checksum is a
-lightweight offline sanity check only.
+Pillar 3 — Server-Signed Token
+    On successful registration the server issues an HMAC-signed JWT-like
+    token stored at %APPDATA%\\Deckmount\\cardiox.lic.  The token carries
+    fingerprint, RhythmUlta serial, license key, seat number, and the
+    timestamp of the last successful server heartbeat.
+
+Startup validation sequence (5 checks):
+    1. Token file exists on disk.
+    2. Token HMAC signature is valid (tamper detection).
+    3. Hardware fingerprint in token matches this machine.
+    4. RhythmUlta connected and serial matches token.
+    5. Server heartbeat (POST /heartbeat) — only once every 7 days.
 """
 
 from __future__ import annotations
@@ -31,22 +36,24 @@ import json
 import os
 import platform
 import struct
+import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from dotenv import find_dotenv, load_dotenv
 
 # Load project .env so standalone imports and the app share the same settings.
 load_dotenv(find_dotenv(usecwd=True), override=False)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-# Override LICENSE_SERVER_URL via environment variable in production.
+
 LICENSE_SERVER_URL: str = os.getenv(
     "LICENSE_SERVER_URL",
     "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1",
 )
+
 
 def _load_hmac_secret() -> bytes:
     """Load the shared HMAC secret from env as UTF-8 bytes."""
@@ -57,250 +64,372 @@ def _load_hmac_secret() -> bytes:
     return raw.encode("utf-8")
 
 
-# Shared HMAC secret — MUST match the value on the server.
-# Set via environment variable; never hard-code in production builds.
 _HMAC_SECRET: bytes = _load_hmac_secret()
-
-# Optional gateway token used by the API layer in front of the license server.
 LICENSE_API_TOKEN: str = os.getenv("LICENSE_API_TOKEN", "").strip()
 
-SOFTWARE_VERSION: str = "1.1.1"
+SOFTWARE_VERSION: str = "2.0.0"
 PRODUCT_CODE: str = "CARDIOX"
 
-# How many days the app may run offline before it requires re-validation.
+# Offline grace window (days) — app runs without internet for this many days.
 OFFLINE_GRACE_DAYS: int = 7
+# How many seconds between mandatory server heartbeats.
+HEARTBEAT_INTERVAL_SECONDS: int = OFFLINE_GRACE_DAYS * 86400
 
-# Local cache file location (writable on all platforms).
-_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
-_CACHE_FILE: Path = _CACHE_DIR / "license.cache"
-_DEVICE_ID_FILE: Path = _CACHE_DIR / "device.id"
+# ── RhythmUlta USB Identity ───────────────────────────────────────────────────
+# Set RHYTHMULTA_VID / RHYTHMULTA_PID in .env or environment.
+# Values are integers (decimal or hex string accepted).
+def _parse_usb_id(env_key: str, default: int) -> int:
+    raw = os.getenv(env_key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw, 16) if raw.startswith("0x") or raw.startswith("0X") else int(raw)
+    except ValueError:
+        return default
+
+RHYTHMULTRA_VID: int = _parse_usb_id("RHYTHMULTRA_VID", 0x0000) or _parse_usb_id("RHYTHMULTA_VID", 0x0000)
+RHYTHMULTRA_PID: int = _parse_usb_id("RHYTHMULTRA_PID", 0x0000) or _parse_usb_id("RHYTHMULTA_PID", 0x0000)
+RHYTHMULTA_VID = RHYTHMULTRA_VID
+RHYTHMULTA_PID = RHYTHMULTRA_PID
+
+# ── File Paths ────────────────────────────────────────────────────────────────
+# Token lives in %APPDATA%\Deckmount\cardiox.lic (per SDD §3.4)
+_APPDATA = Path(os.getenv("APPDATA", Path.home()))
+_TOKEN_DIR: Path = _APPDATA / "Deckmount"
+_TOKEN_FILE: Path = _TOKEN_DIR / "cardiox.lic"
+
+# Legacy cache dir (kept for backward compat — old key file)
+_LEGACY_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
+_LEGACY_KEY_FILE: Path = _LEGACY_CACHE_DIR / "license.key"
+_LEGACY_CACHE_FILE: Path = _LEGACY_CACHE_DIR / "license.cache"
+_DEVICE_ID_FILE: Path = _LEGACY_CACHE_DIR / "device.id"  # no longer used; kept to remove on upgrade
 
 # Base-32 alphabet — no ambiguous chars (0, O, 1, I)
 _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
-# ── Hardware Fingerprint ───────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# PILLAR 1 — Hardware Fingerprint (WMI 5-field SHA-256)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_wmic(args: List[str]) -> str:
+    """Run a wmic command and return stdout, stripped. Empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["wmic"] + args,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+        # wmic outputs a header line then the value; skip header
+        for line in lines:
+            lower = line.lower()
+            if lower in ("serialnumber", "uuid", "processorid", "caption", "name"):
+                continue
+            if lower.startswith("to be filled") or lower == "none":
+                return ""
+            if line:
+                return line
+        return ""
+    except Exception:
+        return ""
+
+
+def _collect_wmi_fields() -> Dict[str, str]:
+    """
+    Collect the 5 hardware identifiers used in the fingerprint.
+    Returns a dict — missing/blank fields are empty strings.
+    """
+    fields: Dict[str, str] = {}
+
+    # 1. BIOS serial — never changes
+    fields["bios_serial"] = _run_wmic(["bios", "get", "serialnumber"])
+
+    # 2. Motherboard UUID — never changes
+    fields["mb_uuid"] = _run_wmic(["csproduct", "get", "uuid"])
+
+    # 3. CPU Processor ID — never changes
+    fields["cpu_id"] = _run_wmic(["cpu", "get", "processorid"])
+
+    # 4. Primary disk serial — changes if disk replaced
+    fields["disk_serial"] = _run_wmic(["diskdrive", "get", "serialnumber"])
+
+    # 5. MAC address — changes if NIC replaced
+    try:
+        fields["mac"] = f"{uuid.getnode():012x}"
+    except Exception:
+        fields["mac"] = ""
+
+    return fields
+
+
+def _collect_machine_info() -> Dict[str, str]:
+    """Collect display-only machine metadata (not used in fingerprint)."""
+    info: Dict[str, str] = {}
+    try:
+        info["pc_name"] = os.getenv("COMPUTERNAME", "") or platform.node()
+    except Exception:
+        info["pc_name"] = ""
+    try:
+        info["windows_version"] = _run_wmic(["os", "get", "caption"]) or platform.version()
+    except Exception:
+        info["windows_version"] = platform.version()
+    return info
+
 
 def get_hardware_fingerprint() -> str:
-    """Return a stable installation fingerprint for this app instance."""
-    try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        if _DEVICE_ID_FILE.exists():
-            device_id = _DEVICE_ID_FILE.read_text(encoding="utf-8").strip()
-            if device_id:
-                return device_id
-    except Exception:
-        pass
+    """
+    Return a stable SHA-256 hardware fingerprint derived from 5 WMI fields.
 
-    # Create the ID once and keep it local to this installation.
-    try:
-        seed = f"{uuid.uuid4().hex}:{platform.node()}:{os.getenv('USERNAME', '')}:{os.getenv('COMPUTERNAME', '')}"
-        device_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()
-        _DEVICE_ID_FILE.write_text(device_id, encoding="utf-8")
-        return device_id
-    except Exception:
-        # Last resort: derive something from the host so activation can still proceed.
-        fallback = f"{platform.node()}|{platform.system()}|{platform.release()}|{uuid.getnode():012x}"
-        return hashlib.sha256(fallback.encode("utf-8")).hexdigest()
+    OEM machines may have blank BIOS serials — the remaining fields compensate.
+    All 5 values are concatenated with '|' and hashed with SHA-256.
+    """
+    fields = _collect_wmi_fields()
+    # Build ordered concatenation; blank fields contribute empty string (not omitted)
+    raw = "|".join([
+        fields.get("bios_serial", ""),
+        fields.get("mb_uuid", ""),
+        fields.get("cpu_id", ""),
+        fields.get("disk_serial", ""),
+        fields.get("mac", ""),
+    ])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+_detected_device_serial: Optional[str] = None
+
+
+def set_detected_device_serial(serial: Optional[str]):
+    """Set the detected device serial ID from active COM port scan."""
+    global _detected_device_serial
+    _detected_device_serial = serial
 
 
 def get_machine_context() -> Dict[str, str]:
-    """Return machine metadata expected by the activation API."""
-    try:
-        uname = platform.uname()
-    except Exception:
-        uname = None
+    """Return machine metadata for server registration payload."""
+    info = _collect_machine_info()
+    wmi = _collect_wmi_fields()
+    
+    machine_serial = wmi.get("bios_serial", "").strip()
+    if not machine_serial or machine_serial.lower() == "none" or "to be filled" in machine_serial.lower():
+        global _detected_device_serial
+        if _detected_device_serial:
+            machine_serial = _detected_device_serial
+            
     return {
-        "machine_name": os.getenv("COMPUTERNAME", "") or (uname.node if uname else platform.node()),
+        "machine_name": info.get("pc_name", platform.node()),
+        "machine_serial_id": machine_serial,
+        "windows_version": info.get("windows_version", ""),
         "machine_os": f"{platform.system()} {platform.release()}".strip(),
-        "machine_host": platform.node(),
     }
 
 
-# ── License Key Utilities ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# PILLAR 2 — RhythmUlta USB Device Lock
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _b32_encode(data: bytes) -> str:
-    """Encode bytes to our custom base-32 string."""
-    result = []
-    acc = 0
-    bits = 0
-    for byte in data:
-        acc = (acc << 8) | byte
-        bits += 8
-        while bits >= 5:
-            bits -= 5
-            result.append(_B32_ALPHA[(acc >> bits) & 0x1F])
-    if bits > 0:
-        result.append(_B32_ALPHA[(acc << (5 - bits)) & 0x1F])
-    return "".join(result)
-
-
-def _b32_decode(s: str) -> bytes:
-    """Decode our custom base-32 string to bytes."""
-    s = s.upper().replace("-", "").replace(" ", "")
-    acc = 0
-    bits = 0
-    result = []
-    for char in s:
-        idx = _B32_ALPHA.find(char)
-        if idx < 0:
-            raise ValueError(f"Invalid character in license key: {char!r}")
-        acc = (acc << 5) | idx
-        bits += 5
-        if bits >= 8:
-            bits -= 8
-            result.append((acc >> bits) & 0xFF)
-    return bytes(result)
-
-
-def format_key(raw_key: str) -> str:
-    """Format a 20-char raw key as XXXXX-XXXXX-XXXXX-XXXXX."""
-    raw_key = raw_key.upper().replace("-", "").replace(" ", "")
-    return "-".join(raw_key[i:i+5] for i in range(0, len(raw_key), 5))
-
-
-def parse_key_payload(license_key: str) -> Optional[Dict]:
-    """
-    Decode license key without contacting the server.
-    Returns dict with tier/expiry/nonce, or None if the checksum fails.
-    """
+def _list_usb_ports():
+    """Return list of (vid, pid, serial) tuples from all connected COM ports."""
     try:
-        raw = license_key.upper().replace("-", "").replace(" ", "")
-        if len(raw) != 20:
-            return None
-        data = _b32_decode(raw)          # 12 bytes
-        if len(data) < 12:
-            return None
-        tier     = data[0]
-        expiry   = struct.unpack(">I", data[1:5])[0]
-        nonce    = data[5:9]
-        checksum = data[9:12]
-
-        # Verify embedded checksum
-        payload = data[:9]
-        expected_cs = hmac.new(_HMAC_SECRET, payload, hashlib.sha256).digest()[:3]
-        if not hmac.compare_digest(checksum, expected_cs):
-            return None
-
-        return {
-            "tier":   tier,
-            "expiry": expiry,
-            "nonce":  nonce.hex(),
-        }
+        import serial.tools.list_ports  # type: ignore
+        result = []
+        for port in serial.tools.list_ports.comports():
+            vid = getattr(port, "vid", None)
+            pid = getattr(port, "pid", None)
+            serial_number = getattr(port, "serial_number", None) or ""
+            result.append((vid, pid, serial_number.strip()))
+        return result
+    except ImportError:
+        return _list_usb_via_wmic()
     except Exception:
-        return None
+        return []
 
 
-def parse_key_metadata(license_key: str) -> Optional[Dict]:
-    """
-    Decode the visible key format without enforcing the embedded checksum.
-
-    This keeps local validation lightweight while allowing backend-issued keys
-    to be checked authoritatively by the server.
-    """
+def _list_usb_via_wmic() -> List[Tuple[Optional[int], Optional[int], str]]:
+    """Fallback USB enumeration using WMI when pyserial is unavailable."""
     try:
-        raw = license_key.upper().replace("-", "").replace(" ", "")
-        if len(raw) != 20:
-            return None
-        data = _b32_decode(raw)
-        if len(data) < 12:
-            return None
-        tier = data[0]
-        expiry = struct.unpack(">I", data[1:5])[0]
-        nonce = data[5:9]
-        return {
-            "tier": tier,
-            "expiry": expiry,
-            "nonce": nonce.hex(),
-        }
-    except Exception:
-        return None
-
-
-def is_key_expired_locally(license_key: str) -> bool:
-    """Quick local expiry check (does not contact server)."""
-    payload = parse_key_metadata(license_key)
-    if payload is None:
-        return True                    # invalid key
-    expiry = payload["expiry"]
-    if expiry == 0:
-        return False                   # perpetual
-    return int(time.time()) > expiry
-
-
-# ── Local Encrypted Cache ──────────────────────────────────────────────────────
-
-def _cache_write(data: Dict) -> None:
-    """Write license cache to disk, protected by HMAC."""
-    try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(data, sort_keys=True).encode()
-        sig = hmac.new(_HMAC_SECRET, payload, hashlib.sha256).hexdigest()
-        _CACHE_FILE.write_text(
-            json.dumps({"payload": data, "sig": sig}, indent=2),
-            encoding="utf-8",
+        result = subprocess.run(
+            ["wmic", "path", "Win32_PnPEntity", "get", "DeviceID,Name"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
-    except Exception as e:
-        print(f"[License] Cache write failed: {e}")
-
-
-def _cache_read() -> Optional[Dict]:
-    """Read and verify cached license. Returns None if missing or tampered."""
-    try:
-        if not _CACHE_FILE.exists():
-            return None
-        obj = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
-        payload_bytes = json.dumps(obj["payload"], sort_keys=True).encode()
-        expected_sig = hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected_sig, obj["sig"]):
-            print("[License] Cache tampered — ignoring.")
-            return None
-        return obj["payload"]
+        devices = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if "USB\\VID_" in line.upper():
+                # Parse VID/PID from DeviceID like USB\VID_1234&PID_5678\SERIAL
+                try:
+                    parts = line.upper().split("VID_")[1]
+                    vid_str = parts[:4]
+                    pid_str = parts.split("PID_")[1][:4] if "PID_" in parts else "0000"
+                    vid = int(vid_str, 16)
+                    pid = int(pid_str, 16)
+                    # Serial is after last backslash
+                    serial = line.rsplit("\\", 1)[-1].strip() if "\\" in line else ""
+                    devices.append((vid, pid, serial))
+                except Exception:
+                    continue
+        return devices
     except Exception:
+        return []
+
+
+_vid_pid_warning_printed = False  # Print the VID/PID warning only once per process
+
+
+def get_rhythmultra_serial() -> Optional[str]:
+    """
+    Scan USB ports or COM ports for a RhythmUltra device.
+    Uses active serial probing (VERSION and MACHINE_SERIAL commands) to detect the hardware,
+    falling back to VID/PID match if active probing is unsuccessful.
+    """
+    global _detected_device_serial
+    if _detected_device_serial:
+        return _detected_device_serial
+
+    # 1. Active Probing Fallback (queries the actual hardware)
+    try:
+        import serial
+        import serial.tools.list_ports
+        from ecg.serial.hardware_commands import HardwareCommandHandler
+        
+        ports = list(serial.tools.list_ports.comports())
+        filtered_ports = []
+        for p in ports:
+            desc = str(getattr(p, "description", "") or "")
+            dev = str(getattr(p, "device", "") or "")
+            if dev.upper() == "COM1" and "Communications Port" in desc:
+                continue
+            if "Bluetooth" in desc:
+                continue
+            filtered_ports.append(p)
+            
+        for port in filtered_ports:
+            try:
+                ser = serial.Serial(
+                    port.device,
+                    115200,
+                    timeout=0.2,
+                    write_timeout=0.2,
+                )
+                try:
+                    handler = HardwareCommandHandler(ser)
+                    success_v, version, _ = handler.send_version_command(timeout=0.4, quiet=True)
+                    if success_v and version:
+                        success_s, serial_num, _ = handler.send_machine_serial_command(timeout=0.4, quiet=True)
+                        if success_s and serial_num:
+                            # Cache it globally
+                            set_detected_device_serial(serial_num)
+                            return serial_num
+                finally:
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[LicenseManager] Active port probe skipped: {e}")
+
+    # 2. USB Descriptor Fallback (traditional matching)
+    if RHYTHMULTRA_VID != 0 or RHYTHMULTRA_PID != 0:
+        ports = _list_usb_ports()
+        for vid, pid, serial in ports:
+            if vid == RHYTHMULTRA_VID and pid == RHYTHMULTRA_PID:
+                serial_val = serial if serial else "UNKNOWN_SERIAL"
+                set_detected_device_serial(serial_val)
+                return serial_val
+
+    global _vid_pid_warning_printed
+    if RHYTHMULTRA_VID == 0 and RHYTHMULTRA_PID == 0:
+        if not _vid_pid_warning_printed:
+            print(
+                "[License] WARNING: RHYTHMULTRA_VID and RHYTHMULTRA_PID are not configured. "
+                "Active serial probe did not detect a device. Set them in .env if using legacy USB matching."
+            )
+            _vid_pid_warning_printed = True
+
+    return None
+
+
+def is_rhythmultra_connected() -> bool:
+    """Return True if a RhythmUltra device with matching VID/PID is connected."""
+    return get_rhythmultra_serial() is not None
+
+# Legacy aliases for backward compatibility
+get_rhythmulta_serial = get_rhythmultra_serial
+is_rhythmulta_connected = is_rhythmultra_connected
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PILLAR 3 — Server-Signed Token (cardiox.lic)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _token_hmac(payload_bytes: bytes) -> str:
+    """Compute HMAC-SHA256 hex digest of a token payload."""
+    return hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
+
+
+def save_token_file(token_data: Dict) -> None:
+    """
+    Write the license token to %APPDATA%\\Deckmount\\cardiox.lic.
+    The file is an HMAC-signed JSON envelope.
+    """
+    try:
+        _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        payload_bytes = json.dumps(token_data, sort_keys=True).encode("utf-8")
+        sig = _token_hmac(payload_bytes)
+        envelope = {"payload": token_data, "sig": sig}
+        _TOKEN_FILE.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        print(f"[License] Token saved to {_TOKEN_FILE}")
+    except Exception as e:
+        print(f"[License] Token write failed: {e}")
+
+
+def load_token_file() -> Optional[Dict]:
+    """
+    Read and verify the license token from disk.
+    Returns the payload dict, or None if missing or tampered.
+    """
+    try:
+        if not _TOKEN_FILE.exists():
+            return None
+        obj = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
+        payload = obj.get("payload")
+        sig = obj.get("sig", "")
+        if not payload or not sig:
+            print("[License] Token file malformed.")
+            return None
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        expected = _token_hmac(payload_bytes)
+        if not hmac.compare_digest(expected, sig):
+            print("[License] Token HMAC mismatch — file tampered or secret changed.")
+            return None
+        return payload
+    except Exception as e:
+        print(f"[License] Token read failed: {e}")
         return None
 
 
-def _cache_clear() -> None:
-    """Remove the local license cache (e.g. after deactivation)."""
+def delete_token_file() -> None:
+    """Remove the token file (e.g. after deactivation or factory reset)."""
     try:
-        if _CACHE_FILE.exists():
-            _CACHE_FILE.unlink()
-    except Exception:
-        pass
-
-
-def clear_license_cache() -> None:
-    """Public helper to remove only the JSON cache artifact."""
-    _cache_clear()
-
-
-def remember_valid_license(
-    license_key: str,
-    fingerprint: str,
-    result: Optional[Dict] = None,
-) -> None:
-    """
-    Persist a known-valid license locally so the next startup can skip the dialog.
-
-    This is used after successful activation to seed the HMAC-protected cache,
-    which allows offline launches to trust the most recent successful check.
-    """
-    try:
-        payload: Dict[str, object] = {
-            "license_key": license_key.strip().upper().replace(" ", ""),
-            "hardware_fingerprint": fingerprint,
-            "last_online": int(time.time()),
-        }
-        if isinstance(result, dict):
-            for key in ("tier", "expires", "message", "source", "valid", "revoked"):
-                if key in result:
-                    payload[key] = result[key]
-        _cache_write(payload)
+        if _TOKEN_FILE.exists():
+            _TOKEN_FILE.unlink()
     except Exception as e:
-        print(f"[License] Could not persist valid license cache: {e}")
+        print(f"[License] Could not delete token file: {e}")
 
 
-# ── Server Communication ───────────────────────────────────────────────────────
+def token_file_exists() -> bool:
+    """Check 1: does the token file exist?"""
+    return _TOKEN_FILE.exists()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Server Communication
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _post_json(endpoint: str, body: Dict, timeout: int = 12) -> Dict:
     """Send a signed JSON POST to the license server."""
@@ -308,13 +437,7 @@ def _post_json(endpoint: str, body: Dict, timeout: int = 12) -> Dict:
     import urllib.error
 
     url = f"{LICENSE_SERVER_URL.rstrip('/')}/{endpoint.lstrip('/')}"
-    payload_bytes = json.dumps(
-        body,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-    # Sign the request body so the server can verify it wasn't tampered
+    payload_bytes = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     req_sig = hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
 
     req = urllib.request.Request(
@@ -334,205 +457,359 @@ def _post_json(endpoint: str, body: Dict, timeout: int = 12) -> Dict:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
+    except urllib.error.HTTPError as e:  # type: ignore
         try:
-            body = json.loads(e.read().decode())
-            return body
+            return json.loads(e.read().decode())
         except Exception:
             return {"valid": False, "error": f"HTTP {e.code}: {e.reason}"}
     except Exception as e:
         return {"valid": False, "error": str(e), "offline": True}
 
 
-def _verify_server_response(response: Dict) -> bool:
+def _verify_server_sig(response: Dict) -> bool:
     """Verify the server's HMAC signature on its response."""
-    response = dict(response)
-    sig = response.pop("server_sig", None)
+    resp = dict(response)
+    sig = resp.pop("server_sig", None)
     if not sig:
-        # Legacy servers may not sign — treat as unverified but still use
-        return True
-    candidate_payloads = [
-        json.dumps(response, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
-        json.dumps(response, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
-    ]
-    for payload_bytes in candidate_payloads:
-        expected = hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(expected, sig):
-            return True
-    print("[License] Server response signature mismatch — rejecting.")
-    return False
+        return True  # Legacy / no-sig servers: pass through
+    payload_bytes = json.dumps(resp, sort_keys=True).encode("utf-8")
+    expected = hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)
 
 
-def _response_indicates_revocation(result: Dict) -> bool:
-    """Return True when the server response clearly indicates revocation."""
+def register_device(
+    license_key: str,
+    full_name: str,
+    doctor_name: str,
+    org_name: str,
+    org_address: str,
+    phone: str,
+    password_hash: str,
+) -> Dict:
+    """
+    First-time registration: POST /register.
+    Server validates key pool -> fingerprint uniqueness -> RhythmUlta uniqueness
+    -> creates seat -> returns signed token data.
+    """
+    fingerprint = get_hardware_fingerprint()
+    rhythmulta_serial = get_rhythmulta_serial() or ""
+    machine_ctx = get_machine_context()
+
+    body = {
+        "license_key": license_key.strip().upper(),
+        "hardware_fingerprint": fingerprint,
+        "rhythmulta_serial": rhythmulta_serial,
+        "rhythmultra_serial": rhythmulta_serial,                  # new specification spelling
+        "full_name": full_name,
+        "doctor_name": doctor_name,
+        "org_name": org_name,
+        "org_address": org_address,
+        "phone": phone,
+        "password": password_hash,       # specification expects password
+        "password_hash": password_hash,  # legacy server expects password_hash
+        "bios_serial": machine_ctx["machine_serial_id"],          # specification expects bios_serial
+        "machine_serial_id": machine_ctx["machine_serial_id"],    # legacy server expects machine_serial_id
+        "pc_name": machine_ctx["machine_name"],
+        "windows_version": machine_ctx["windows_version"],
+    }
+    result = _post_json("register", body)
+    _verify_server_sig(result)
+    return result
+
+
+def load_raw_token() -> str:
+    """Read the raw token contents from cardiox.lic."""
     try:
-        if result.get("revoked") is True or result.get("license_revoked") is True:
-            return True
-        for key in ("message", "error", "reason", "status"):
-            value = str(result.get(key, "")).lower()
-            if "revoked" in value:
-                return True
-        return False
+        if _TOKEN_FILE.exists():
+            return _TOKEN_FILE.read_text(encoding="utf-8").strip()
     except Exception:
-        return False
+        pass
+    return ""
 
+
+def heartbeat(token_data: Dict) -> Dict:
+    """
+    POST /heartbeat — 7-day check-in.
+    Sends current token claims; server confirms license not revoked.
+    Returns server response dict (includes `valid`, `revoked`, etc.).
+    """
+    body = {
+        "token": load_raw_token(),  # specification expects raw token from cardiox.lic
+        "hardware_fingerprint": token_data.get("fingerprint", ""),
+        "rhythmulta_serial": token_data.get("rhythmultra_serial", token_data.get("rhythmulta_serial", "")),
+        "rhythmultra_serial": token_data.get("rhythmultra_serial", token_data.get("rhythmulta_serial", "")), # new specification spelling
+        # legacy compatibility fields
+        "license_key": token_data.get("license_key", ""),
+        "seat_number": token_data.get("seat_number", 1),
+    }
+    result = _post_json("heartbeat", body)
+    _verify_server_sig(result)
+    return result
+
+
+# Legacy wrappers (kept for backward compat with existing callers)
 
 def validate_with_server(license_key: str, fingerprint: str) -> Dict:
-    """Contact the license server to validate a key + hardware pair."""
-    body = {
-        "license_key": license_key,
-        "hardware_fingerprint": fingerprint,
-    }
+    """Legacy: validate key+fingerprint. Delegates to heartbeat path if token exists."""
+    token = load_token_file()
+    if token:
+        return heartbeat(token)
+    body = {"license_key": license_key, "hardware_fingerprint": fingerprint}
     result = _post_json("validate", body)
-    _verify_server_response(result)
+    _verify_server_sig(result)
     return result
 
 
 def activate_with_server(license_key: str, fingerprint: str, machine_name: str = "") -> Dict:
-    """First-time activation: tie this license key to this hardware."""
+    """Legacy: kept for compatibility. Calls /activate on old-schema servers."""
     machine_ctx = get_machine_context()
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,
         "machine_name": machine_name or machine_ctx["machine_name"],
         "machine_os": machine_ctx["machine_os"],
-        "machine_host": machine_ctx["machine_host"],
+        "machine_host": machine_ctx["machine_name"],
     }
     result = _post_json("activate", body)
-    _verify_server_response(result)
+    _verify_server_sig(result)
     return result
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# 5-Step Startup Validation
+# ══════════════════════════════════════════════════════════════════════════════
 
-def check_license(license_key: str, force_server: bool = False) -> Dict:
-    """
-    Full license check.  Call this at application startup.
+class StartupCheckResult:
+    """Result container for the 5-step startup validation."""
 
-    Returns a dict with at minimum:
-        valid       bool
-        source      "cache" | "server" | "local_expiry"
-        message     str
-        tier        int   (0=trial, 1=standard, 2=pro, 3=enterprise)
-        expires     int   (Unix timestamp, 0=perpetual)
+    def __init__(self):
+        self.ok: bool = False
+        self.step_failed: int = 0        # 1-5, 0 = all passed
+        self.reason: str = ""
+        self.token: Optional[Dict] = None
+        self.rhythmulta_serial: Optional[str] = None
+
+    def __bool__(self):
+        return self.ok
+
+    def __repr__(self):
+        return (
+            f"StartupCheckResult(ok={self.ok}, step={self.step_failed}, "
+            f"reason={self.reason!r})"
+        )
+
+
+def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     """
-    license_key = license_key.strip().upper().replace(" ", "")
-    fingerprint = get_hardware_fingerprint()
+    Execute the 5-step startup validation sequence.
+
+    Check 1: Token file exists on disk.
+    Check 2: Token HMAC signature valid (tamper detection).
+    Check 3: Hardware fingerprint in token matches this machine.
+    Check 4: RhythmUlta connected and serial matches token.
+    Check 5: Server heartbeat (only if > 7 days since last check-in).
+
+    Returns a StartupCheckResult.  If .ok is False, .step_failed and
+    .reason describe the first failing check.
+    """
+    res = StartupCheckResult()
     now = int(time.time())
 
-    # ── 1. Quick local sanity check (no network) ─────────────────────────────
-    local_payload = parse_key_metadata(license_key)
-    if local_payload is None:
-        return {
-            "valid": False,
-            "source": "local",
-            "message": "Invalid license key format.",
-            "tier": 0,
-            "expires": 0,
-        }
-    if local_payload["expiry"] != 0 and now > local_payload["expiry"]:
-        return {
-            "valid": False,
-            "source": "local_expiry",
-            "message": "License key has expired.",
-            "tier": local_payload["tier"],
-            "expires": local_payload["expiry"],
-        }
+    # ── Check 1: Token file exists ────────────────────────────────────────────
+    if not token_file_exists():
+        res.step_failed = 1
+        res.reason = "No activation token found. Please register your device."
+        return res
 
-    # ── 2. Try the local cache ───────────────────────────────────────────────
-    cached = _cache_read()
-    if cached and not force_server:
-        key_match = cached.get("license_key") == license_key
-        fp_match = cached.get("hardware_fingerprint") == fingerprint
-        srv_expiry = cached.get("expires", 0)
-        not_server_expired = (srv_expiry == 0) or (now < srv_expiry)
-        last_online = cached.get("last_online", 0)
-        grace_seconds = OFFLINE_GRACE_DAYS * 86400
-        within_grace = (now - last_online) < grace_seconds
+    # ── Check 2: Token HMAC valid (not tampered) ──────────────────────────────
+    token = load_token_file()
+    if token is None:
+        res.step_failed = 2
+        res.reason = (
+            "License token is invalid or has been tampered with.\n"
+            "Please contact Deckmount support."
+        )
+        return res
+    res.token = token
 
-        if key_match and fp_match and not_server_expired and within_grace:
-            return {
-                **cached,
-                "valid": True,
-                "source": "cache",
-                "message": "License valid (cached).",
-            }
+    # ── Check 3: Hardware fingerprint matches ─────────────────────────────────
+    current_fp = get_hardware_fingerprint()
+    stored_fp = token.get("fingerprint", "")
+    if stored_fp and not hmac.compare_digest(current_fp, stored_fp):
+        res.step_failed = 3
+        res.reason = (
+            "This license is registered to a different machine.\n"
+            "Contact Deckmount support if your hardware has changed."
+        )
+        return res
 
-    # ── 3. Contact server ────────────────────────────────────────────────────
-    result = validate_with_server(license_key, fingerprint)
-    if _response_indicates_revocation(result):
-        return {
-            "valid": False,
-            "revoked": True,
-            "source": "server",
-            "message": result.get("message", "License key is revoked. Contact support."),
-            "tier": 0,
-            "expires": 0,
-        }
-    if result.get("valid"):
-        result.setdefault("license_key", license_key)
-        result.setdefault("hardware_fingerprint", fingerprint)
-        result.setdefault("tier", local_payload["tier"])
-        result.setdefault("expires", local_payload["expiry"])
-        result["last_online"] = now
-        result.setdefault("source", "server")
-        result.setdefault("message", "License valid.")
-        return result
+    # ── Check 4: RhythmUlta connected and serial matches (NON-NEGOTIABLE) ─────
+    usb_serial = get_rhythmulta_serial()
+    res.rhythmulta_serial = usb_serial
+    if usb_serial is None:
+        res.step_failed = 4
+        res.reason = (
+            "Please connect your authorized RhythmUlta device to continue."
+        )
+        return res
 
-    # ── 4. Server unreachable — fall back to cache if within grace ─────────
-    if result.get("offline") and cached:
-        key_match = cached.get("license_key") == license_key
-        fp_match = cached.get("hardware_fingerprint") == fingerprint
-        last_online = cached.get("last_online", 0)
-        grace_seconds = OFFLINE_GRACE_DAYS * 86400
-        within_grace = (now - last_online) < grace_seconds
+    stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
+    # If stored_serial is empty the device was never bound — allow first use
+    if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
+        res.step_failed = 4
+        res.reason = (
+            f"Unauthorized RhythmUlta device connected.\n"
+            "Please connect the device registered with this license."
+        )
+        return res
 
-        if key_match and fp_match and within_grace:
-            days_left = max(0, int((grace_seconds - (now - last_online)) / 86400))
-            return {
-                **cached,
-                "valid": True,
-                "source": "offline_grace",
-                "message": f"Running offline — {days_left} day(s) of grace period remaining.",
-            }
+    # ── Check 5: Server heartbeat (7-day interval) ────────────────────────────
+    last_check = token.get("last_server_check", 0)
+    needs_heartbeat = force_heartbeat or (now - last_check) >= HEARTBEAT_INTERVAL_SECONDS
 
-    # ── 5. Completely invalid ───────────────────────────────────────────────
-    return {
-        "valid": False,
-        "revoked": bool(result.get("revoked")),
-        "source": "server",
-        "message": result.get("error", result.get("message", "License validation failed.")),
-        "tier": 0,
-        "expires": 0,
-    }
+    if needs_heartbeat:
+        hb_result = heartbeat(token)
+        if hb_result.get("offline"):
+            # Server unreachable — apply offline grace
+            elapsed = now - last_check
+            grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
+            if grace_remaining <= 0:
+                res.step_failed = 5
+                res.reason = (
+                    "License server could not be reached and the offline grace period has expired.\n"
+                    "Please connect to the internet to continue."
+                )
+                return res
+            # Grace still active — let through, update nothing
+            print(
+                f"[License] Offline — {int(grace_remaining / 86400)} day(s) of grace remaining."
+            )
+        elif hb_result.get("revoked") or (not hb_result.get("valid", False) and not hb_result.get("authorized", False)):
+            res.step_failed = 5
+            res.reason = hb_result.get(
+                "message",
+                "License has been revoked. Please contact Deckmount support.",
+            )
+            return res
+        else:
+            # Successful heartbeat — update timestamp in token
+            token["last_server_check"] = now
+            save_token_file(token)
+
+    # ── All checks passed ─────────────────────────────────────────────────────
+    res.ok = True
+    res.token = token
+    return res
 
 
-def deactivate(license_key: str) -> bool:
-    """Deactivate this machine (contact server + clear cache)."""
-    fingerprint = get_hardware_fingerprint()
-    machine_ctx = get_machine_context()
-    result = _post_json("deactivate", {
-        "license_key": license_key,
-        "hardware_fingerprint": fingerprint,
-        "machine_name": machine_ctx["machine_name"],
-        "machine_os": machine_ctx["machine_os"],
-        "machine_host": machine_ctx["machine_host"],
-    })
-    _cache_clear()
+# ══════════════════════════════════════════════════════════════════════════════
+# License Key Utilities (kept for backward compat)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _b32_encode(data: bytes) -> str:
+    result, acc, bits = [], 0, 0
+    for byte in data:
+        acc = (acc << 8) | byte
+        bits += 8
+        while bits >= 5:
+            bits -= 5
+            result.append(_B32_ALPHA[(acc >> bits) & 0x1F])
+    if bits > 0:
+        result.append(_B32_ALPHA[(acc << (5 - bits)) & 0x1F])
+    return "".join(result)
+
+
+def _b32_decode(s: str) -> bytes:
+    s = s.upper().replace("-", "").replace(" ", "")
+    acc, bits, result = 0, 0, []
+    for char in s:
+        idx = _B32_ALPHA.find(char)
+        if idx < 0:
+            raise ValueError(f"Invalid character in license key: {char!r}")
+        acc = (acc << 5) | idx
+        bits += 5
+        if bits >= 8:
+            bits -= 8
+            result.append((acc >> bits) & 0xFF)
+    return bytes(result)
+
+
+def format_key(raw_key: str) -> str:
+    raw_key = raw_key.upper().replace("-", "").replace(" ", "")
+    if raw_key.startswith("CRDX") or len(raw_key) == 12:
+        parts = []
+        if len(raw_key) > 0:
+            parts.append(raw_key[0:4])
+        if len(raw_key) > 4:
+            parts.append(raw_key[4:8])
+        if len(raw_key) > 8:
+            parts.append(raw_key[8:12])
+        return "-".join(parts)
+    return "-".join(raw_key[i:i+5] for i in range(0, len(raw_key), 5))
+
+
+def parse_key_metadata(license_key: str) -> Optional[Dict]:
+    """Decode license key without contacting the server."""
     try:
-        _LICENSE_KEY_FILE.unlink(missing_ok=True)  # Python 3.8+
+        raw = license_key.upper().replace("-", "").replace(" ", "")
+        if len(raw) != 20:
+            return None
+        data = _b32_decode(raw)
+        if len(data) < 12:
+            return None
+        tier = data[0]
+        expiry = struct.unpack(">I", data[1:5])[0]
+        nonce = data[5:9]
+        return {"tier": tier, "expiry": expiry, "nonce": nonce.hex()}
     except Exception:
-        pass
-    return bool(result.get("success"))
+        return None
 
 
-# ── Storage helpers (used by the dialog) ─────────────────────────────────────
+def parse_key_payload(license_key: str) -> Optional[Dict]:
+    """Decode and verify key checksum locally."""
+    try:
+        raw = license_key.upper().replace("-", "").replace(" ", "")
+        if len(raw) != 20:
+            return None
+        data = _b32_decode(raw)
+        if len(data) < 12:
+            return None
+        tier = data[0]
+        expiry = struct.unpack(">I", data[1:5])[0]
+        nonce = data[5:9]
+        checksum = data[9:12]
+        payload = data[:9]
+        expected_cs = hmac.new(_HMAC_SECRET, payload, hashlib.sha256).digest()[:3]
+        if not hmac.compare_digest(checksum, expected_cs):
+            return None
+        return {"tier": tier, "expiry": expiry, "nonce": nonce.hex()}
+    except Exception:
+        return None
 
-_LICENSE_KEY_FILE: Path = _CACHE_DIR / "license.key"
+
+def is_key_expired_locally(license_key: str) -> bool:
+    payload = parse_key_metadata(license_key)
+    if payload is None:
+        return True
+    expiry = payload["expiry"]
+    if expiry == 0:
+        return False
+    return int(time.time()) > expiry
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Legacy Storage Helpers (backward compat for license_dialog.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_LICENSE_KEY_FILE: Path = _LEGACY_CACHE_DIR / "license.key"
 
 
 def load_stored_key() -> str:
-    """Return the license key stored on this machine, or empty string."""
+    """Return the license key stored in the token, or legacy key file."""
+    token = load_token_file()
+    if token:
+        return token.get("license_key", "")
+    # Legacy fallback
     try:
         if _LICENSE_KEY_FILE.exists():
             return _LICENSE_KEY_FILE.read_text(encoding="utf-8").strip()
@@ -542,20 +819,111 @@ def load_stored_key() -> str:
 
 
 def save_stored_key(license_key: str) -> None:
-    """Persist the license key locally (plaintext — it's not a secret)."""
+    """Persist license key to legacy key file (for backward compat)."""
     try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _LEGACY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         _LICENSE_KEY_FILE.write_text(license_key.strip(), encoding="utf-8")
     except Exception as e:
         print(f"[License] Could not save key: {e}")
 
 
 def clear_stored_key() -> None:
-    """Remove the saved license key so the activation dialog opens again."""
     try:
-        _LICENSE_KEY_FILE.unlink(missing_ok=True)  # Python 3.8+
-    except Exception as e:
-        print(f"[License] Could not clear key: {e}")
+        _LICENSE_KEY_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def clear_license_cache() -> None:
+    """Remove legacy cache + new token file."""
+    try:
+        _LEGACY_CACHE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+    delete_token_file()
+
+
+def remember_valid_license(
+    license_key: str,
+    fingerprint: str,
+    result: Optional[Dict] = None,
+) -> None:
+    """
+    Legacy helper: persist a known-valid activation as a token.
+    Used by the old LicenseDialog after successful /activate.
+    """
+    now = int(time.time())
+    token_data = {
+        "license_key": license_key.strip().upper(),
+        "fingerprint": fingerprint,
+        "rhythmulta_serial": "",   # populated on first real startup check
+        "rhythmultra_serial": "",   # populated on first real startup check
+        "seat_number": 1,
+        "last_server_check": now,
+    }
+    if isinstance(result, dict):
+        for k in ("tier", "expires", "tier_name"):
+            if k in result:
+                token_data[k] = result[k]
+    save_token_file(token_data)
+    # Also write legacy key file for older code paths
+    save_stored_key(license_key)
+
+
+def check_license(license_key: str, force_server: bool = False) -> Dict:
+    """
+    Legacy-compat: validate a license key.
+    In the new architecture this delegates to run_startup_checks().
+    Used by the periodic re-validation timer in main.py.
+    """
+    token = load_token_file()
+    if token is None:
+        return {
+            "valid": False,
+            "source": "token",
+            "message": "No activation token found.",
+            "tier": 0,
+            "expires": 0,
+        }
+
+    result = run_startup_checks(force_heartbeat=force_server)
+    if result.ok:
+        return {
+            "valid": True,
+            "source": "token",
+            "message": "License valid.",
+            "tier": token.get("tier", 0),
+            "expires": token.get("expires", 0),
+            "revoked": False,
+        }
+
+    revoked = result.step_failed == 5 and "revoked" in result.reason.lower()
+    return {
+        "valid": False,
+        "revoked": revoked,
+        "source": "token",
+        "message": result.reason,
+        "tier": 0,
+        "expires": 0,
+        "step_failed": result.step_failed,
+    }
+
+
+def deactivate(license_key: str) -> bool:
+    """Deactivate this machine — clears token and contacts server."""
+    token = load_token_file()
+    fingerprint = get_hardware_fingerprint()
+    body = {
+        "license_key": license_key,
+        "hardware_fingerprint": fingerprint,
+        "rhythmulta_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", "")),
+        "rhythmultra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", "")),
+        "seat_number": (token or {}).get("seat_number", 1),
+    }
+    result = _post_json("deactivate", body)
+    clear_license_cache()
+    clear_stored_key()
+    return bool(result.get("success"))
 
 
 # ── Tier helpers ──────────────────────────────────────────────────────────────

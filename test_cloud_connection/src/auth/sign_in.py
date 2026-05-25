@@ -447,7 +447,7 @@ class LoginRegisterDialog(QDialog):
         # Signup field limits (UI-level)
         self.reg_fullname.setMaxLength(20)
         self.reg_contact.setMaxLength(10)
-        self.reg_contact.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
+        self.reg_contact.setValidator(QRegularExpressionValidator(QRegularExpression(r"^[0-9]{0,10}$"), self))
         
         self.reg_email = QLineEdit()
         self.reg_email.setPlaceholderText("Email Address")
@@ -492,15 +492,17 @@ class LoginRegisterDialog(QDialog):
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
         serial_id = self.reg_serial.text().strip()
+        if serial_id == "Please connect your RhythmUltra device" or serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+            serial_id = ""
         fullname = self.reg_fullname.text().strip()
         age = self.reg_age.text()
         gender = self.reg_gender.text()
         contact = self.reg_contact.text().strip()
         email = self.reg_email.text()
-        if not username or not password or not serial_id:
-            QMessageBox.warning(self, "Error", "Username, password and machine serial ID are required.")
+        if not username or not password:
+            QMessageBox.warning(self, "Error", "Username and password are required.")
             return
-        if not serial_id.upper().startswith("RUM"):
+        if serial_id and not serial_id.upper().startswith("RUM"):
             QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
             return
         if password != confirm:

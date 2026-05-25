@@ -126,24 +126,24 @@ class SerialStreamReader:
                    The serial port is already opened and validated
         """
         if not SERIAL_AVAILABLE:
-            print("❌ Port scanning failed: Serial module not available")
+            print("[ERROR] Port scanning failed: Serial module not available")
             return None
         
         print("\n" + "="*70)
-        print("🔍 PORT SCANNING: Scanning all COM ports for ECG device...")
+        print("[SCAN] PORT SCANNING: Scanning all COM ports for ECG device...")
         print("="*70)
         
         # Get all available COM ports
         try:
             ports = serial.tools.list_ports.comports()
             port_list = [port.device for port in ports]
-            print(f"📋 Found {len(port_list)} COM port(s): {', '.join(port_list)}")
+            print(f"[PARSED] Found {len(port_list)} COM port(s): {', '.join(port_list)}")
         except Exception as e:
-            print(f"❌ Error listing COM ports: {e}")
+            print(f"[ERROR] Error listing COM ports: {e}")
             return None
         
         if not port_list:
-            print("⚠️ No COM ports found")
+            print("[WARN] No COM ports found")
             print("="*70 + "\n")
             return None
 
@@ -183,20 +183,20 @@ class SerialStreamReader:
                 version_ok, version, _ = temp_handler.send_version_command(timeout=timeout)
                 if version_ok:
                     version_text = version or "(empty version)"
-                    print(f"   ✅ Port {port_name} responded to VERSION: {version_text}")
+                    print(f"   [OK] Port {port_name} responded to VERSION: {version_text}")
                     return (port_name, temp_ser)
 
                 # Fallback detection: START ACK (for legacy firmware)
                 success, _ = temp_handler.send_start_command(timeout=timeout, quiet=True)
                 if success:
-                    print(f"   ✅ Port {port_name} responded to START ACK (legacy fallback)")
+                    print(f"   [OK] Port {port_name} responded to START ACK (legacy fallback)")
                     return (port_name, temp_ser)
 
-                print(f"   ❌ Port {port_name} did not respond to VERSION/START")
+                print(f"   [ERROR] Port {port_name} did not respond to VERSION/START")
                 temp_ser.close()
                 return None
             except Exception as exc:
-                print(f"   ⚠️ Port {port_name} error: {exc}")
+                print(f"   [WARN] Port {port_name} error: {exc}")
                 if temp_ser:
                     try:
                         temp_ser.close()
@@ -241,9 +241,9 @@ class SerialStreamReader:
                     break
 
         if detected_port and detected_serial:
-            print(f"\n✅ PORT DETECTED: {detected_port}")
+            print(f"\n[OK] PORT DETECTED: {detected_port}")
         else:
-            print(f"\n❌ No port responded to VERSION/START commands")
+            print(f"\n[ERROR] No port responded to VERSION/START commands")
 
         print("="*70 + "\n")
 
@@ -310,9 +310,9 @@ class SerialStreamReader:
                 try:
                     success, response = self.command_handler.send_close_command()
                     if not success:
-                        print(" ⚠️ Warning: CLOSE command ACK not received")
+                        print(" [WARN] Warning: CLOSE command ACK not received")
                 except Exception as e:
-                    print(f" ⚠️ Error sending CLOSE command: {e}")
+                    print(f" [WARN] Error sending CLOSE command: {e}")
             
             # Flush any remaining data
             if hasattr(self.ser, 'reset_input_buffer'):
@@ -352,27 +352,27 @@ class SerialStreamReader:
         
         # Only available when serial + HardwareCommandHandler are available
         if not hasattr(self, "command_handler") or not self.command_handler:
-            print("❌ VERSION COMMAND: Command handler not available")
+            print("[ERROR] VERSION COMMAND: Command handler not available")
             return None
 
         try:
             print("\n" + "=" * 60)
-            print("🔍 VERSION COMMAND: Requesting device version...")
+            print("[SCAN] VERSION COMMAND: Requesting device version...")
             print("=" * 60)
 
             success, version, response = self.command_handler.send_version_command()
             if success and version:
                 self.device_version = version
-                print(f"✅ VERSION COMMAND: Success! Device version: '{version}'")
+                print(f"[OK] VERSION COMMAND: Success! Device version: '{version}'")
                 print("=" * 60 + "\n")
                 return version
             else:
-                print("⚠️ VERSION COMMAND: Failed or no version received")
+                print("[WARN] VERSION COMMAND: Failed or no version received")
                 print(f"   Success: {success}, Version: {version}, Response: {response}")
                 print("=" * 60 + "\n")
                 return None
         except Exception as e:
-            print(f"❌ VERSION COMMAND: Error getting device version: {e}")
+            print(f"[ERROR] VERSION COMMAND: Error getting device version: {e}")
             import traceback
             print(f"   Traceback: {traceback.format_exc()}")
             print("=" * 60 + "\n")
@@ -386,27 +386,27 @@ class SerialStreamReader:
             str or None: Serial number string if available, otherwise None.
         """
         if not hasattr(self, "command_handler") or not self.command_handler:
-            print("❌ MACHINE SERIAL COMMAND: Command handler not available")
+            print("[ERROR] MACHINE SERIAL COMMAND: Command handler not available")
             return None
 
         try:
             print("\n" + "=" * 60)
-            print("🔍 MACHINE SERIAL COMMAND: Requesting machine serial number...")
+            print("[SCAN] MACHINE SERIAL COMMAND: Requesting machine serial number...")
             print("=" * 60)
 
             success, serial_number, response = self.command_handler.send_machine_serial_command()
             if success and serial_number:
                 self.device_serial_number = serial_number
-                print(f"✅ MACHINE SERIAL COMMAND: Success! Serial number: '{serial_number}'")
+                print(f"[OK] MACHINE SERIAL COMMAND: Success! Serial number: '{serial_number}'")
                 print("=" * 60 + "\n")
                 return serial_number
 
-            print("⚠️ MACHINE SERIAL COMMAND: Failed or no serial number received")
+            print("[WARN] MACHINE SERIAL COMMAND: Failed or no serial number received")
             print(f"   Success: {success}, Serial: {serial_number}, Response: {response}")
             print("=" * 60 + "\n")
             return None
         except Exception as e:
-            print(f"❌ MACHINE SERIAL COMMAND: Error getting serial number: {e}")
+            print(f"[ERROR] MACHINE SERIAL COMMAND: Error getting serial number: {e}")
             import traceback
 
             print(f"   Traceback: {traceback.format_exc()}")
@@ -430,11 +430,11 @@ class SerialStreamReader:
         if not current_port_open or not self.running:
             try:
                 if current_port_open:
-                    print(f"   🔄 Closing existing port {current_port} to ensure fresh handle...")
+                    print(f"   [RETRY] Closing existing port {current_port} to ensure fresh handle...")
                     self.ser.close()
                 
                 if current_port:
-                    print(f"   🔄 Opening port {current_port} at {current_baudrate} baud...")
+                    print(f"   [RETRY] Opening port {current_port} at {current_baudrate} baud...")
                     # Re-initialize serial port object to ensure fresh state
                     self.ser.port = current_port
                     self.ser.baudrate = current_baudrate
@@ -446,9 +446,9 @@ class SerialStreamReader:
                     # Re-initialize command handler with the opened port
                     if SERIAL_AVAILABLE:
                         self.command_handler = HardwareCommandHandler(self.ser)
-                    print(f"   ✅ Port {current_port} opened")
+                    print(f"   [OK] Port {current_port} opened")
             except Exception as e:
-                print(f"   ❌ Failed to open/reopen port {current_port}: {e}")
+                print(f"   [ERROR] Failed to open/reopen port {current_port}: {e}")
                 # If we failed to reopen, ensure we don't think we're running
                 self.running = False
                 raise RuntimeError(f"Cannot open port {current_port}: {e}")
@@ -463,7 +463,7 @@ class SerialStreamReader:
                 self.ser.reset_input_buffer()
             self.buf.clear()
         except Exception as e:
-            print(f" ⚠️ Warning: Could not clear buffers before START: {e}")
+            print(f" [WARN] Warning: Could not clear buffers before START: {e}")
 
         # If already running or requested to skip, don't send hardware commands
         if skip_hardware_start or self.running:
@@ -486,9 +486,9 @@ class SerialStreamReader:
                         if serial_number:
                             print(f" 🏷️ ECG Machine Serial Number: {serial_number}")
                     except Exception as sn_err:
-                        print(f" ⚠️ MACHINE SERIAL COMMAND skipped due to error: {sn_err}")
+                        print(f" [WARN] MACHINE SERIAL COMMAND skipped due to error: {sn_err}")
             except Exception as e:
-                print(f" ⚠️ VERSION COMMAND skipped due to error: {e}")
+                print(f" [WARN] VERSION COMMAND skipped due to error: {e}")
         else:
             print(" ⏭️  VERSION COMMAND: Skipped (SKIP_VERSION_CHECK = True)")
 
@@ -497,13 +497,13 @@ class SerialStreamReader:
             try:
                 success, response = self.command_handler.send_start_command()
                 if not success:
-                    print(" ⚠️ Warning: START command ACK not received on current port")
+                    print(" [WARN] Warning: START command ACK not received on current port")
                     print("   Continuing anyway - device may still send data...")
             except Exception as e:
-                print(f" ⚠️ Warning: Error sending START command: {e}")
+                print(f" [WARN] Warning: Error sending START command: {e}")
                 print("   Continuing anyway - device may still send data...")
         else:
-            print(" ⚠️ Warning: HardwareCommandHandler not available – skipping START command")
+            print(" [WARN] Warning: HardwareCommandHandler not available – skipping START command")
 
         # Mark reader as running and reset statistics
         self.running = True
@@ -515,7 +515,7 @@ class SerialStreamReader:
         self.packet_loss_percent = 0.0
 
         port_name = self.ser.port if hasattr(self.ser, "port") else "unknown"
-        print(f" ✅ Packet-based ECG device started on port {port_name}")
+        print(f" [OK] Packet-based ECG device started on port {port_name}")
         print(" 📡 Ready to receive data packets...")
 
     def stop(self):
@@ -528,9 +528,9 @@ class SerialStreamReader:
             try:
                 success, response = self.command_handler.send_stop_command()
                 if not success:
-                    print(" ⚠️ Warning: STOP command ACK not received")
+                    print(" [WARN] Warning: STOP command ACK not received")
             except Exception as e:
-                print(f" ⚠️ Warning: Error sending STOP command: {e}")
+                print(f" [WARN] Warning: Error sending STOP command: {e}")
 
         # Final packet loss statistics
         if hasattr(self, 'start_time') and self.start_time > 0:
@@ -659,7 +659,7 @@ class SerialStreamReader:
                                 self._packet_loss_warnings += 1
                                 # Only warn every 50th occurrence to avoid spam (optimized for performance)
                                 if self._packet_loss_warnings % 50 == 1:
-                                    print(f" ⚠️ Packet loss: {lost} dropped (Total: {self._total_sequence_lost})")
+                                    print(f" [WARN] Packet loss: {lost} dropped (Total: {self._total_sequence_lost})")
                     
                     self._last_packet_counter = packet_counter
                     
@@ -687,18 +687,18 @@ class SerialStreamReader:
 
             if dropped_for_ui > 0:
                 if not hasattr(self, '_ui_drop_warn_time') or (time.time() - self._ui_drop_warn_time) > 2.0:
-                    print(f" ⚠️ UI throttle active: skipped {dropped_for_ui} packets this tick to keep UI responsive")
+                    print(f" [WARN] UI throttle active: skipped {dropped_for_ui} packets this tick to keep UI responsive")
                     self._ui_drop_warn_time = time.time()
             
             # Warn if buffer is accumulating too much data (indicates we're falling behind)
             if len(self.buf) > 50000:  # >50KB buffer indicates we're not reading fast enough
                 if not hasattr(self, '_buffer_warn_time') or (time.time() - self._buffer_warn_time) > 5.0:
-                    print(f" ⚠️ Buffer: {len(self.buf)} bytes")
+                    print(f" [WARN] Buffer: {len(self.buf)} bytes")
                     self._buffer_warn_time = time.time()
 
             # Device connected but not sending valid packets — surface warning without freezing.
             if self.is_device_silent() and (time.time() - self._last_silence_warn_time) > 3.0:
-                print(" ⚠️ Device not sending valid ECG packets")
+                print(" [WARN] Device not sending valid ECG packets")
                 self._last_silence_warn_time = time.time()
             
             # Update packet loss statistics
@@ -828,7 +828,7 @@ class SerialECGReader:
                         print(f" Error parsing ECG data: {e}")
                         return None
             else:
-                print("⏳ No data received (timeout)")
+                print("[WAIT] No data received (timeout)")
                 
         except Exception as e:
             self._handle_serial_error(e)
@@ -930,7 +930,7 @@ This error has been logged and an email notification will be sent to the support
 # ─────────────────────────────────────────────────────────────────────────────
 class DeviceStartWorker(QThread):
     """
-    Runs scan_and_detect_port → serial_reader.start() in a background thread.
+    Runs scan_and_detect_port -> serial_reader.start() in a background thread.
 
     Signals
     -------
@@ -966,7 +966,7 @@ class DeviceStartWorker(QThread):
         return self._port_to_use
 
     def run(self):
-        """Background work: port scan (if needed) → open → VERSION/START → (if version ok) SERIAL → connected."""
+        """Background work: port scan (if needed) -> open -> VERSION/START -> (if version ok) SERIAL -> connected."""
         try:
             port = self._port
             baud_int = self._baud_int

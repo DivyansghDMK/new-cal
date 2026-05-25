@@ -248,6 +248,7 @@ class Dashboard(QWidget):
             except Exception:
                 pass
         self.heartbeat_sound_enabled = bool(cfg_enabled and settings_enabled)
+        self._had_device_connected = False
         
         # Initialize crash logger
         self.crash_logger = get_crash_logger()
@@ -5988,6 +5989,7 @@ class Dashboard(QWidget):
             return
 
         if success:
+            self._had_device_connected = True
             # Inform user if not the initial scan
             if getattr(self, '_initial_scan_completed', False):
                 msg = QMessageBox(self)
@@ -6033,7 +6035,7 @@ class Dashboard(QWidget):
     def update_device_ui(self, connected):
         """Update UI elements based on device connection status"""
         if connected:
-            self .device_status_label.setText( "Device Connected" )
+            self.device_status_label.setText("Device Connected")
             self.device_status_label.setStyleSheet("color: green; margin-right: 10px; font-weight: bold;")
             
             # Enable test buttons
@@ -6049,7 +6051,10 @@ class Dashboard(QWidget):
                 self.date_btn.setEnabled(True)
                 self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
         else:
-            self.device_status_label.setText("Device Disconnected")
+            if getattr(self, "_had_device_connected", False):
+                self.device_status_label.setText("Device Disconnected. Please reconnect your device")
+            else:
+                self.device_status_label.setText("Device Disconnected")
             self.device_status_label.setStyleSheet("color: red; margin-right: 10px; font-weight: bold;")
 
             # Reset hardware version in settings when disconnected

@@ -109,19 +109,56 @@ class SignIn:
         with open(USER_DATA_FILE, "w") as f:
             json.dump(self.users, f, indent=2)
 
+    @staticmethod
+    def _normalize_phone(value: str) -> str:
+        return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+    @staticmethod
+    def _normalize_name(value: str) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    def _identifier_matches_record(self, identifier: str, uname: str, record: Dict[str, Any]) -> bool:
+        ident = str(identifier).strip()
+        if not ident:
+            return False
+        ident_norm = ident.lower()
+        ident_name = self._normalize_name(ident)
+        ident_phone = self._normalize_phone(ident)
+
+        candidates = [
+            uname,
+            str(record.get("login_id", "")),
+            str(record.get("login_username", "")),
+            str(record.get("login_identifier", "")),
+            str(record.get("canonical_username", "")),
+            str(record.get("username", "")),
+            str(record.get("phone", "")),
+            str(record.get("master_phone", "")),
+            str(record.get("contact", "")),
+            str(record.get("full_name", "")),
+        ]
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if not text:
+                continue
+            if ident == text or ident_norm == text.lower():
+                return True
+            if ident_name and ident_name == self._normalize_name(text):
+                return True
+            cand_phone = self._normalize_phone(text)
+            if ident_phone and cand_phone and ident_phone == cand_phone:
+                return True
+        return False
+
     def _find_user_record(self, identifier: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-        # Identifier may be username (dict key), phone, or full_name
-        if identifier in self.users:
-            return identifier, self.users[identifier]
-        ident_norm = str(identifier).strip().lower()
+        # Identifier may be Login ID (phone), username dict key, or full name
+        ident = str(identifier).strip()
+        if ident in self.users:
+            return ident, self.users[ident]
         for uname, record in self.users.items():
-            phone = str(record.get("phone", ""))
-            fullname = str(record.get("full_name", ""))
-            if ident_norm == str(phone).strip().lower():
-                return uname, record
-            if fullname and ident_norm == fullname.strip().lower():
-                return uname, record
-            if str(record.get("full_name", "")) == str(identifier):
+            if not isinstance(record, dict):
+                continue
+            if self._identifier_matches_record(ident, uname, record):
                 return uname, record
         return None
 
@@ -130,20 +167,19 @@ class SignIn:
         return self.validate_credentials(username, password)
 
     def sign_in_user_allow_serial(self, identifier: str, secret: str) -> bool:
-        # Try normal login first
-        found = self._find_user_record(identifier)
-        if not found:
-            return False
-        _, record = found
-        stored_password = str(record.get("password", ""))
-        return self._verify_password(secret, stored_password)
+        return self.validate_credentials(identifier, secret)
 
     def validate_credentials(self, username: str, password: str) -> bool:
+        """Validate signup password against full name, phone number, or username key."""
         found = self._find_user_record(username)
         if not found:
             return False
         found_username, record = found
-        stored_password = str(record.get("password", "")) if isinstance(record, dict) else str(record)
+        if not isinstance(record, dict):
+            return False
+        stored_password = str(record.get("password", ""))
+        if not stored_password:
+            return False
         if self._verify_password(password, stored_password):
             if self._password_needs_hashing(stored_password):
                 self._upgrade_password_if_needed(found_username, str(password))
@@ -179,10 +215,16 @@ class SignIn:
         if phone and not self._is_unique("phone", phone):
             return False, "Phone number already registered."
         from datetime import datetime
+        login_id = str(phone or username).strip()
         record: Dict[str, Any] = {
             "password": self._hash_password(password),
             "full_name": full_name or "",
-            "phone": phone or "",
+            "phone": phone or login_id,
+            "login_id": login_id,
+            "login_username": login_id,
+            "login_identifier": login_id,
+            "canonical_username": login_id,
+            "username": login_id,
             "serial_id": serial_id or "",
             "email": email or "",
             "signup_date": datetime.now().strftime("%Y-%m-%d"),  # Store signup date for new users
@@ -493,14 +535,16 @@ class LoginRegisterDialog(QDialog):
         username = self.reg_username.text()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        serial_id = self.reg_serial.text()
+        serial_id = self.reg_serial.text().strip()
+        if serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+            serial_id = ""
         fullname = self.reg_fullname.text()
         age = self.reg_age.text()
         gender = self.reg_gender.text()
         contact = self.reg_contact.text()
         email = self.reg_email.text()
-        if not username or not password or not serial_id:
-            QMessageBox.warning(self, "Error", "Username, password and machine serial ID are required.")
+        if not username or not password:
+            QMessageBox.warning(self, "Error", "Username and password are required.")
             return
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")

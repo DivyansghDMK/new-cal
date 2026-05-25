@@ -224,6 +224,64 @@ def cmd_unrevoke(args):
         sys.exit(1)
 
 
+def cmd_reset_seat(args):
+    """
+    Crash recovery: clear bound_fingerprint on a seat so the user can
+    re-register on a new machine with the same license key.
+    """
+    key = args.key.strip().upper()
+    body = {"license_key": key}
+    if args.seat:
+        body["seat_number"] = int(args.seat)
+    if args.fingerprint:
+        body["bound_fingerprint"] = args.fingerprint.strip()
+
+    r = _admin_post("admin/reset-seat", body)
+    if r.get("success"):
+        old_fp = r.get("old_fingerprint", "(none)")
+        seat = r.get("seat_number", "?")
+        print(f"\n  ✓ Seat #{seat} reset.  Old fingerprint: {old_fp}\n")
+        print("  The user may now re-register on a new machine with the same key.\n")
+    else:
+        print(f"\n  ✗ {r.get('error', r.get('message', 'Unknown error'))}\n")
+        sys.exit(1)
+
+
+def cmd_view_seats(args):
+    """List all seats and their status for a license key."""
+    key = args.key.strip().upper()
+    url = f"{SERVER_URL.rstrip('/')}/admin/view-seats?license_key={key}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {ADMIN_TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        print(f"\n  ✗ {e}\n")
+        sys.exit(1)
+
+    print(f"""
+  License  : {data.get('license_key', key)}
+  For      : {data.get('created_for', '')}
+  Plan     : {data.get('plan_type', '')}  |  Max seats: {data.get('max_seats', '?')}
+  Status   : {data.get('status', '')}
+  Valid to : {data.get('valid_until') or 'perpetual'}
+""")
+    seats = data.get("seats", [])
+    header = f"  {'SEAT':>4}  {'STATUS':<12}  {'PC NAME':<22}  {'FINGERPRINT':<20}  LAST HEARTBEAT"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+    for s in seats:
+        fp = s.get("bound_fingerprint", "(unbound)")[:20]
+        hb = s.get("last_heartbeat") or "Never"
+        print(
+            f"  {s.get('seat_number', '?'):>4}  "
+            f"{s.get('status', '?'):<12}  "
+            f"{s.get('pc_name', ''):<22}  "
+            f"{fp:<20}  {hb}"
+        )
+    print(f"\n  Total: {data.get('total_seats', len(seats))}  |  Active: {data.get('active_seats', 0)}\n")
+
+
 # ── Argument Parser ────────────────────────────────────────────────────────────
 
 def main():
@@ -263,6 +321,18 @@ def main():
     p_unr = sub.add_parser("unrevoke", help="Un-revoke a key on the server")
     p_unr.add_argument("key", help="License key to un-revoke")
     p_unr.set_defaults(func=cmd_unrevoke)
+
+    # reset-seat
+    p_rst = sub.add_parser("reset-seat", help="Crash recovery: clear bound fingerprint on a seat")
+    p_rst.add_argument("key", help="License key")
+    p_rst.add_argument("--seat", default=None, help="Seat number (1-based)")
+    p_rst.add_argument("--fingerprint", default=None, help="Identify seat by bound fingerprint instead")
+    p_rst.set_defaults(func=cmd_reset_seat)
+
+    # view-seats
+    p_vs = sub.add_parser("view-seats", help="List all seats and status for a license key")
+    p_vs.add_argument("key", help="License key to inspect")
+    p_vs.set_defaults(func=cmd_view_seats)
 
     args = parser.parse_args()
     args.func(args)

@@ -172,7 +172,7 @@ if not _lic_url or "localhost" in _lic_url or "127.0.0.1" in _lic_url:
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
     QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea,
-    QFormLayout
+    QFormLayout, QProgressBar
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl, QRegularExpression, QThread, pyqtSignal
 from utils.crash_logger import get_crash_logger
@@ -634,6 +634,259 @@ class DeviceScanWorker(QThread):
             self.scan_finished.emit(False, "", "", "")
 
 
+class RegisterWorker(QThread):
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, name, doctor, org_name, org_address, phone, password, serial_id):
+        super().__init__()
+        self.name = name
+        self.doctor = doctor
+        self.org_name = org_name
+        self.org_address = org_address
+        self.phone = phone
+        self.password = password
+        self.serial_id = serial_id
+
+    def run(self):
+        try:
+            import hashlib
+            from utils.license_manager import register_device
+            pw_hash = hashlib.sha256(self.password.encode("utf-8")).hexdigest()
+            res = register_device(
+                license_key="",
+                full_name=self.name,
+                doctor_name=self.doctor,
+                org_name=self.org_name,
+                org_address=self.org_address,
+                phone=self.phone,
+                password_hash=pw_hash,
+            )
+            self.finished.emit(res)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class LoadingOverlayDialog(QDialog):
+    """Full-screen overlay shown during signup while license registration runs in the background."""
+
+    _GIF_SIZE = 248
+    _GIF_RING = 300
+
+    _STATUS_MSGS = [
+        "Creating your account",
+        "Setting up your profile",
+        "Almost done",
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setModal(True)
+
+        if parent:
+            self.setGeometry(parent.geometry())
+        else:
+            self.setFixedSize(900, 650)
+
+        self._step_index = 0
+        self._dot_count  = 0
+        self._progress   = 0
+        self.movie = None
+
+        self._build_ui()
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick_anim)
+        self._anim_timer.start(60)
+
+        self._step_timer = QTimer(self)
+        self._step_timer.timeout.connect(self._advance_step)
+        self._step_timer.start(2200)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            self.setGeometry(self.parent().geometry())
+        self._rescale_animation()
+
+    def _signup_gif_path(self):
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates = [
+            resource_path("Animation - 1777012518993.gif"),
+            os.path.join(root_dir, "Animation - 1777012518993.gif"),
+            resource_path("assets/v.gif"),
+            os.path.join(root_dir, "assets", "v.gif"),
+        ]
+        return next((p for p in candidates if p and os.path.exists(p)), None)
+
+    def _rescale_animation(self):
+        if self.movie and self.movie.isValid() and hasattr(self, "gif_label"):
+            self.movie.setScaledSize(self.gif_label.size())
+
+    def _build_ui(self):
+        from PyQt5.QtGui import QMovie
+
+        self.setStyleSheet("QDialog { background: rgba(8, 10, 22, 0.98); }")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setAlignment(Qt.AlignCenter)
+
+        card = QWidget()
+        card.setObjectName("RegCard")
+        card.setFixedWidth(640)
+        card.setStyleSheet("""
+            QWidget#RegCard {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a2238, stop:1 #0e1324);
+                border-radius: 32px;
+                border: 1px solid rgba(255, 140, 40, 0.45);
+            }
+        """)
+
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(56, 48, 56, 44)
+        cl.setSpacing(0)
+
+        # Hero animation — large centered ring with soft glow
+        anim_shell = QFrame()
+        anim_shell.setObjectName("AnimShell")
+        anim_shell.setFixedSize(self._GIF_RING, self._GIF_RING)
+        anim_shell.setStyleSheet("""
+            QFrame#AnimShell {
+                background: qradialgradient(
+                    cx:0.5, cy:0.5, radius:0.85,
+                    fx:0.5, fy:0.5,
+                    stop:0 rgba(255, 122, 18, 0.22),
+                    stop:0.55 rgba(255, 122, 18, 0.06),
+                    stop:1 rgba(255, 122, 18, 0));
+                border-radius: 150px;
+                border: 1px solid rgba(255, 160, 70, 0.28);
+            }
+        """)
+        anim_layout = QVBoxLayout(anim_shell)
+        anim_layout.setContentsMargins(0, 0, 0, 0)
+        anim_layout.setAlignment(Qt.AlignCenter)
+
+        self.gif_label = QLabel()
+        self.gif_label.setFixedSize(self._GIF_SIZE, self._GIF_SIZE)
+        self.gif_label.setAlignment(Qt.AlignCenter)
+        self.gif_label.setScaledContents(True)
+        self.gif_label.setStyleSheet("""
+            QLabel {
+                background: rgba(12, 16, 30, 0.55);
+                border-radius: 124px;
+                border: 2px solid rgba(255, 180, 90, 0.35);
+            }
+        """)
+
+        gif_path = self._signup_gif_path()
+        self.movie = QMovie(gif_path) if gif_path else None
+        if self.movie and self.movie.isValid():
+            self.gif_label.setMovie(self.movie)
+            self.movie.setScaledSize(self.gif_label.size())
+            self.movie.start()
+        else:
+            self.gif_label.setText("\u29d7")
+            self.gif_label.setStyleSheet("""
+                QLabel {
+                    font-size: 96px;
+                    color: #ff7a12;
+                    background: rgba(12, 16, 30, 0.55);
+                    border-radius: 124px;
+                    border: 2px solid rgba(255, 180, 90, 0.35);
+                }
+            """)
+
+        anim_layout.addWidget(self.gif_label, alignment=Qt.AlignCenter)
+
+        title = QLabel("Creating Your Account")
+        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(
+            "color: #ffc978; background: transparent; "
+            "margin-top: 28px; letter-spacing: 0.5px;"
+        )
+
+        subtitle = QLabel("Please wait while we finish setting up your account")
+        subtitle.setWordWrap(True)
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setFont(QFont("Segoe UI", 11))
+        subtitle.setStyleSheet(
+            "color: rgba(255,255,255,0.52); background: transparent; "
+            "margin-top: 8px; margin-bottom: 28px; line-height: 1.4;"
+        )
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(10)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background: rgba(255,255,255,0.08);
+                border-radius: 5px;
+                border: none;
+                min-height: 10px;
+                max-height: 10px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7a12, stop:1 #ffe08a);
+                border-radius: 5px;
+            }
+        """)
+
+        self.status_label = QLabel(self._STATUS_MSGS[0] + "...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
+        self.status_label.setStyleSheet("""
+            color: rgba(255,255,255,0.92);
+            background: transparent;
+            margin-top: 20px;
+            margin-bottom: 4px;
+            letter-spacing: 0.3px;
+        """)
+
+        hint = QLabel("Please keep this window open until setup completes")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setFont(QFont("Segoe UI", 9))
+        hint.setStyleSheet(
+            "color: rgba(255, 150, 60, 0.62); background: transparent; margin-top: 22px;"
+        )
+
+        cl.addWidget(anim_shell, alignment=Qt.AlignCenter)
+        cl.addWidget(title)
+        cl.addWidget(subtitle)
+        cl.addWidget(self.progress_bar)
+        cl.addWidget(self.status_label)
+        cl.addWidget(hint)
+
+        root.addWidget(card, alignment=Qt.AlignCenter)
+
+    # ------------------------------------------------------------------ #
+    def _tick_anim(self):
+        """Animate progress bar and status dots while registration runs."""
+        target = min(int((self._step_index / max(len(self._STATUS_MSGS), 1)) * 92) + 4, 95)
+        if self._progress < target:
+            self._progress = min(self._progress + 1, target)
+            self.progress_bar.setValue(self._progress)
+
+        self._dot_count = (self._dot_count + 1) % 4
+        base = self._STATUS_MSGS[min(self._step_index, len(self._STATUS_MSGS) - 1)].rstrip(".")
+        self.status_label.setText(base + "." * self._dot_count)
+
+    def _advance_step(self):
+        """Cycle through user-facing status messages."""
+        self._step_index += 1
+        if self._step_index >= len(self._STATUS_MSGS):
+            self._step_index = len(self._STATUS_MSGS) - 1
+            self._step_timer.stop()
+
+
 # Login/Register Dialog
 class LoginRegisterDialog(QDialog):
     def __init__(self):
@@ -828,7 +1081,7 @@ class LoginRegisterDialog(QDialog):
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet() + " color: #27ae60; font-weight: bold;")
         else:
             if hasattr(self, 'reg_serial'):
-                self.reg_serial.setText("Please connect your RhythmUlta device")
+                self.reg_serial.setText("Please connect your RhythmUltra device")
                 self.reg_serial.setReadOnly(False)
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet().replace(" color: #27ae60; font-weight: bold;", ""))
 
@@ -917,7 +1170,10 @@ class LoginRegisterDialog(QDialog):
         section_title = QLabel("Sign in to continue")
         section_title.setStyleSheet("color: white; font-size: 30px; font-weight: bold;")
 
-        section_subtitle = QLabel("Use your account password to sign in.")
+        section_subtitle = QLabel(
+            "Use your full name or phone number, with the same password you chose at signup. "
+            "No internet is required."
+        )
         section_subtitle.setWordWrap(True)
         section_subtitle.setStyleSheet("color: rgba(255,255,255,0.78); font-size: 13px;")
 
@@ -925,13 +1181,13 @@ class LoginRegisterDialog(QDialog):
         password_header.setStyleSheet("color: #ffb347; font-size: 12px; font-weight: bold; letter-spacing: 1px;")
 
         self.login_email = QLineEdit()
-        self.login_email.setPlaceholderText("Full Name or Phone Number")
+        self.login_email.setPlaceholderText("Full Name or Phone Number (from signup)")
         self.login_email.setMinimumHeight(44)
 
         password_row = QHBoxLayout()
         password_row.setSpacing(10)
         self.login_password = QLineEdit()
-        self.login_password.setPlaceholderText("Password")
+        self.login_password.setPlaceholderText("Password (from signup)")
         self.login_password.setEchoMode(QLineEdit.Password)
         self.login_password.setMinimumHeight(44)
         password_row.addWidget(self.login_password)
@@ -1183,7 +1439,7 @@ class LoginRegisterDialog(QDialog):
         self.reg_org_name.setMaxLength(28)
         self.reg_org_address.setMaxLength(45)
         self.reg_phone.setMaxLength(10)
-        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\\d{0,10}$"), self))
+        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^[0-9]{0,10}$"), self))
         
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
@@ -1298,8 +1554,15 @@ class LoginRegisterDialog(QDialog):
         return scroll
 
     def handle_login(self):
-        identifier = self.login_email.text()  # Can be full name, username, or phone
+        identifier = self.login_email.text().strip()
         password_or_serial = self.login_password.text()
+        if not identifier or not password_or_serial:
+            QMessageBox.warning(
+                self,
+                "Login Required",
+                "Please enter your full name or phone number, and the password you used at signup.",
+            )
+            return
         # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
         # Refresh from disk before validating so new accounts can log in immediately.
         try:
@@ -1318,8 +1581,7 @@ class LoginRegisterDialog(QDialog):
                 return
         except Exception:
             pass
-        if self.sign_in_logic.sign_in_user_allow_serial(identifier, password_or_serial):
-            # Get the actual user record for details
+        if self.sign_in_logic.validate_credentials(identifier, password_or_serial):
             found = self.sign_in_logic._find_user_record(identifier)
             if found:
                 username, record = found
@@ -1333,7 +1595,13 @@ class LoginRegisterDialog(QDialog):
                 self.user_details = {}
                 self.accept()
         else:
-            QMessageBox.warning(self, "Error", "Invalid credentials. Please check your full name and password.")
+            QMessageBox.warning(
+                self,
+                "Login Failed",
+                "Invalid full name / phone number or password.\n\n"
+                "Use the same full name or phone number and password you entered at signup. "
+                "Internet is not required for sign-in.",
+            )
 
     def _upsert_phone_login_user(self, phone: str, token: str):
         from datetime import datetime
@@ -1696,7 +1964,9 @@ class LoginRegisterDialog(QDialog):
                 QMessageBox.warning(self, "Verification Failed", f"Could not verify OTP: {e}")
 
     def handle_register(self):
-        serial_id = self.reg_serial.text()
+        serial_id = self.reg_serial.text().strip()
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", "RUM") or not serial_id:
+            serial_id = ""
         name = self.reg_name.text().strip()
         doctor = self.reg_doctor.text().strip()
         org_name = self.reg_org_name.text().strip()
@@ -1704,8 +1974,8 @@ class LoginRegisterDialog(QDialog):
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
-        if not all([serial_id, name, doctor, org_name, org_address, phone, password, confirm]):
-            QMessageBox.warning(self, "Error", "All fields are required, including Machine Serial ID.")
+        if not all([name, doctor, org_name, org_address, phone, password, confirm]):
+            QMessageBox.warning(self, "Error", "All fields are required.")
             return
         # Enforce numeric phone number with exact 10 digits
         if not phone.isdigit() or len(phone) != 10:
@@ -1714,7 +1984,81 @@ class LoginRegisterDialog(QDialog):
         if password != confirm:
             QMessageBox.warning(self, "Error", "Passwords do not match.")
             return
-        # Use phone as username for registration, enforce uniqueness on serial/fullname/phone
+
+        # Show non-blocking translucent loading overlay dialog
+        self.loading_overlay = LoadingOverlayDialog(self)
+        
+        # Instantiate and run RegisterWorker thread
+        self.register_worker = RegisterWorker(
+            name=name,
+            doctor=doctor,
+            org_name=org_name,
+            org_address=org_address,
+            phone=phone,
+            password=password,
+            serial_id=serial_id
+        )
+        
+        # Connect signals
+        self.register_worker.finished.connect(self.on_register_finished)
+        self.register_worker.error.connect(self.on_register_error)
+        
+        # Start worker thread
+        self.register_worker.start()
+        
+        # Display the dialog modal
+        self.loading_overlay.exec_()
+
+    def on_register_finished(self, res):
+        # Close the loading overlay first
+        if hasattr(self, 'loading_overlay') and self.loading_overlay:
+            self.loading_overlay.accept()
+            self.loading_overlay = None
+
+        # Check if server registration succeeded
+        success = res.get("valid") or res.get("success") or res.get("authorized")
+        if not success:
+            msg = res.get("message") or res.get("error") or "License registration failed."
+            QMessageBox.critical(self, "License Error", f"Registration failed: {msg}")
+            return
+
+        # Success! Process the returned token/key
+        try:
+            from utils.license_manager import save_token_file, save_stored_key, get_hardware_fingerprint, remember_valid_license
+            assigned_key = res.get("license_key")
+            token_str = res.get("token")
+            
+            if token_str:
+                try:
+                    import json as _json
+                    if isinstance(token_str, dict):
+                        token_envelope = token_str
+                    else:
+                        token_envelope = _json.loads(token_str)
+                    save_token_file(token_envelope["payload"])
+                except Exception as te:
+                    print(f"Could not parse token: {te}")
+                    remember_valid_license(assigned_key, get_hardware_fingerprint(), res)
+            else:
+                remember_valid_license(assigned_key, get_hardware_fingerprint(), res)
+                
+            save_stored_key(assigned_key)
+            print(f"✅ Device registered internally under license key: {assigned_key}")
+        except Exception as e:
+            QMessageBox.critical(self, "Registration Error", f"Failed to save license/token details: {e}")
+            return
+
+        # Save local user credentials in users.json
+        name = self.reg_name.text().strip()
+        doctor = self.reg_doctor.text().strip()
+        org_name = self.reg_org_name.text().strip()
+        org_address = self.reg_org_address.text().strip()
+        phone = self.reg_phone.text().strip()
+        password = self.reg_password.text()
+        serial_id = self.reg_serial.text().strip()
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", "RUM") or not serial_id:
+            serial_id = ""
+
         ok, msg = self.sign_in_logic.register_user_with_details(
             username=phone,
             password=password,
@@ -1722,13 +2066,22 @@ class LoginRegisterDialog(QDialog):
             phone=phone,
             serial_id=serial_id,
             email="",
-            extra={"doctor": doctor, "org_name": org_name, "org_address": org_address}
+            extra={
+                "doctor": doctor,
+                "org_name": org_name,
+                "org_address": org_address,
+                "login_id": phone,
+                "login_username": phone,
+                "login_identifier": phone,
+                "canonical_username": phone,
+                "username": phone,
+            }
         )
         if not ok:
             QMessageBox.warning(self, "Error", msg)
             return
-        
-        # Upload user signup details to cloud with all patient information
+
+        # Upload user signup details to cloud
         try:
             from utils.cloud_uploader import get_cloud_uploader
             from datetime import datetime
@@ -1748,12 +2101,48 @@ class LoginRegisterDialog(QDialog):
             }
             upload_result = uploader.upload_user_signup(user_data)
             print(f" Signup upload status: {upload_result.get('status', 'unknown')}")
-
         except Exception as e:
             print(f" Error uploading user signup: {e}")
+
+        QMessageBox.information(
+            self,
+            "Registration Successful",
+            "Your account has been created successfully.\n\n"
+            "Save these details — use them every time you sign in (no internet needed):\n\n"
+            f"Full Name: {name}\n"
+            f"Phone Number: {phone}\n"
+            f"Password: {password}\n\n"
+            "On the login screen, enter your full name OR phone number, "
+            "with the same password shown above."
+        )
+
+        self.login_email.setText(name)
+        self.login_password.setFocus()
         
-        QMessageBox.information(self, "Success", "Registration successful! You can now sign in.")
+        # Clear register form inputs
+        self.reg_name.clear()
+        self.reg_doctor.clear()
+        self.reg_org_name.clear()
+        self.reg_org_address.clear()
+        self.reg_phone.clear()
+        self.reg_password.clear()
+        self.reg_confirm.clear()
+        
+        # Transition to Login Tab (index 0)
         self.stacked.setCurrentIndex(0)
+
+    def on_register_error(self, err_msg):
+        # Close loading dialog
+        if hasattr(self, 'loading_overlay') and self.loading_overlay:
+            self.loading_overlay.accept()
+            self.loading_overlay = None
+
+        QMessageBox.critical(
+            self,
+            "Registration Error",
+            f"Failed to connect to registration server:\n{err_msg}\n\n"
+            f"Please check your internet connection and try again."
+        )
     
     def toggle_password_visibility(self, password_field, eye_button):
         """Toggle password visibility between hidden and visible"""
@@ -1846,47 +2235,41 @@ def main():
         threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
         # ──────────────────────────────────────────────────────────────
 
-        # ── License Gate ─────────────────────────────────────────────────────
-        # Validate license BEFORE showing login. On success the result is cached
-        # locally (HMAC-protected) so subsequent starts are instant / offline.
+        # ── License Gate (Three-Pillar Architecture) ───────────────────────────
+        # Five sequential startup checks per SDD §4:
+        #   1. Token file exists
+        #   2. Token HMAC valid (tamper detection)
+        #   3. Hardware fingerprint matches
+        #   4. RhythmUlta connected + serial matches  <- NON-NEGOTIABLE
+        #   5. Server heartbeat (7-day interval)
         try:
-            from utils.license_manager import check_license, clear_license_cache, clear_stored_key, load_stored_key
-            from utils.license_dialog import LicenseDialog
+            from utils.license_manager import run_startup_checks, token_file_exists
+            from utils.license_dialog import StartupBlockDialog
 
-            _stored_key = load_stored_key()
-            _license_ok = False
-            _license_result = {}
+            _check = run_startup_checks()
 
-            if _stored_key:
-                _license_result = check_license(_stored_key)
-                _license_ok = bool(_license_result.get("valid"))
-                if _license_result.get("revoked"):
-                    if not _recover_license_in_place(
-                        app,
-                        None,
-                        _license_result.get("message", "License key is revoked. Contact support."),
-                        "License Revoked",
-                    ):
-                        return
-                    _license_ok = True
-                if _license_ok:
-                    logger.info(
-                        f"[License] Valid — tier={_license_result.get('tier',0)}, "
-                        f"source={_license_result.get('source','?')}"
-                    )
+            if _check.ok:
+                logger.info(
+                    f"[License] All startup checks passed "
+                    f"(seat={_check.token.get('seat_number', '?') if _check.token else '?'})"
+                )
+            else:
+                logger.warning(
+                    f"[License] Startup check {_check.step_failed} failed: {_check.reason}"
+                )
+                
+                # Wrong machine must block immediately. Device/server checks run after login
+                # so users can sign in offline with their saved credentials first.
+                if _check.step_failed == 3:
+                    block_dlg = StartupBlockDialog(_check)
+                    if block_dlg.exec_() != QDialog.Accepted:
+                        sys.exit(0)
 
-            if not _license_ok:
-                if _stored_key:
-                    clear_stored_key()
-                    clear_license_cache()
-                _dlg = LicenseDialog()
-                if _dlg.exec_() != QDialog.Accepted:
-                    logger.info("[License] Activation cancelled — exiting.")
-                    sys.exit(0)
-                logger.info(f"[License] Activated — {_dlg.get_license_result()}")
-
+        except SystemExit:
+            raise
         except Exception as _lic_err:
-            # If license system fails to import (e.g. first install), log and continue.
+            # If the license system itself fails (e.g. first install without
+            # dependencies), log and continue so the app is not bricked.
             logger.warning(f"[License] Check skipped due to error: {_lic_err}")
         # ─────────────────────────────────────────────────────────────────────
 
@@ -1898,6 +2281,28 @@ def main():
             try:
                 if login.exec_() == QDialog.Accepted and login.result:
                     logger.info(f"User {login.username} logged in successfully")
+
+                    # License/device checks after local credential login (not before).
+                    try:
+                        from utils.license_manager import run_startup_checks
+                        from utils.license_dialog import StartupBlockDialog
+
+                        post_login_check = run_startup_checks()
+                        if not post_login_check.ok:
+                            if post_login_check.step_failed in (1, 2):
+                                QMessageBox.warning(
+                                    None,
+                                    "Activation Required",
+                                    "Your account exists, but this device is not fully activated yet.\n\n"
+                                    "Please complete sign-up on this machine, or contact Deckmount support.",
+                                )
+                            else:
+                                block_dlg = StartupBlockDialog(post_login_check)
+                                if block_dlg.exec_() != QDialog.Accepted:
+                                    login = LoginRegisterDialog()
+                                    continue
+                    except Exception as lic_gate_err:
+                        logger.warning(f"[License] Post-login check skipped: {lic_gate_err}")
                     # Attach machine serial ID to crash logger for email subject/body   tagging
                     try:
                         users = load_users()
@@ -2002,7 +2407,7 @@ def main():
                                 stored_key = load_stored_key()
                                 if not stored_key:
                                     return
-                                res = check_license(stored_key, force_server=True)
+                                res = check_license(stored_key, force_server=False)
                                 if res.get("revoked"):
                                     _license_timer.stop()
                                     if _recover_license_in_place(
