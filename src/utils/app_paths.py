@@ -47,5 +47,7 @@ def data_file(filename: str) -> Path:
     """
     if should_use_runtime_dir():
         return runtime_dir() / filename
-    return Path.cwd() / filename
+    # Keep dev-time JSON files anchored to the project root so imports do not
+    # depend on the current working directory.
+    return Path(__file__).resolve().parents[2] / filename
 

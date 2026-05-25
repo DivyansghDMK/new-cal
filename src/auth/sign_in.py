@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from PyQt5.QtWidgets import (
     QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QStackedWidget, QWidget, QSizePolicy
@@ -34,6 +35,7 @@ def get_asset_path(asset_name):
 
 
 USER_DATA_FILE = str(data_file("users.json"))
+LEGACY_USER_DATA_FILE = str(Path(__file__).resolve().parents[1] / "users.json")
 
 
 class SignIn:
@@ -95,18 +97,46 @@ class SignIn:
         # Unknown/invalid -> start fresh
         return {}
 
+    def _load_json_file(self, path: str) -> Dict[str, Dict[str, Any]]:
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return self._migrate_legacy_format(data)
+        except Exception:
+            return {}
+
+    def _merge_user_maps(self, primary: Dict[str, Dict[str, Any]], secondary: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        merged: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in primary.items() if isinstance(v, dict)}
+        for username, record in secondary.items():
+            if not isinstance(record, dict):
+                continue
+            if username not in merged:
+                merged[username] = dict(record)
+                continue
+            for key, value in record.items():
+                if key not in merged[username] or merged[username].get(key) in ("", None):
+                    merged[username][key] = value
+        return merged
+
     def load_users(self) -> Dict[str, Dict[str, Any]]:
-        if os.path.exists(USER_DATA_FILE):
+        canonical = self._load_json_file(USER_DATA_FILE)
+        legacy = {}
+        if os.path.abspath(LEGACY_USER_DATA_FILE) != os.path.abspath(USER_DATA_FILE):
+            legacy = self._load_json_file(LEGACY_USER_DATA_FILE)
+        merged = self._merge_user_maps(canonical, legacy)
+        if merged != canonical and merged:
             try:
-                with open(USER_DATA_FILE, "r") as f:
-                    data = json.load(f)
-                return self._migrate_legacy_format(data)
+                self.users = merged
+                self.save_users()
             except Exception:
-                return {}
-        return {}
+                pass
+        return merged
 
     def save_users(self) -> None:
-        with open(USER_DATA_FILE, "w") as f:
+        os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
+        with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.users, f, indent=2)
 
     @staticmethod
@@ -137,6 +167,9 @@ class SignIn:
             str(record.get("contact", "")),
             str(record.get("full_name", "")),
         ]
+        aliases = record.get("login_aliases", [])
+        if isinstance(aliases, (list, tuple)):
+            candidates.extend(str(alias or "") for alias in aliases)
         for candidate in candidates:
             text = str(candidate or "").strip()
             if not text:
@@ -147,6 +180,12 @@ class SignIn:
                 return True
             cand_phone = self._normalize_phone(text)
             if ident_phone and cand_phone and ident_phone == cand_phone:
+                return True
+            # Let users sign in with the first word of their full name too.
+            # This keeps the offline JSON login usable when the signup name is
+            # entered as a longer legal name but the user remembers the short form.
+            full_name_parts = self._normalize_name(str(record.get("full_name", ""))).split()
+            if ident_name and full_name_parts and ident_name == full_name_parts[0]:
                 return True
         return False
 
@@ -229,6 +268,16 @@ class SignIn:
             "email": email or "",
             "signup_date": datetime.now().strftime("%Y-%m-%d"),  # Store signup date for new users
         }
+        login_aliases = []
+        if full_name:
+            login_aliases.append(full_name)
+            short_name = str(full_name).strip().split()[0] if str(full_name).strip() else ""
+            if short_name and short_name.lower() != str(full_name).strip().lower():
+                login_aliases.append(short_name)
+        if phone:
+            login_aliases.append(phone)
+        if login_aliases:
+            record["login_aliases"] = login_aliases
         if isinstance(extra, dict):
             # Only include simple JSON-serializable values
             for k, v in extra.items():

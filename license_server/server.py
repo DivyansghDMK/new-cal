@@ -337,12 +337,53 @@ def _find_seat_by_fingerprint(license_entry: dict, fingerprint: str) -> tuple[st
     return None, None
 
 
+def _find_seat_by_machine_serial(license_entry: dict, machine_serial_id: str) -> tuple[str | None, dict | None]:
+    """Return (seat_number_str, seat_dict) for a bound machine serial, or (None, None)."""
+    if not machine_serial_id:
+        return None, None
+    for seat_num, seat in license_entry.get("seats", {}).items():
+        if (seat.get("machine_serial_id") or "") == machine_serial_id:
+            return seat_num, seat
+    return None, None
+
+
 def _find_seat_by_rhythmulta(license_entry: dict, rhythmulta_serial: str) -> tuple[str | None, dict | None]:
     """Return (seat_number_str, seat_dict) for a bound RhythmUlta serial, or (None, None)."""
     for seat_num, seat in license_entry.get("seats", {}).items():
         if seat.get("rhythmulta_serial") == rhythmulta_serial and rhythmulta_serial:
             return seat_num, seat
     return None, None
+
+
+def _clear_license_seat_bindings(license_entry: dict) -> int:
+    """
+    Remove machine/device bindings from all seats on a license.
+
+    This keeps the seat slots around, but makes them reusable after a revoke
+    or admin reset without leaving stale machine associations behind.
+    """
+    cleared = 0
+    for seat in license_entry.get("seats", {}).values():
+        if not isinstance(seat, dict):
+            continue
+        if seat.get("bound_fingerprint") is not None or seat.get("rhythmulta_serial") is not None:
+            cleared += 1
+        seat["bound_fingerprint"] = None
+        seat["rhythmulta_serial"] = None
+        seat["machine_serial_id"] = None
+        seat["pc_name"] = None
+        seat["windows_version"] = None
+        seat["status"] = "available"
+        seat["activated_at"] = None
+        seat["last_heartbeat"] = None
+    return cleared
+
+
+def _license_has_bound_seats(license_entry: dict) -> bool:
+    for seat in license_entry.get("seats", {}).values():
+        if isinstance(seat, dict) and seat.get("bound_fingerprint"):
+            return True
+    return False
 
 
 def _next_available_seat(license_entry: dict) -> str | None:
@@ -552,6 +593,7 @@ def heartbeat():
     body = request.get_json(silent=True) or {}
     license_key = body.get("license_key", "").strip().upper()
     fingerprint = body.get("hardware_fingerprint", "").strip()
+    machine_serial_id = body.get("machine_serial_id", "").strip()
     seat_number = body.get("seat_number", None)
 
     if not license_key or not fingerprint:
@@ -574,6 +616,10 @@ def heartbeat():
 
     # Find the seat by fingerprint and update heartbeat
     seat_num, seat = _find_seat_by_fingerprint(license_entry, fingerprint)
+    if seat is None and machine_serial_id:
+        seat_num, seat = _find_seat_by_machine_serial(license_entry, machine_serial_id)
+        if seat is not None:
+            seat["bound_fingerprint"] = fingerprint
 
     if seat is None:
         return _signed_response({
@@ -589,6 +635,7 @@ def heartbeat():
 
     seat["last_heartbeat"] = now
     seat["status"] = "active"
+    seat["machine_serial_id"] = machine_serial_id or seat.get("machine_serial_id")
     db["licenses"][license_key] = license_entry
     _save_db(db)
 
@@ -599,6 +646,7 @@ def heartbeat():
         "tier": key_data["tier"] if key_data else 0,
         "tier_name": TIER_NAMES.get(key_data["tier"] if key_data else 0, "Unknown"),
         "expires": key_data["expiry"] if key_data else 0,
+        "rebound": bool(machine_serial_id),
     })
 
 
@@ -636,6 +684,7 @@ def activate():
     license_key = body.get("license_key", "").strip().upper()
     fingerprint = body.get("hardware_fingerprint", "").strip()
     machine_name = body.get("machine_name", "")
+    machine_serial_id = body.get("machine_serial_id", "") or machine_name
 
     if not license_key or not fingerprint:
         return _signed_response({"valid": False, "message": "Missing required fields."}, 400)
@@ -643,6 +692,7 @@ def activate():
     # Delegate to new register flow with minimal fields
     body["rhythmulta_serial"] = body.get("rhythmulta_serial", "")
     body["pc_name"] = machine_name
+    body["machine_serial_id"] = machine_serial_id
 
     # Call register logic inline
     key_data = decode_key(license_key)
@@ -658,7 +708,7 @@ def activate():
     if license_entry is None:
         tier = key_data["tier"]
         license_entry = {
-            "created_for": machine_name or "Legacy activation",
+            "created_for": machine_serial_id or machine_name or "Legacy activation",
             "plan_type": list(PLAN_SEATS.keys())[min(tier, len(PLAN_SEATS) - 1)],
             "max_seats": MAX_ACTIVATIONS.get(tier, 1),
             "status": "unused",
@@ -674,6 +724,8 @@ def activate():
     seat_num, existing_seat = _find_seat_by_fingerprint(license_entry, fingerprint)
     if existing_seat is not None:
         existing_seat["last_heartbeat"] = now
+        existing_seat["machine_serial_id"] = machine_serial_id or existing_seat.get("machine_serial_id", "")
+        existing_seat["pc_name"] = machine_name or existing_seat.get("pc_name", "")
         db["licenses"][license_key] = license_entry
         _save_db(db)
         return _signed_response({
@@ -694,7 +746,7 @@ def activate():
     license_entry["seats"][next_seat] = {
         "bound_fingerprint": fingerprint,
         "rhythmulta_serial": None,
-        "machine_serial_id": machine_name,
+        "machine_serial_id": machine_serial_id,
         "pc_name": machine_name,
         "windows_version": body.get("machine_os", ""),
         "status": "active",
@@ -759,6 +811,11 @@ def validate():
         return _signed_response({"valid": False, "revoked": True, "message": "License has been revoked."}, 403)
 
     seat_num, seat = _find_seat_by_fingerprint(license_entry, fingerprint)
+    if seat is None and machine_serial_id:
+        seat_num, seat = _find_seat_by_machine_serial(license_entry, machine_serial_id)
+        if seat is not None:
+            seat["bound_fingerprint"] = fingerprint
+
     if seat is None:
         # Not registered on this machine — try to activate
         with app.test_request_context(
@@ -769,6 +826,7 @@ def validate():
             return activate()
 
     seat["last_heartbeat"] = now
+    seat["machine_serial_id"] = machine_serial_id or seat.get("machine_serial_id")
     db["licenses"][license_key] = license_entry
     _save_db(db)
 
@@ -779,6 +837,8 @@ def validate():
         "tier_name": TIER_NAMES.get(key_data["tier"], "Unknown"),
         "expires": key_data["expiry"],
         "activations": len(license_entry.get("seats", {})),
+        "seat_number": int(seat_num),
+        "rebound": bool(machine_serial_id),
     })
 
 
@@ -915,10 +975,18 @@ def admin_revoke_key():
             "created_at": int(time.time()),
             "seats": {},
         }
-    db["licenses"][license_key]["status"] = "revoked"
-    db["licenses"][license_key]["revoked_at"] = int(time.time())
+    entry = db["licenses"][license_key]
+    cleared = _clear_license_seat_bindings(entry)
+    entry["status"] = "revoked"
+    entry["revoked_at"] = int(time.time())
+    entry["revoked_seats_cleared"] = cleared
+    db["licenses"][license_key] = entry
     _save_db(db)
-    return jsonify({"success": True, "message": f"License {license_key} revoked."})
+    return jsonify({
+        "success": True,
+        "message": f"License {license_key} revoked.",
+        "cleared_seats": cleared,
+    })
 
 
 @app.post("/admin/keys/unrevoke")
@@ -929,8 +997,11 @@ def admin_unrevoke_key():
     db = get_db()
     if license_key in db["licenses"]:
         entry = db["licenses"][license_key]
-        # Restore to active if it has seats, otherwise unused
-        entry["status"] = "active" if entry.get("seats") else "unused"
+        # Restore to active only if at least one seat is still actually bound.
+        # If revoke cleared bindings, the license should go back to unused.
+        entry["status"] = "active" if _license_has_bound_seats(entry) else "unused"
+        entry.pop("revoked_at", None)
+        entry.pop("revoked_seats_cleared", None)
         db["licenses"][license_key] = entry
         _save_db(db)
     return jsonify({"success": True, "message": f"License {license_key} un-revoked."})

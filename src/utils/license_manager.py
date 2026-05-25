@@ -113,17 +113,16 @@ _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _run_wmic(args: List[str]) -> str:
-    """Run a wmic command and return stdout, stripped. Empty string on failure."""
-    try:
-        result = subprocess.run(
-            ["wmic"] + args,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
-        # wmic outputs a header line then the value; skip header
+    """
+    Run a WMI-style hardware query and return stdout, stripped.
+
+    We prefer `wmic` for compatibility, but Windows 11 commonly omits it.
+    In that case we fall back to PowerShell/CIM so the app can still derive
+    the same hardware fingerprint on modern systems.
+    """
+
+    def _clean_output(text: str) -> str:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         for line in lines:
             lower = line.lower()
             if lower in ("serialnumber", "uuid", "processorid", "caption", "name"):
@@ -133,8 +132,68 @@ def _run_wmic(args: List[str]) -> str:
             if line:
                 return line
         return ""
-    except Exception:
-        return ""
+
+    def _run_command(cmd: List[str]) -> str:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        return _clean_output(result.stdout)
+
+    query = tuple(a.lower() for a in args)
+    candidates: List[List[str]] = []
+
+    # 1) Legacy WMIC path.
+    candidates.append(["wmic"] + args)
+
+    # 2) Modern PowerShell/CIM fallback.
+    if sys.platform == "win32":
+        ps_script_map = {
+            ("bios", "get", "serialnumber"): [
+                "(Get-CimInstance Win32_BIOS | Select-Object -First 1 -ExpandProperty SerialNumber)",
+                "(Get-WmiObject Win32_BIOS | Select-Object -First 1 -ExpandProperty SerialNumber)",
+                "(Get-ItemProperty -Path 'HKLM:\\HARDWARE\\DESCRIPTION\\System\\BIOS' | Select-Object -ExpandProperty SystemSerialNumber)",
+            ],
+            ("csproduct", "get", "uuid"): [
+                "(Get-CimInstance Win32_ComputerSystemProduct | Select-Object -First 1 -ExpandProperty UUID)",
+                "(Get-WmiObject Win32_ComputerSystemProduct | Select-Object -First 1 -ExpandProperty UUID)",
+            ],
+            ("cpu", "get", "processorid"): [
+                "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty ProcessorId)",
+                "(Get-WmiObject Win32_Processor | Select-Object -First 1 -ExpandProperty ProcessorId)",
+                "(Get-ItemProperty -Path 'HKLM:\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0' | Select-Object -ExpandProperty Identifier)",
+            ],
+            ("diskdrive", "get", "serialnumber"): [
+                "(Get-CimInstance Win32_DiskDrive | Where-Object { $_.SerialNumber } | Select-Object -First 1 -ExpandProperty SerialNumber)",
+                "(Get-WmiObject Win32_DiskDrive | Where-Object { $_.SerialNumber } | Select-Object -First 1 -ExpandProperty SerialNumber)",
+            ],
+            ("os", "get", "caption"): [
+                "(Get-CimInstance Win32_OperatingSystem | Select-Object -First 1 -ExpandProperty Caption)",
+                "(Get-WmiObject Win32_OperatingSystem | Select-Object -First 1 -ExpandProperty Caption)",
+            ],
+        }
+        for expr in ps_script_map.get(query, []):
+            candidates.append([
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                f"$ErrorActionPreference='Stop'; {expr}",
+            ])
+
+    for cmd in candidates:
+        try:
+            value = _run_command(cmd)
+            if value:
+                return value
+        except Exception:
+            continue
+
+    return ""
 
 
 def _collect_wmi_fields() -> Dict[str, str]:
@@ -533,11 +592,18 @@ def heartbeat(token_data: Dict) -> Dict:
     Sends current token claims; server confirms license not revoked.
     Returns server response dict (includes `valid`, `revoked`, etc.).
     """
+    machine_ctx = get_machine_context()
+    current_fp = get_hardware_fingerprint()
+    current_rhythmulta_serial = get_rhythmultra_serial() or token_data.get(
+        "rhythmultra_serial", token_data.get("rhythmulta_serial", "")
+    )
     body = {
         "token": load_raw_token(),  # specification expects raw token from cardiox.lic
-        "hardware_fingerprint": token_data.get("fingerprint", ""),
-        "rhythmulta_serial": token_data.get("rhythmultra_serial", token_data.get("rhythmulta_serial", "")),
-        "rhythmultra_serial": token_data.get("rhythmultra_serial", token_data.get("rhythmulta_serial", "")), # new specification spelling
+        "hardware_fingerprint": current_fp,
+        "rhythmulta_serial": current_rhythmulta_serial,
+        "rhythmultra_serial": current_rhythmulta_serial, # new specification spelling
+        "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
+        "pc_name": machine_ctx.get("machine_name", ""),
         # legacy compatibility fields
         "license_key": token_data.get("license_key", ""),
         "seat_number": token_data.get("seat_number", 1),
@@ -551,10 +617,16 @@ def heartbeat(token_data: Dict) -> Dict:
 
 def validate_with_server(license_key: str, fingerprint: str) -> Dict:
     """Legacy: validate key+fingerprint. Delegates to heartbeat path if token exists."""
+    machine_ctx = get_machine_context()
     token = load_token_file()
     if token:
         return heartbeat(token)
-    body = {"license_key": license_key, "hardware_fingerprint": fingerprint}
+    body = {
+        "license_key": license_key,
+        "hardware_fingerprint": fingerprint,
+        "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
+        "pc_name": machine_ctx.get("machine_name", ""),
+    }
     result = _post_json("validate", body)
     _verify_server_sig(result)
     return result
@@ -614,6 +686,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     """
     res = StartupCheckResult()
     now = int(time.time())
+    debug_enabled = os.getenv("CARDIOX_LICENSE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
     # ── Check 1: Token file exists ────────────────────────────────────────────
     if not token_file_exists():
@@ -635,13 +708,94 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     # ── Check 3: Hardware fingerprint matches ─────────────────────────────────
     current_fp = get_hardware_fingerprint()
     stored_fp = token.get("fingerprint", "")
-    if stored_fp and not hmac.compare_digest(current_fp, stored_fp):
-        res.step_failed = 3
-        res.reason = (
-            "This license is registered to a different machine.\n"
-            "Contact Deckmount support if your hardware has changed."
+    if debug_enabled:
+        current_fields = _collect_wmi_fields()
+        print(
+            "[License][DEBUG] check3 "
+            f"current_fp={current_fp} stored_fp={stored_fp} "
+            f"fields={current_fields} token_seat={token.get('seat_number', '')}"
         )
-        return res
+    if stored_fp and not hmac.compare_digest(current_fp, stored_fp):
+        current_fields = _collect_wmi_fields()
+        present_fields = sum(1 for value in current_fields.values() if str(value).strip())
+        # Always ask the server first so a revoked license is reported as a
+        # revocation, not masked as a machine mismatch.
+        try:
+            hb_result = heartbeat(token)
+            if debug_enabled:
+                print(f"[License][DEBUG] heartbeat={hb_result}")
+            hb_message = str(hb_result.get("message", "")).lower()
+            hb_error = str(hb_result.get("error", "")).lower()
+            server_token_failure = any(
+                marker in hb_message or marker in hb_error
+                for marker in (
+                    "invalid or expired token",
+                    "invalid token",
+                    "expired token",
+                    "token expired",
+                    "token invalid",
+                )
+            )
+            if hb_result.get("revoked") or "revoked" in hb_message or "revoked" in hb_error:
+                res.step_failed = 5
+                res.reason = hb_result.get(
+                    "message",
+                    "License has been revoked. Please contact Deckmount support.",
+                )
+                return res
+
+            if server_token_failure:
+                res.step_failed = 5
+                res.reason = hb_result.get(
+                    "error",
+                    hb_result.get(
+                        "message",
+                        "License token is invalid or expired. Please contact Deckmount support.",
+                    ),
+                )
+                return res
+
+            if hb_result.get("valid", False) or hb_result.get("authorized", False):
+                token["fingerprint"] = current_fp
+                if "seat_number" in hb_result:
+                    token["seat_number"] = hb_result["seat_number"]
+                token["last_server_check"] = int(hb_result.get("last_server_check", now))
+                save_token_file(token)
+                res.token = token
+            elif present_fields <= 2:
+                # If Windows is no longer exposing the WMI identifiers we
+                # originally used, treat this as a degraded local identity
+                # signal instead of a hard machine change.
+                token["fingerprint"] = current_fp
+                token["last_server_check"] = token.get("last_server_check", now)
+                save_token_file(token)
+                print(
+                    "[License] Hardware fingerprint source degraded; "
+                    "accepting local machine identity fallback."
+                )
+            else:
+                res.step_failed = 3
+                res.reason = (
+                    "This license is registered to a different machine.\n"
+                    "Contact Deckmount support if your hardware has changed."
+                )
+                return res
+        except Exception:
+            if present_fields <= 2:
+                token["fingerprint"] = current_fp
+                token["last_server_check"] = token.get("last_server_check", now)
+                save_token_file(token)
+                print(
+                    "[License] Hardware fingerprint source degraded; "
+                    "accepting local machine identity fallback."
+                )
+            else:
+                res.step_failed = 3
+                res.reason = (
+                    "This license is registered to a different machine.\n"
+                    "Contact Deckmount support if your hardware has changed."
+                )
+                return res
 
     # ── Check 4: RhythmUlta connected and serial matches (NON-NEGOTIABLE) ─────
     usb_serial = get_rhythmulta_serial()
@@ -693,7 +847,10 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             return res
         else:
             # Successful heartbeat — update timestamp in token
+            token["fingerprint"] = current_fp
             token["last_server_check"] = now
+            if "seat_number" in hb_result:
+                token["seat_number"] = hb_result["seat_number"]
             save_token_file(token)
 
     # ── All checks passed ─────────────────────────────────────────────────────
