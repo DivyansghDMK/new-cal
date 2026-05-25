@@ -465,6 +465,7 @@ class LoginRegisterDialog(QDialog):
         
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
+        self.reg_serial.setReadOnly(True)
         self.reg_serial.setStyleSheet(self.login_username.styleSheet())
 
         self.reg_password = QLineEdit()
@@ -476,6 +477,7 @@ class LoginRegisterDialog(QDialog):
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
         self.reg_confirm.setStyleSheet(self.login_username.styleSheet())
+        self.reg_confirm.returnPressed.connect(self.handle_register)
         
         self.reg_fullname = QLineEdit()
         self.reg_fullname.setPlaceholderText("Full Name")

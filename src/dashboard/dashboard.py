@@ -4606,7 +4606,7 @@ class Dashboard(QWidget):
             "QLineEdit:focus { border: 2px solid #ff6600; background: #fff8f0; }"
         )
 
-        fields = ["Doctor", "Patient Name"]
+        fields = ["Patient Name"]
         entries = {}
         for field in fields:
             row = QHBoxLayout()
@@ -4622,7 +4622,6 @@ class Dashboard(QWidget):
             form_layout.addLayout(row)
             entries[field] = entry
 
-        entries["Doctor"].setMaxLength(20)
         entries["Patient Name"].setMaxLength(20)
 
         age_row = QHBoxLayout()
@@ -4677,8 +4676,6 @@ class Dashboard(QWidget):
 
             if prefill:
                 pd = prefill
-                if pd.get("doctor"):
-                    entries["Doctor"].setText(str(pd.get("doctor") or ""))
                 first = str(pd.get("first_name") or "")
                 last = str(pd.get("last_name") or "")
                 full_name = (first + (" " + last if last else "")).strip()
@@ -4744,7 +4741,6 @@ class Dashboard(QWidget):
                 "last_name": " ".join(rest),
                 "age": values["Age"],
                 "gender": values["Gender"],
-                "doctor": values["Doctor"],
                 "patient_name": values.get("Patient Name", ""),
                 "date_time": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
