@@ -661,6 +661,7 @@ class RegisterWorker(QThread):
                 org_address=self.org_address,
                 phone=self.phone,
                 password_hash=pw_hash,
+                machine_serial_id=self.serial_id,
             )
             self.finished.emit(res)
         except Exception as e:
