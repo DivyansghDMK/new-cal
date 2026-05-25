@@ -1082,7 +1082,7 @@ class LoginRegisterDialog(QDialog):
         else:
             if hasattr(self, 'reg_serial'):
                 self.reg_serial.setText("Please connect your RhythmUltra device")
-                self.reg_serial.setReadOnly(False)
+                self.reg_serial.setReadOnly(True)
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet().replace(" color: #27ae60; font-weight: bold;", ""))
 
     def _resize_bg(self, event):
@@ -1416,6 +1416,7 @@ class LoginRegisterDialog(QDialog):
         """
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
+        self.reg_serial.setReadOnly(True)
         self.reg_name = QLineEdit()
         self.reg_name.setPlaceholderText("Full Name")
         self.reg_doctor = QLineEdit()
@@ -1433,13 +1434,14 @@ class LoginRegisterDialog(QDialog):
         self.reg_confirm = QLineEdit()
         self.reg_confirm.setPlaceholderText("Confirm Password")
         self.reg_confirm.setEchoMode(QLineEdit.Password)
+        self.reg_confirm.returnPressed.connect(self.handle_register)
 
         self.reg_name.setMaxLength(20)
         self.reg_doctor.setMaxLength(20)
         self.reg_org_name.setMaxLength(28)
         self.reg_org_address.setMaxLength(45)
         self.reg_phone.setMaxLength(10)
-        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^[0-9]{0,10}$"), self))
+        self.reg_phone.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\d{0,10}$"), self))
         
         register_btn = QPushButton("Sign Up")
         register_btn.setObjectName("SignUpBtn")
