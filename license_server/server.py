@@ -355,6 +355,26 @@ def _find_seat_by_rhythmulta(license_entry: dict, rhythmulta_serial: str) -> tup
     return None, None
 
 
+def _find_global_seat_by_rhythmulta(
+    db: dict,
+    rhythmulta_serial: str,
+    *,
+    exclude_license_key: str | None = None,
+    exclude_seat_num: str | None = None,
+) -> tuple[str | None, str | None, dict | None]:
+    """Return the first active seat using this RhythmUlta serial anywhere in the DB."""
+    if not rhythmulta_serial:
+        return None, None, None
+
+    for license_key, license_entry in db.get("licenses", {}).items():
+        for seat_num, seat in license_entry.get("seats", {}).items():
+            if license_key == exclude_license_key and exclude_seat_num is not None and seat_num == str(exclude_seat_num):
+                continue
+            if seat.get("status") == "active" and seat.get("rhythmulta_serial") == rhythmulta_serial:
+                return license_key, seat_num, seat
+    return None, None, None
+
+
 def _clear_license_seat_bindings(license_entry: dict) -> int:
     """
     Remove machine/device bindings from all seats on a license.
@@ -491,6 +511,21 @@ def register():
 
     if existing_seat is not None:
         # Re-registration of same machine — update seat info and re-issue token
+        if rhythmulta_serial:
+            global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(
+                db,
+                rhythmulta_serial,
+                exclude_license_key=license_key,
+                exclude_seat_num=seat_num,
+            )
+            if global_seat is not None:
+                return _signed_response({
+                    "valid": False,
+                    "message": (
+                        "This RhythmUlta device is already bound to another active license "
+                        f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
+                    ),
+                }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["pc_name"] = pc_name or existing_seat.get("pc_name", "")
         existing_seat["status"] = "active"
@@ -520,13 +555,13 @@ def register():
 
     # ── Check 3b: RhythmUlta serial unique? ──────────────────────────────────
     if rhythmulta_serial:
-        ru_seat_num, ru_seat = _find_seat_by_rhythmulta(license_entry, rhythmulta_serial)
-        if ru_seat is not None:
+        global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(db, rhythmulta_serial)
+        if global_seat is not None:
             return _signed_response({
                 "valid": False,
                 "message": (
-                    "This RhythmUlta device is already bound to another seat "
-                    f"(seat #{ru_seat_num}). Contact Deckmount support."
+                    "This RhythmUlta device is already bound to another active license "
+                    f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
                 ),
             }, 403)
 
@@ -685,6 +720,7 @@ def activate():
     fingerprint = body.get("hardware_fingerprint", "").strip()
     machine_name = body.get("machine_name", "")
     machine_serial_id = body.get("machine_serial_id", "") or machine_name
+    rhythmulta_serial = body.get("rhythmulta_serial", "").strip()
 
     if not license_key or not fingerprint:
         return _signed_response({"valid": False, "message": "Missing required fields."}, 400)
@@ -723,9 +759,26 @@ def activate():
 
     seat_num, existing_seat = _find_seat_by_fingerprint(license_entry, fingerprint)
     if existing_seat is not None:
+        if rhythmulta_serial:
+            global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(
+                db,
+                rhythmulta_serial,
+                exclude_license_key=license_key,
+                exclude_seat_num=seat_num,
+            )
+            if global_seat is not None:
+                return _signed_response({
+                    "valid": False,
+                    "message": (
+                        "This RhythmUlta device is already bound to another active license "
+                        f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
+                    ),
+                }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["machine_serial_id"] = machine_serial_id or existing_seat.get("machine_serial_id", "")
         existing_seat["pc_name"] = machine_name or existing_seat.get("pc_name", "")
+        if rhythmulta_serial and not existing_seat.get("rhythmulta_serial"):
+            existing_seat["rhythmulta_serial"] = rhythmulta_serial
         db["licenses"][license_key] = license_entry
         _save_db(db)
         return _signed_response({
@@ -743,9 +796,20 @@ def activate():
             "message": f"Maximum activations reached for this license.",
         }, 403)
 
+    if rhythmulta_serial:
+        global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(db, rhythmulta_serial)
+        if global_seat is not None:
+            return _signed_response({
+                "valid": False,
+                "message": (
+                    "This RhythmUlta device is already bound to another active license "
+                    f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
+                ),
+            }, 403)
+
     license_entry["seats"][next_seat] = {
         "bound_fingerprint": fingerprint,
-        "rhythmulta_serial": None,
+        "rhythmulta_serial": rhythmulta_serial or None,
         "machine_serial_id": machine_serial_id,
         "pc_name": machine_name,
         "windows_version": body.get("machine_os", ""),

@@ -763,12 +763,12 @@ class RegistrationDialog(QDialog):
                 try:
                     import json as _json
                     if isinstance(token_str, dict):
-                        token_envelope = token_str
+                        save_token_file(token_str.get("payload", token_str))
+                    elif token_str.count(".") == 2:
+                        save_token_file(token_str)
                     else:
                         token_envelope = _json.loads(token_str)
-                    # token_envelope = {payload: {...}, sig: "..."}
-                    # save_token_file expects just the payload; it re-signs
-                    save_token_file(token_envelope["payload"])
+                        save_token_file(token_envelope.get("payload", token_envelope))
                 except Exception as te:
                     print(f"[License] Could not save token: {te}")
                     remember_valid_license(key, get_hardware_fingerprint(), result)

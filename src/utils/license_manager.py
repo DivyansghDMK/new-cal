@@ -431,18 +431,63 @@ def _token_hmac(payload_bytes: bytes) -> str:
     return hmac.new(_HMAC_SECRET, payload_bytes, hashlib.sha256).hexdigest()
 
 
-def save_token_file(token_data: Dict) -> None:
+def _save_token_as_jwt(token_data: Dict) -> str:
+    """Helper to convert token dict to a standard signed JWT string."""
+    jwt_payload = dict(token_data)
+    if "fingerprint" in token_data:
+        jwt_payload["hardware_fingerprint"] = token_data["fingerprint"]
+    if "last_server_check" in token_data:
+        jwt_payload["issued_at"] = token_data["last_server_check"]
+        jwt_payload["iat"] = token_data["last_server_check"]
+    if "expires" in token_data:
+        jwt_payload["exp"] = token_data["expires"]
+        
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_b64 = base64.urlsafe_b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8")).decode("utf-8").rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(jwt_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")).decode("utf-8").rstrip("=")
+    
+    msg = f"{header_b64}.{payload_b64}".encode("utf-8")
+    sig_bytes = hmac.new(_HMAC_SECRET, msg, hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode("utf-8").rstrip("=")
+    
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+
+def save_token_file(token_data: Dict | str) -> None:
     """
     Write the license token to %APPDATA%\\Deckmount\\cardiox.lic.
-    The file is an HMAC-signed JSON envelope.
+    If the parameter is a string (e.g. raw JWT), save it directly.
+    If it is a dict, format it to match existing file's format or default to JWT.
     """
     try:
         _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-        payload_bytes = json.dumps(token_data, sort_keys=True).encode("utf-8")
-        sig = _token_hmac(payload_bytes)
-        envelope = {"payload": token_data, "sig": sig}
-        _TOKEN_FILE.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-        print(f"[License] Token saved to {_TOKEN_FILE}")
+        if isinstance(token_data, str):
+            _TOKEN_FILE.write_text(token_data.strip(), encoding="utf-8")
+            print(f"[License] Raw token string saved to {_TOKEN_FILE}")
+            return
+            
+        is_jwt_format = False
+        if _TOKEN_FILE.exists():
+            try:
+                exist_text = _TOKEN_FILE.read_text(encoding="utf-8").strip()
+                if exist_text.count(".") == 2:
+                    is_jwt_format = True
+            except Exception:
+                pass
+                
+        if "localhost" not in LICENSE_SERVER_URL and "127.0.0.1" not in LICENSE_SERVER_URL:
+            is_jwt_format = True
+            
+        if is_jwt_format:
+            jwt_str = _save_token_as_jwt(token_data)
+            _TOKEN_FILE.write_text(jwt_str, encoding="utf-8")
+            print(f"[License] Token saved as JWT to {_TOKEN_FILE}")
+        else:
+            payload_bytes = json.dumps(token_data, sort_keys=True).encode("utf-8")
+            sig = _token_hmac(payload_bytes)
+            envelope = {"payload": token_data, "sig": sig}
+            _TOKEN_FILE.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+            print(f"[License] Token envelope saved to {_TOKEN_FILE}")
     except Exception as e:
         print(f"[License] Token write failed: {e}")
 
@@ -450,23 +495,62 @@ def save_token_file(token_data: Dict) -> None:
 def load_token_file() -> Optional[Dict]:
     """
     Read and verify the license token from disk.
+    Supports standard base64url-encoded JWT tokens and legacy JSON envelopes.
     Returns the payload dict, or None if missing or tampered.
     """
     try:
         if not _TOKEN_FILE.exists():
             return None
-        obj = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
-        payload = obj.get("payload")
-        sig = obj.get("sig", "")
-        if not payload or not sig:
-            print("[License] Token file malformed.")
+        raw_text = _TOKEN_FILE.read_text(encoding="utf-8").strip()
+        if not raw_text:
             return None
-        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-        expected = _token_hmac(payload_bytes)
-        if not hmac.compare_digest(expected, sig):
-            print("[License] Token HMAC mismatch — file tampered or secret changed.")
-            return None
-        return payload
+            
+        # 1. Try raw JWT format
+        if raw_text.count(".") == 2:
+            parts = raw_text.split(".")
+            try:
+                payload_b64 = parts[1]
+                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+                payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                payload = json.loads(payload_bytes.decode("utf-8"))
+                
+                # Verify JWT signature offline
+                msg = (parts[0] + "." + parts[1]).encode("utf-8")
+                sig_b64 = parts[2]
+                sig_b64 += "=" * ((4 - len(sig_b64) % 4) % 4)
+                sig_bytes = base64.urlsafe_b64decode(sig_b64)
+                expected = hmac.new(_HMAC_SECRET, msg, hashlib.sha256).digest()
+                if not hmac.compare_digest(expected, sig_bytes):
+                    print("[License] JWT signature mismatch offline.")
+                    return None
+                    
+                # Map JWT claims to client expected keys
+                mapped = dict(payload)
+                if "hardware_fingerprint" in payload:
+                    mapped["fingerprint"] = payload["hardware_fingerprint"]
+                if "issued_at" in payload:
+                    mapped["last_server_check"] = payload["issued_at"]
+                if "exp" in payload:
+                    mapped["expires"] = payload["exp"]
+                return mapped
+            except Exception as jwt_err:
+                print(f"[License] Failed to parse raw token as JWT: {jwt_err}")
+                
+        # 2. Try JSON envelope format
+        try:
+            obj = json.loads(raw_text)
+            payload = obj.get("payload")
+            sig = obj.get("sig", "")
+            if payload and sig:
+                payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+                expected = _token_hmac(payload_bytes)
+                if hmac.compare_digest(expected, sig):
+                    return payload
+                print("[License] Token HMAC mismatch — file tampered or secret changed.")
+        except Exception as json_err:
+            print(f"[License] Failed to parse as JSON envelope: {json_err}")
+            
+        return None
     except Exception as e:
         print(f"[License] Token read failed: {e}")
         return None

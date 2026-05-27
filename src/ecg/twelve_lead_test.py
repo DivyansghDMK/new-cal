@@ -7218,6 +7218,13 @@ class ECGTestPage(QWidget):
                         fn = patient.get('first_name','') if isinstance(patient, dict) else ''
                         ln = patient.get('last_name', '') if isinstance(patient, dict) else ''
                         now = _dt.datetime.now()
+                        owner_full_name = ""
+                        try:
+                            dash = getattr(self, "dashboard_instance", None)
+                            if dash is not None:
+                                owner_full_name = (getattr(dash, "user_details", {}) or {}).get("full_name") or getattr(dash, "username", "") or ""
+                        except Exception:
+                            owner_full_name = ""
                         meta = {
                             'filename': _os.path.basename(filename),
                             'title':    'ECG Report',
@@ -7225,6 +7232,7 @@ class ECGTestPage(QWidget):
                             'date':     now.strftime('%Y-%m-%d'),
                             'time':     now.strftime('%H:%M:%S'),
                             'username': username,
+                            'owner_full_name': owner_full_name or username or "",
                             'format':   fmt,
                         }
                         items = [meta] + items

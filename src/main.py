@@ -2237,43 +2237,7 @@ def main():
         threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
         # ──────────────────────────────────────────────────────────────
 
-        # ── License Gate (Three-Pillar Architecture) ───────────────────────────
-        # Five sequential startup checks per SDD §4:
-        #   1. Token file exists
-        #   2. Token HMAC valid (tamper detection)
-        #   3. Hardware fingerprint matches
-        #   4. RhythmUlta connected + serial matches  <- NON-NEGOTIABLE
-        #   5. Server heartbeat (7-day interval)
-        try:
-            from utils.license_manager import run_startup_checks, token_file_exists
-            from utils.license_dialog import StartupBlockDialog
-
-            _check = run_startup_checks()
-
-            if _check.ok:
-                logger.info(
-                    f"[License] All startup checks passed "
-                    f"(seat={_check.token.get('seat_number', '?') if _check.token else '?'})"
-                )
-            else:
-                logger.warning(
-                    f"[License] Startup check {_check.step_failed} failed: {_check.reason}"
-                )
-                
-                # Wrong machine must block immediately. Device/server checks run after login
-                # so users can sign in offline with their saved credentials first.
-                if _check.step_failed == 3:
-                    block_dlg = StartupBlockDialog(_check)
-                    if block_dlg.exec_() != QDialog.Accepted:
-                        sys.exit(0)
-
-        except SystemExit:
-            raise
-        except Exception as _lic_err:
-            # If the license system itself fails (e.g. first install without
-            # dependencies), log and continue so the app is not bricked.
-            logger.warning(f"[License] Check skipped due to error: {_lic_err}")
-        # ─────────────────────────────────────────────────────────────────────
+        # License gate removed — go straight to login
 
         # Initialize login dialog
         login = LoginRegisterDialog()
@@ -2284,27 +2248,7 @@ def main():
                 if login.exec_() == QDialog.Accepted and login.result:
                     logger.info(f"User {login.username} logged in successfully")
 
-                    # License/device checks after local credential login (not before).
-                    try:
-                        from utils.license_manager import run_startup_checks
-                        from utils.license_dialog import StartupBlockDialog
 
-                        post_login_check = run_startup_checks()
-                        if not post_login_check.ok:
-                            if post_login_check.step_failed in (1, 2):
-                                QMessageBox.warning(
-                                    None,
-                                    "Activation Required",
-                                    "Your account exists, but this device is not fully activated yet.\n\n"
-                                    "Please complete sign-up on this machine, or contact Deckmount support.",
-                                )
-                            else:
-                                block_dlg = StartupBlockDialog(post_login_check)
-                                if block_dlg.exec_() != QDialog.Accepted:
-                                    login = LoginRegisterDialog()
-                                    continue
-                    except Exception as lic_gate_err:
-                        logger.warning(f"[License] Post-login check skipped: {lic_gate_err}")
                     # Attach machine serial ID to crash logger for email subject/body   tagging
                     try:
                         users = load_users()

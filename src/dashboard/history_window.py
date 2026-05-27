@@ -60,6 +60,159 @@ PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
     "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports",
 ).strip()
 
+HL7_VERSION = "2.5.1"
+HL7_APP_NAME = "ECGMONITOR"
+HL7_REPORT_DIR = os.path.join(REPORTS_DIR, "hl7")
+
+
+def _hl7_escape(value) -> str:
+    """Escape values for HL7 v2 pipe-delimited fields."""
+    text = "" if value is None else str(value)
+    return (
+        text.replace("\\", "\\E\\")
+        .replace("|", "\\F\\")
+        .replace("^", "\\S\\")
+        .replace("&", "\\T\\")
+        .replace("~", "\\R\\")
+    )
+
+
+def _hl7_clean_key(key: str) -> str:
+    key = str(key or "").strip().upper()
+    key = re.sub(r"[^A-Z0-9_]+", "_", key)
+    return key[:30] or "FIELD"
+
+
+def _hl7_datetime(value=None) -> str:
+    if isinstance(value, datetime.datetime):
+        return value.strftime("%Y%m%d%H%M%S")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            return datetime.datetime.fromisoformat(text).strftime("%Y%m%d%H%M%S")
+        except Exception:
+            pass
+    return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+
+def _history_entry_to_hl7(entry: dict) -> str:
+    """Build a compact HL7 ORU-style message from a history entry."""
+    entry = entry or {}
+    now = datetime.datetime.now()
+    ts = _hl7_datetime(now)
+    report_dt = f"{entry.get('date', '')} {entry.get('time', '')}".strip()
+    report_ts = ""
+    if entry.get("date") and entry.get("time"):
+        try:
+            report_ts = datetime.datetime.strptime(report_dt, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d%H%M%S")
+        except Exception:
+            report_ts = ts
+    else:
+        report_ts = ts
+
+    patient_name = str(entry.get("patient_name", "") or "").strip()
+    first_name = str(entry.get("first_name", "") or "").strip()
+    last_name = str(entry.get("last_name", "") or "").strip()
+    if not first_name and not last_name and patient_name:
+        parts = patient_name.split(" ", 1)
+        first_name = parts[0]
+        last_name = parts[1] if len(parts) > 1 else ""
+
+    patient_id = str(
+        entry.get("patient_id")
+        or entry.get("id")
+        or entry.get("mrn")
+        or entry.get("patient_number")
+        or ""
+    ).strip()
+    report_type = str(entry.get("report_type", "ECG") or "ECG").strip()
+    doctor = str(entry.get("doctor", "") or "").strip()
+    org_name = str(entry.get("org_name", "") or entry.get("Org.", "") or "").strip()
+    org_address = str(entry.get("org_address", "") or "").strip()
+    report_file = str(entry.get("report_file", "") or "").strip()
+    review_status = str(entry.get("review_status", "Pending") or "Pending").strip()
+    owner_full_name = str(entry.get("owner_full_name", "") or "").strip()
+    username = str(entry.get("username", "") or "").strip()
+
+    message_id = re.sub(r"[^A-Za-z0-9]", "", f"{ts}{patient_id}{report_type}")[:20] or ts
+    msh_sender = _hl7_escape(org_name or HL7_APP_NAME)
+    msh_receiver = _hl7_escape(owner_full_name or username or "REVIEW")
+    lines = [
+        f"MSH|^~\\&|{HL7_APP_NAME}|{msh_sender}|HISTORY|{msh_receiver}|{ts}||ORU^R01|{message_id}|P|{HL7_VERSION}",
+        f"PID|1|{_hl7_escape(patient_id)}||{_hl7_escape(last_name)}^{_hl7_escape(first_name)}||"
+        f"|{_hl7_escape(entry.get('dob', '') or entry.get('date_of_birth', '') or '')}|{_hl7_escape(entry.get('gender', ''))}|||"
+        f"{_hl7_escape(entry.get('address', '') or '')}||{_hl7_escape(entry.get('phone', '') or entry.get('mobile', '') or '')}",
+        f"PV1|1|O|{_hl7_escape(org_name)}^^^{_hl7_escape(org_address)}|||||{_hl7_escape(doctor)}",
+        f"OBR|1|{_hl7_escape(patient_id or message_id)}|{_hl7_escape(report_file or message_id)}|"
+        f"{_hl7_escape(report_type)}^{_hl7_escape(report_type)}|||{report_ts}||||||||{_hl7_escape(doctor)}",
+    ]
+
+    core_observations = [
+        ("REPORT_TYPE", report_type),
+        ("PATIENT_NAME", patient_name or f"{first_name} {last_name}".strip()),
+        ("REPORT_FILE", report_file),
+        ("ORG_NAME", org_name),
+        ("ORG_ADDRESS", org_address),
+        ("DOCTOR", doctor),
+        ("HEIGHT", entry.get("height", "")),
+        ("WEIGHT", entry.get("weight", "")),
+        ("AGE", entry.get("age", "")),
+        ("GENDER", entry.get("gender", "")),
+        ("REVIEW_STATUS", review_status),
+        ("REPORT_DATE", entry.get("date", "")),
+        ("REPORT_TIME", entry.get("time", "")),
+        ("USERNAME", username),
+        ("OWNER_FULL_NAME", owner_full_name),
+    ]
+    obx_index = 1
+    for idx, (code, value) in enumerate(core_observations, start=1):
+        if value in (None, ""):
+            continue
+        lines.append(f"OBX|{obx_index}|TX|{_hl7_escape(code)}^{_hl7_escape(code.replace('_', ' ').title())}||{_hl7_escape(value)}")
+        obx_index += 1
+
+    standard_keys = {
+        "date", "time", "report_type", "Org.", "doctor", "patient_name", "org_name",
+        "org_address", "height", "weight", "report_file", "username", "owner_full_name",
+        "review_status", "review_updated_at", "review_updated_by", "first_name", "last_name",
+        "age", "gender", "patient_id", "id", "mrn", "patient_number", "dob", "date_of_birth",
+        "address", "phone", "mobile",
+    }
+    for key in sorted(entry.keys()):
+        if key in standard_keys:
+            continue
+        value = entry.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            try:
+                value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                value = str(value)
+        lines.append(f"OBX|{obx_index}|TX|{_hl7_escape(_hl7_clean_key(key))}^{_hl7_escape(key)}||{_hl7_escape(value)}")
+        obx_index += 1
+
+    lines.append(f"ZHS|1|{_hl7_escape(review_status)}|{_hl7_escape(report_type)}|{_hl7_escape(report_file)}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_hl7_history_file(entry: dict) -> str:
+    """Persist an HL7 copy of the history entry next to the report archive."""
+    try:
+        os.makedirs(HL7_REPORT_DIR, exist_ok=True)
+        source_name = os.path.splitext(os.path.basename(str(entry.get("report_file", "") or "")))[0]
+        if not source_name:
+            source_name = f"history_{entry.get('date', '')}_{entry.get('time', '')}".strip("_")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", source_name).strip("._-") or "history_entry"
+        hl7_path = os.path.join(HL7_REPORT_DIR, f"{safe_name}.hl7")
+        with open(hl7_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(entry.get("hl7_message") or _history_entry_to_hl7(entry))
+        return os.path.abspath(hl7_path)
+    except Exception:
+        return ""
+
 
 def _normalize_owner(value: str) -> str:
     try:
@@ -1473,6 +1626,24 @@ class HistoryWindow(QDialog):
             return "Analysis"
         return "ECG"
 
+    def _entry_matches_current_user(self, entry: dict, active_owner_norm: str, active_username_norm: str) -> bool:
+        """Match entries by owner name first, then by the signed-in username."""
+        if not active_owner_norm and not active_username_norm:
+            return True
+
+        entry_owner = _normalize_owner(
+            entry.get("owner_full_name")
+            or entry.get("full_name")
+            or ""
+        )
+        entry_username = _normalize_owner(entry.get("username") or "")
+
+        if active_owner_norm and entry_owner and entry_owner == active_owner_norm:
+            return True
+        if active_username_norm and entry_username and entry_username == active_username_norm:
+            return True
+        return False
+
     def _add_report_file_entries(self, history_entries):
         """Ensure all PDF reports under reports/ appear in history table."""
         try:
@@ -1627,20 +1798,11 @@ class HistoryWindow(QDialog):
 
         # Filter by owner and normalize report type
         active_owner_norm = _normalize_owner(self.owner_full_name)
+        active_username_norm = _normalize_owner(self.username)
         self.all_history_entries = []
         for entry in history_entries:
-            if active_owner_norm:
-                entry_owner = (
-                    entry.get("owner_full_name")
-                    or entry.get("full_name")
-                    or entry.get("username")
-                    or ""
-                )
-                if not _normalize_owner(entry_owner):
-                    # Do not show legacy/unowned items when user scoping is enabled.
-                    continue
-                if _normalize_owner(entry_owner) != active_owner_norm:
-                    continue
+            if not self._entry_matches_current_user(entry, active_owner_norm, active_username_norm):
+                continue
             rf = entry.get("report_file", "") or ""
             rt = entry.get("report_type", "")
             if not rt:
@@ -1664,6 +1826,16 @@ class HistoryWindow(QDialog):
                 return ((0, 0, 0), (0, 0, 0))
 
         self.all_history_entries.sort(key=_key, reverse=True)
+        migrated = False
+        for entry in self.all_history_entries:
+            if not entry.get("hl7_message"):
+                entry["hl7_message"] = _history_entry_to_hl7(entry)
+                migrated = True
+            if not entry.get("hl7_file"):
+                entry["hl7_file"] = _write_hl7_history_file(entry)
+                migrated = True
+        if migrated:
+            self._save_history_to_file()
         for entry in self.all_history_entries:
             self._add_row(entry)
         self._refresh_json_reports()
@@ -1861,10 +2033,9 @@ class HistoryWindow(QDialog):
         dstr = di.text() if di else ""
         tstr = ti.text() if ti else ""
         owner_norm = _normalize_owner(self.owner_full_name)
+        active_username_norm = _normalize_owner(self.username)
         for entry in self.all_history_entries:
-            same_owner = _normalize_owner(
-                entry.get("owner_full_name") or entry.get("full_name") or entry.get("username") or ""
-            ) == owner_norm
+            same_owner = self._entry_matches_current_user(entry, owner_norm, active_username_norm)
             same_report = False
             try:
                 if rfp and entry.get("report_file"):
@@ -2218,16 +2389,23 @@ class HistoryWindow(QDialog):
 
             owner_norm = _normalize_owner(self.owner_full_name)
             for entry in self.all_history_entries:
+                if not entry.get("hl7_message"):
+                    entry["hl7_message"] = _history_entry_to_hl7(entry)
+                if not entry.get("hl7_file"):
+                    entry["hl7_file"] = _write_hl7_history_file(entry)
                 pn = entry.get("patient_name", "")
                 ds = entry.get("date", "")
                 ts = entry.get("time", "")
                 rf = entry.get("report_file", "") or ""
                 found = False
                 for se in all_e:
-                    se_owner_norm = _normalize_owner(
-                        se.get("owner_full_name") or se.get("full_name") or se.get("username") or ""
-                    )
-                    if owner_norm and se_owner_norm != owner_norm:
+                    se_owner_norm = _normalize_owner(se.get("owner_full_name") or se.get("full_name") or "")
+                    se_username_norm = _normalize_owner(se.get("username") or "")
+                    if owner_norm and se_owner_norm and se_owner_norm == owner_norm:
+                        pass
+                    elif _normalize_owner(self.username) and se_username_norm and se_username_norm == _normalize_owner(self.username):
+                        pass
+                    elif owner_norm:
                         continue
 
                     same_report = False
@@ -2391,6 +2569,13 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
                 or base.get("organisation_address")
                 or ""
             )
+
+    # Preserve the full structured record and emit an HL7 sidecar so the history
+    # archive can be exchanged with other systems later without losing context.
+    base["hl7_format"] = f"ORU^R01|{HL7_VERSION}"
+    base["hl7_generated_at"] = now.isoformat()
+    base["hl7_message"] = _history_entry_to_hl7(base)
+    base["hl7_file"] = _write_hl7_history_file(base)
 
     entries.append(base)
 
