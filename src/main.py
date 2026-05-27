@@ -661,6 +661,7 @@ class RegisterWorker(QThread):
                 org_address=self.org_address,
                 phone=self.phone,
                 password_hash=pw_hash,
+                machine_serial_id=self.serial_id,
             )
             self.finished.emit(res)
         except Exception as e:
@@ -1967,7 +1968,7 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", "RUM") or not serial_id:
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUltra device", ""):
             serial_id = ""
         name = self.reg_name.text().strip()
         doctor = self.reg_doctor.text().strip()

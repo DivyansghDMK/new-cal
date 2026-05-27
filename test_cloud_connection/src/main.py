@@ -293,10 +293,7 @@ class LoginRegisterDialog(QDialog):
         
         if success and serial_num:
             if hasattr(self, 'reg_serial'):
-                # Block signals to prevent _enforce_serial_prefix from messing with the auto-detected ID
-                self.reg_serial.blockSignals(True)
                 self.reg_serial.setText(serial_num)
-                self.reg_serial.blockSignals(False)
                 self.reg_serial.setReadOnly(True)
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet() + " color: #27ae60; font-weight: bold;")
         else:
@@ -569,40 +566,8 @@ class LoginRegisterDialog(QDialog):
         layout = QVBoxLayout()
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
-        # Machine Serial ID must start with "RUM"
-        self._serial_prefix_guard = False
-        def _enforce_serial_prefix(text: str):
-            if self._serial_prefix_guard:
-                return
-            try:
-                self._serial_prefix_guard = True
-                raw = text or ""
-                if raw == "":
-                    return
-
-                raw_upper = raw.upper()
-                if raw_upper in ("R", "RU", "RUM"):
-                    if raw != raw_upper:
-                        self.reg_serial.setText(raw_upper)
-                        self.reg_serial.setCursorPosition(len(raw_upper))
-                    return
-
-                if raw_upper.startswith("RUM"):
-                    normalized = "RUM" + raw[3:]
-                    if raw != normalized:
-                        self.reg_serial.setText(normalized)
-                        self.reg_serial.setCursorPosition(len(normalized))
-                    return
-
-                forced = "RUM" + raw
-                self.reg_serial.setText(forced)
-                self.reg_serial.setCursorPosition(len(forced))
-            finally:
-                self._serial_prefix_guard = False
-        self.reg_serial.textEdited.connect(_enforce_serial_prefix)
-        self.reg_serial.setText("RUM")
+        self.reg_serial.setText("")
         self.reg_serial.setReadOnly(True)
-        self.reg_serial.setCursorPosition(3)
         self.reg_name = QLineEdit()
         self.reg_name.setPlaceholderText("Full Name")
         self.reg_age = QLineEdit()
@@ -773,7 +738,7 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text().strip()
-        if serial_id == "Please connect your RhythmUltra device" or serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", ""):
             serial_id = ""
         name = self.reg_name.text().strip()
         age = self.reg_age.text()
@@ -784,9 +749,6 @@ class LoginRegisterDialog(QDialog):
         confirm = self.reg_confirm.text()
         if not all([name, age, gender, address, phone, password, confirm]):
             QMessageBox.warning(self, "Error", "All fields are required.")
-            return
-        if serial_id and not serial_id.upper().startswith("RUM"):
-            QMessageBox.warning(self, "Error", "Machine Serial ID must start with RUM.")
             return
         # Enforce numeric phone number with exact 10 digits
         if not phone.isdigit() or len(phone) != 10:

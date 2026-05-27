@@ -767,7 +767,21 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         _t(ax, f"{i+1}. {line}", sx, ty, 9, zorder=9)
 
     # Brand line
-    brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+    serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
+    if not serial_num:
+        try:
+            from utils.settings_manager import SettingsManager
+            sm = SettingsManager()
+            serial_num = sm.get_setting("machine_serial_number", "")
+        except Exception:
+            pass
+    serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+    
+    if serial_suffix:
+        brand = f"Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  {serial_suffix}  |  Made in India"
+    else:
+        brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+        
     _t(ax, brand, PW/2, PH-MB+1.5, 7, ha='center', zorder=9)
 
 
@@ -804,7 +818,21 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
         _t(ax, f"{i+1}. {txt}", sx, ty, 9, zorder=9)
 
     # Brand line
-    brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+    serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
+    if not serial_num:
+        try:
+            from utils.settings_manager import SettingsManager
+            sm = SettingsManager()
+            serial_num = sm.get_setting("machine_serial_number", "")
+        except Exception:
+            pass
+    serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+    
+    if serial_suffix:
+        brand = f"Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  {serial_suffix}  |  Made in India"
+    else:
+        brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+        
     _t(ax, brand, PW/2, PH-MB+1.5, 8, ha='center', zorder=9)
 
 

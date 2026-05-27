@@ -2711,7 +2711,24 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         canvas.saveState()
         canvas.setFont(FONT_TYPE, 8)
         canvas.setFillColor(colors.black)  # Ensure text is black on pink background
-        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        
+        serial_num = ""
+        if data:
+            serial_num = data.get("machine_serial", "") or data.get("machine_serial_number", "")
+        if not serial_num:
+            try:
+                from utils.settings_manager import SettingsManager
+                sm = SettingsManager()
+                serial_num = sm.get_setting("machine_serial_number", "")
+            except Exception:
+                pass
+        serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+        
+        if serial_suffix:
+            footer_text = f"Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | {serial_suffix} | Made in India"
+        else:
+            footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+            
         # Center the footer text at bottom of page
         text_width = canvas.stringWidth(footer_text, FONT_TYPE, 8)
         x = (doc.width + doc.leftMargin + doc.rightMargin - text_width) / 2
@@ -3306,7 +3323,24 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         canvas.saveState()
         canvas.setFont(FONT_TYPE, 8)
         canvas.setFillColor(colors.black)
-        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        
+        serial_num = ""
+        if data:
+            serial_num = data.get("machine_serial", "") or data.get("machine_serial_number", "")
+        if not serial_num:
+            try:
+                from utils.settings_manager import SettingsManager
+                sm = SettingsManager()
+                serial_num = sm.get_setting("machine_serial_number", "")
+            except Exception:
+                pass
+        serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+        
+        if serial_suffix:
+            footer_text = f"Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | {serial_suffix} | Made in India"
+        else:
+            footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+            
         text_width = canvas.stringWidth(footer_text, FONT_TYPE, 8)
         
         # All pages in this report are LANDSCAPE by default
@@ -3400,7 +3434,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     # Use only the captured duration (3 min vs 5 min) — do not force 5 strips.
     total_duration = max((d.get('time', 0) for d in captured_data), default=0) if captured_data else 0
-    num_segments = max(1, min(5, int(total_duration // 60.0) + (1 if total_duration % 60.0 >= 1.0 else 0)))
+    if total_duration < 240: # For 3-minute test
+        num_segments = max(1, min(5, int(total_duration // 60.0)))
+    else: # For 5-minute test
+        num_segments = max(1, min(5, int(total_duration // 60.0) + (1 if total_duration % 60.0 >= 1.0 else 0)))
 
     print(f"📊 HRV Report Configuration:")
     print(f"   Samples per strip: {samples_per_strip} ADC samples (sampling_rate={sampling_rate} Hz)")

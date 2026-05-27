@@ -588,7 +588,7 @@ class LoginRegisterDialog(QDialog):
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
         serial_id = self.reg_serial.text().strip()
-        if serial_id == "Please connect your RhythmUlta device" or serial_id == "RUM" or not serial_id:
+        if serial_id in ("Please connect your RhythmUltra device", ""):
             serial_id = ""
         fullname = self.reg_fullname.text()
         age = self.reg_age.text()

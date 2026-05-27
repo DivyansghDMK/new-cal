@@ -259,73 +259,63 @@ class HyperkalemiaTestWindow(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         import pyqtgraph as pg
+        
+        self.setStyleSheet("QWidget { background: #f4f7f6; }")
+        
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
         
         # Header
         header = QHBoxLayout()
         title = QLabel("Hyperkalemia Detection Test")
-        title.setFont(QFont("Arial", 20, QFont.Bold))
-        title.setStyleSheet("color: #d2691e;")  # Orange suede color
+        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setStyleSheet("color: #ff6600; font-weight: 900; background: transparent;")
         header.addWidget(title)
         header.addStretch()
         
         # Status label
         self.status_label = QLabel("Status: Ready")
-        self.status_label.setFont(QFont("Arial", 12))
-        self.status_label.setStyleSheet("color: #666; padding: 5px;")
+        self.status_label.setFont(QFont("Segoe UI", 12))
+        self.status_label.setStyleSheet("color: #667085; padding: 5px; background: transparent;")
         header.addWidget(self.status_label)
         
         # Timer label
         self.timer_label = QLabel("Time: 00:00")
-        self.timer_label.setFont(QFont("Arial", 14, QFont.Bold))
-        self.timer_label.setStyleSheet("color: #d2691e; padding: 5px;")
+        self.timer_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.timer_label.setStyleSheet("color: #ff6600; padding: 5px; font-weight: 900; background: transparent;")
         header.addWidget(self.timer_label)
         
         layout.addLayout(header)
         
         # Control buttons
         controls = QHBoxLayout()
+        controls.setSpacing(16)
         
         # Start button
         self.start_btn = QPushButton("Start Capture")
+        self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background: #28a745;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #17b26a; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #218838;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #0b9b55; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
         """)
         self.start_btn.clicked.connect(self.start_capture)
         controls.addWidget(self.start_btn)
         
         # Stop button (initially disabled)
         self.stop_btn = QPushButton("Stop Capture")
+        self.stop_btn.setCursor(Qt.PointingHandCursor)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background: #dc3545;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #ef4444; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #c82333;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #dc2626; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; border: none; }
         """)
         self.stop_btn.clicked.connect(self.confirm_stop)
         self.stop_btn.setEnabled(False)
@@ -335,21 +325,14 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Analyze button (initially disabled)
         self.analyze_btn = QPushButton("Analyze for Hyperkalemia")
+        self.analyze_btn.setCursor(Qt.PointingHandCursor)
         self.analyze_btn.setStyleSheet("""
             QPushButton {
-                background: #d2691e;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #cd853f;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #e65c00; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
         """)
         self.analyze_btn.clicked.connect(self.analyze_hyperkalemia)
         self.analyze_btn.setEnabled(False)
@@ -357,21 +340,14 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Generate Report button (initially disabled)
         self.report_btn = QPushButton("Generate Report")
+        self.report_btn.setCursor(Qt.PointingHandCursor)
         self.report_btn.setStyleSheet("""
             QPushButton {
-                background: #d2691e;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #cd853f;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #e65c00; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
         """)
         self.report_btn.clicked.connect(self.generate_report)
         self.report_btn.setEnabled(False)
@@ -381,10 +357,22 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Metrics display section
         metrics_card = QFrame()
-        metrics_card.setStyleSheet("background: white; border-radius: 10px; padding: 7px;")
+        metrics_card.setStyleSheet("QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; } QLabel { border: none; background: transparent; }")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         metrics_layout = QHBoxLayout(metrics_card)
+        metrics_layout.setContentsMargins(24, 20, 24, 20)
         metrics_layout.setSpacing(20)
+        
+        try:
+            from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+            from PyQt5.QtGui import QColor
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(20)
+            shadow.setOffset(0, 4)
+            shadow.setColor(QColor(16, 24, 40, 30))
+            metrics_card.setGraphicsEffect(shadow)
+        except Exception:
+            pass
         
         # Store metric labels for live update
         self.metric_labels = {}
@@ -398,10 +386,12 @@ class HyperkalemiaTestWindow(QWidget):
         for title, value, unit, key in metric_info:
             box = QVBoxLayout()
             lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 10, QFont.Bold))
+            lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            lbl.setStyleSheet("color: #101828;")
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
-            val.setFont(QFont("Arial", 14, QFont.Bold))
+            val.setFont(QFont("Segoe UI", 16, QFont.Bold))
+            val.setStyleSheet("color: #101828;")
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
@@ -413,8 +403,9 @@ class HyperkalemiaTestWindow(QWidget):
         # Plot area - Grid layout for 7 leads (Lead II + V1-V6)
         plot_frame = QFrame()
         plot_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        plot_frame.setStyleSheet("background: #f8f9fa; border-radius: 16px; padding: 12px; border: 2px solid #e9ecef;")
+        plot_frame.setStyleSheet("background: #ffffff; border-radius: 16px; border: 1px solid #e0e5eb;")
         plot_layout = QGridLayout(plot_frame)
+        plot_layout.setContentsMargins(16, 16, 16, 16)
         plot_layout.setSpacing(10)
         
         # Create plot widgets and curves for each lead
@@ -423,17 +414,6 @@ class HyperkalemiaTestWindow(QWidget):
         self.data_lines = {} # For consistency with 12-lead naming
         
         lead_names = ['II', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
-        
-        # Define colors for each lead type for consistent color coding (matching 12-lead test)
-        lead_colors = {
-            'II': '#4ecdc4',     # Teal  
-            'V1': '#54a0ff',     # Light Blue
-            'V2': '#5f27cd',     # Purple
-            'V3': '#00d2d3',     # Cyan
-            'V4': '#ff9f43',     # Orange
-            'V5': '#10ac84',     # Dark Green
-            'V6': '#ee5a24'      # Dark Orange
-        }
         
         # Arrange in 2 columns (V1-V6 first, Lead II at the last bottom row full width)
         positions = {
@@ -469,6 +449,7 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.getAxis('left').setStyle(showValues=False)
             plot_widget.getAxis('bottom').setTextPen('k')
             plot_widget.getAxis('bottom').setPen('k')
+            plot_widget.getAxis('bottom').setStyle(showValues=False)
             
             lead_color = lead_colors.get(lead_name, '#000000')
             plot_widget.setTitle(f"Lead {lead_name}", color=lead_color, size='11pt')
@@ -481,7 +462,7 @@ class HyperkalemiaTestWindow(QWidget):
             
             # Add center line at 2048
             center_pos = -2048 if lead_name == 'aVR' else 2048
-            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='gray', width=0.5, style=Qt.DashLine))
+            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#e0e5eb', width=1.0, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
             vb = plot_widget.getViewBox()
@@ -496,7 +477,7 @@ class HyperkalemiaTestWindow(QWidget):
                     pass
             
             # Create plot curve with clinical line width
-            plot_curve = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.0))
+            plot_curve = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.5))
             
             self.plot_widgets[lead_name] = plot_widget
             self.plot_curves[lead_name] = plot_curve
@@ -516,8 +497,8 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Info label
         info_label = QLabel("Capture 30 seconds of Lead II and V1-V6 data for hyperkalemia detection. The system will analyze T-waves, PR interval, QRS duration, and P-wave morphology according to ECG standards.")
-        info_label.setFont(QFont("Arial", 10))
-        info_label.setStyleSheet("color: #666; padding: 10px;")
+        info_label.setFont(QFont("Segoe UI", 10))
+        info_label.setStyleSheet("color: #667085; padding: 10px; background: transparent;")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
         
@@ -687,7 +668,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.stop_btn.setEnabled(True)
             self.analyze_btn.setEnabled(False)
             self.report_btn.setEnabled(False)
-            self.status_label.setText("Status: Capturing from serial port...")
+            self.status_label.setText("Status: Capturing from RhythmUltra Device...")
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
             self._silent_data_warned = False
 
@@ -1713,14 +1694,14 @@ class HyperkalemiaTestWindow(QWidget):
             dlg.setWindowTitle("Report Generated")
             dlg.setMinimumWidth(480)
             dlg.setStyleSheet("""
-                QDialog { background: #1e2a38; }
-                QLabel  { color: #e0e0e0; font-size: 13px; }
-                QLabel#title { color: #4CAF50; font-size: 15px; font-weight: bold; }
-                QPushButton { background: #2a3f5f; color: #e0e0e0; border: 1px solid #3a5f8f;
-                              border-radius: 5px; padding: 6px 18px; font-size: 12px; }
-                QPushButton:hover { background: #3a5f8f; }
-                QPushButton#open_btn { background: #1565C0; color: white; border: none; font-weight: bold; }
-                QPushButton#open_btn:hover { background: #1976D2; }
+                QDialog { background: #ffffff; border-radius: 12px; }
+                QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
+                QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
+                QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
+                              border-radius: 8px; padding: 8px 20px; font-size: 12px; font-weight: bold; font-family: 'Segoe UI', Arial; }
+                QPushButton:hover { background: #f9fafb; }
+                QPushButton#open_btn { background: #007bff; color: white; border: none; }
+                QPushButton#open_btn:hover { background: #0056b3; }
             """)
             vbox = QVBoxLayout(dlg)
             vbox.setSpacing(12)

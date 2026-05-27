@@ -974,7 +974,7 @@ def load_latest_metrics_entry(reports_dir):
     except Exception as e:
         print(f" Could not read metrics file for HR: {e}")
         
-def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
+def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None, data=None, settings_manager=None):
     from reportlab.lib.units import mm
     
     # STEP 1: Draw pink ECG grid background on Page 1 (now the only landscape page)
@@ -1164,7 +1164,24 @@ def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
     canvas.saveState()
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.black)
-    footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
+    
+    serial_num = ""
+    if data:
+        serial_num = data.get("machine_serial", "") or data.get("machine_serial_number", "")
+    if not serial_num:
+        try:
+            from utils.settings_manager import SettingsManager
+            sm = SettingsManager()
+            serial_num = sm.get_setting("machine_serial_number", "")
+        except Exception:
+            pass
+    serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+    
+    if serial_suffix:
+        footer_text = f"Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | {serial_suffix} | Made in India"
+    else:
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        
     text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
     
     if canvas.getPageNumber() == 1:
@@ -1585,7 +1602,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                          topMargin=30, bottomMargin=30)
     # Create wrapper function for callback with patient parameter
     def callback_wrapper(canvas, doc):
-        return _draw_logo_and_footer_callback(canvas, doc, patient)
+        return _draw_logo_and_footer_callback(canvas, doc, patient, data, settings_manager)
 
 
     # Define Landscape template as DEFAULT (only template) with onPage callback

@@ -628,6 +628,7 @@ def register_device(
     org_address: str,
     phone: str,
     password_hash: str,
+    machine_serial_id: str = "",
 ) -> Dict:
     """
     First-time registration: POST /register.
@@ -637,6 +638,7 @@ def register_device(
     fingerprint = get_hardware_fingerprint()
     rhythmulta_serial = get_rhythmulta_serial() or ""
     machine_ctx = get_machine_context()
+    machine_serial = machine_serial_id.strip() or machine_ctx["machine_serial_id"]
 
     body = {
         "license_key": license_key.strip().upper(),
@@ -650,8 +652,8 @@ def register_device(
         "phone": phone,
         "password": password_hash,       # specification expects password
         "password_hash": password_hash,  # legacy server expects password_hash
-        "bios_serial": machine_ctx["machine_serial_id"],          # specification expects bios_serial
-        "machine_serial_id": machine_ctx["machine_serial_id"],    # legacy server expects machine_serial_id
+        "bios_serial": machine_serial,                            # specification expects bios_serial
+        "machine_serial_id": machine_serial,                      # legacy server expects machine_serial_id
         "pc_name": machine_ctx["machine_name"],
         "windows_version": machine_ctx["windows_version"],
     }

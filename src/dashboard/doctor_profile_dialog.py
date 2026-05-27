@@ -113,36 +113,19 @@ class DoctorProfileDialog(QDialog):
     def _build_ui(self) -> None:
         self.setStyleSheet(
             """
-            QDialog { background: #f4f6f9; }
-            QLabel { color: #2c3e50; font-family: 'Segoe UI', Arial; }
-            QLineEdit {
-                font: 11pt 'Segoe UI', Arial;
-                color: #ff6600;
-                background: #ffffff;
-                padding: 10px 12px;
-                border: 1px solid #dcdfe6;
-                border-radius: 10px;
+            QDialog { background: #f4f7f6; }
+            QLabel { color: #101828; font-family: 'Segoe UI', Arial; }
+            QLineEdit, QTextEdit {
+                font: 11pt 'Segoe UI', Arial; color: #101828; background: #fcfcfd; padding: 10px 14px;
+                border: 1px solid #d0d5dd; border-radius: 8px; min-height: 24px;
             }
-            QLineEdit:focus {
-                border: 2px solid #ff6600;
-                background: #fff9f5;
-            }
-            QTextEdit {
-                font: 11pt 'Segoe UI', Arial;
-                color: #ff6600;
-                background: #ffffff;
-                padding: 10px 12px;
-                border: 1px solid #dcdfe6;
-                border-radius: 10px;
-            }
-            QTextEdit:focus {
-                border: 2px solid #ff6600;
-                background: #fff9f5;
+            QLineEdit:focus, QTextEdit:focus {
+                border: 2px solid #ff6600; background: #ffffff;
             }
             QPushButton {
                 font: bold 11pt 'Segoe UI', Arial;
                 padding: 10px 24px;
-                border-radius: 12px;
+                border-radius: 10px;
             }
             """
         )
@@ -153,31 +136,30 @@ class DoctorProfileDialog(QDialog):
 
         # Main Header
         title = QLabel("Doctor Profile")
-        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
-            "color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff8533, stop:1 #ff6600); "
-            "padding: 15px; border-radius: 15px; border: 1px solid #e65c00;"
+            "font: 900 18pt 'Segoe UI', Arial; color: white; "
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff6600, stop:1 #ff8c33); "
+            "padding: 14px; border-radius: 12px;"
         )
         layout.addWidget(title)
 
         label_style = (
-            "QLabel { font: bold 10pt 'Segoe UI'; color: #34495e; background: #f8f9fa; "
-            "padding: 8px 12px; border: 1px solid #e0e6ed; border-radius: 8px; min-width: 160px; }"
+            "QLabel { font: bold 11pt 'Segoe UI', Arial; color: #344054; background: transparent; "
+            "padding: 8px; border: none; min-width: 160px; }"
         )
 
         # ---------------- Profile card ----------------
         profile_card = QFrame()
         profile_card.setStyleSheet(
-            "QFrame { background: white; border: 1px solid #e0e6ed; border-radius: 15px; }"
+            "QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; }"
         )
         profile_layout = QVBoxLayout(profile_card)
-        profile_layout.setContentsMargins(20, 20, 20, 20)
-        profile_layout.setSpacing(15)
+        profile_layout.setContentsMargins(24, 24, 24, 24)
+        profile_layout.setSpacing(16)
 
         section_title = QLabel("Personal Information")
-        section_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        section_title.setStyleSheet("color: #ff6600; border: none; background: transparent;")
+        section_title.setStyleSheet("font: 900 12pt 'Segoe UI', Arial; color: #ff6600; border: none; background: transparent;")
         profile_layout.addWidget(section_title)
 
         form = QVBoxLayout()
@@ -185,7 +167,7 @@ class DoctorProfileDialog(QDialog):
 
         def add_form_row(label_text, widget):
             row = QHBoxLayout()
-            row.setSpacing(15)
+            row.setSpacing(16)
             lbl = QLabel(label_text)
             lbl.setStyleSheet(label_style)
             row.addWidget(lbl)
@@ -205,6 +187,7 @@ class DoctorProfileDialog(QDialog):
         add_form_row("Clinic / Hospital Name", self.org_name_edit)
 
         self.org_address_edit = QTextEdit()
+        self.org_address_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.org_address_edit.setPlaceholderText("Full clinic address")
         self.org_address_edit.setFixedHeight(100)
         add_form_row("Clinic Address", self.org_address_edit)
@@ -215,11 +198,11 @@ class DoctorProfileDialog(QDialog):
         # ---------------- Security card ----------------
         security_card = QFrame()
         security_card.setStyleSheet(
-            "QFrame { background: white; border: 1px solid #e0e6ed; border-radius: 15px; }"
+            "QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; }"
         )
         security_layout = QVBoxLayout(security_card)
-        security_layout.setContentsMargins(20, 20, 20, 20)
-        security_layout.setSpacing(15)
+        security_layout.setContentsMargins(24, 24, 24, 24)
+        security_layout.setSpacing(16)
 
         sec_title = QLabel("Security & Password")
         sec_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
@@ -256,6 +239,7 @@ class DoctorProfileDialog(QDialog):
 
         self.confirm_password_edit = QLineEdit()
         self.confirm_password_edit.setEchoMode(QLineEdit.Password)
+        self.confirm_password_edit.returnPressed.connect(self._on_save)
         self.conf_eye_btn = self._create_eye_btn(self.confirm_password_edit)
         add_password_row("Confirm Password", self.confirm_password_edit, self.conf_eye_btn)
 
@@ -264,15 +248,17 @@ class DoctorProfileDialog(QDialog):
 
         # ---------------- Buttons ----------------
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(15)
+        btn_row.setSpacing(16)
         btn_row.addStretch()
 
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         self.cancel_btn.setCursor(Qt.PointingHandCursor)
         self.cancel_btn.setStyleSheet(
-            "QPushButton { background: #f8f9fa; color: #4b5563; border: 1px solid #dcdfe6; }"
-            "QPushButton:hover { background: #eef1f5; border: 1px solid #ff6600; color: #ff6600; }"
+            "QPushButton { background: #ffffff; color: #344054; border-radius: 10px; padding: 10px 24px;"
+            " font: bold 11pt 'Segoe UI', Arial; border: 1px solid #d0d5dd; min-width: 120px; }"
+            "QPushButton:hover { background: #f9fafb; }"
+            "QPushButton:pressed { background: #e9edf3; }"
         )
         btn_row.addWidget(self.cancel_btn)
 
@@ -280,13 +266,31 @@ class DoctorProfileDialog(QDialog):
         self.save_btn.clicked.connect(self._on_save)
         self.save_btn.setCursor(Qt.PointingHandCursor)
         self.save_btn.setStyleSheet(
-            "QPushButton { background: #ff6600; color: white; border: none; font-weight: bold; }"
-            "QPushButton:hover { background: #ff7a26; }"
-            "QPushButton:pressed { background: #e65c00; }"
+            "QPushButton { background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;"
+            " font: bold 11pt 'Segoe UI', Arial; border: none; min-width: 140px; }"
+            "QPushButton:hover { background: #e65c00; }"
+            "QPushButton:pressed { background: #cc5200; }"
         )
         btn_row.addWidget(self.save_btn)
 
         layout.addLayout(btn_row)
+
+        try:
+            from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+            from PyQt5.QtGui import QColor
+            shadow1 = QGraphicsDropShadowEffect(self)
+            shadow1.setBlurRadius(20)
+            shadow1.setOffset(0, 4)
+            shadow1.setColor(QColor(16, 24, 40, 30))
+            profile_card.setGraphicsEffect(shadow1)
+
+            shadow2 = QGraphicsDropShadowEffect(self)
+            shadow2.setBlurRadius(20)
+            shadow2.setOffset(0, 4)
+            shadow2.setColor(QColor(16, 24, 40, 30))
+            security_card.setGraphicsEffect(shadow2)
+        except Exception:
+            pass
 
     def _create_eye_btn(self, target_edit: QLineEdit) -> QPushButton:
         btn = QPushButton("👁")
@@ -424,5 +428,10 @@ class DoctorProfileDialog(QDialog):
         msg_box.setStyleSheet("QLabel { color: #1f2d3d; font-weight: bold; }")
         
         from PyQt5.QtCore import QTimer
-        QTimer.singleShot(1500, lambda: (msg_box.close(), self.accept()))
-        msg_box.exec_()
+        
+        def close_all():
+            msg_box.accept()
+            self.accept()
+            
+        QTimer.singleShot(1500, close_all)
+        msg_box.show()
