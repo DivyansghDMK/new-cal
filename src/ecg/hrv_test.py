@@ -201,73 +201,63 @@ class HRVTestWindow(QWidget):
         """Initialize the user interface"""
         import pyqtgraph as pg
         pg.setConfigOptions(antialias=True)
+        
+        self.setStyleSheet("QWidget { background: #f4f7f6; }")
+        
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
         
         # Header
         header = QHBoxLayout()
         self.title_label = QLabel("HRV Test - Lead II")
-        self.title_label.setFont(QFont("Arial", 20, QFont.Bold))
-        self.title_label.setStyleSheet("color: #ff6600;")
+        self.title_label.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        self.title_label.setStyleSheet("color: #ff6600; font-weight: 900; background: transparent;")
         header.addWidget(self.title_label)
         header.addStretch()
         
         # Status label
         self.status_label = QLabel("Status: Ready")
-        self.status_label.setFont(QFont("Arial", 12))
-        self.status_label.setStyleSheet("color: #666; padding: 5px;")
+        self.status_label.setFont(QFont("Segoe UI", 12))
+        self.status_label.setStyleSheet("color: #667085; padding: 5px; background: transparent;")
         header.addWidget(self.status_label)
         
         # Timer label
         self.timer_label = QLabel("Time: 00:00")
-        self.timer_label.setFont(QFont("Arial", 14, QFont.Bold))
-        self.timer_label.setStyleSheet("color: #ff6600; padding: 5px;")
+        self.timer_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.timer_label.setStyleSheet("color: #ff6600; padding: 5px; font-weight: 900; background: transparent;")
         header.addWidget(self.timer_label)
         
         layout.addLayout(header)
         
         # Control buttons
         controls = QHBoxLayout()
+        controls.setSpacing(16)
         
         # Start button
         self.start_btn = QPushButton("Start Capture")
+        self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background: #28a745;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #17b26a; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #218838;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #0b9b55; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
         """)
         self.start_btn.clicked.connect(self.start_capture)
         controls.addWidget(self.start_btn)
         
         # Stop button (initially disabled)
         self.stop_btn = QPushButton("Stop Capture")
+        self.stop_btn.setCursor(Qt.PointingHandCursor)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background: #dc3545;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #ef4444; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #c82333;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #dc2626; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; border: none; }
         """)
         self.stop_btn.clicked.connect(self.confirm_stop)
         self.stop_btn.setEnabled(False)
@@ -277,12 +267,19 @@ class HRVTestWindow(QWidget):
 
         # Lead Selection
         lead_label = QLabel("Select Lead:")
-        lead_label.setFont(QFont("Arial", 11))
+        lead_label.setFont(QFont("Segoe UI", 11))
+        lead_label.setStyleSheet("color: #101828; background: transparent;")
         controls.addWidget(lead_label)
         
         self.lead_combo = QComboBox()
-        self.lead_combo.setMinimumWidth(100)
-        self.lead_combo.setStyleSheet("padding: 5px; border: 1px solid #ccc; border-radius: 5px;")
+        self.lead_combo.setMinimumWidth(140)
+        self.lead_combo.setMinimumHeight(42)
+        self.lead_combo.setCursor(Qt.PointingHandCursor)
+        self.lead_combo.setStyleSheet("""
+            QComboBox { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font: 11pt 'Segoe UI', Arial; background: #ffffff; color: #101828; }
+            QComboBox:focus { border: 2px solid #ff6600; }
+            QComboBox::drop-down { border: none; width: 30px; }
+        """)
         self.lead_combo.addItems(["Lead I", "Lead II", "V1", "V2", "V3", "V4", "V5", "V6"])
         self.lead_combo.setCurrentText("Lead II")
         self.lead_combo.currentTextChanged.connect(self.on_lead_changed)
@@ -292,21 +289,14 @@ class HRVTestWindow(QWidget):
         
         # Generate Report button (initially disabled)
         self.report_btn = QPushButton("Generate HRV Report")
+        self.report_btn.setCursor(Qt.PointingHandCursor)
         self.report_btn.setStyleSheet("""
             QPushButton {
-                background: #ff6600;
-                color: white;
-                border-radius: 8px;
-                padding: 10px 30px;
-                font-size: 14px;
-                font-weight: bold;
+                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: none;
             }
-            QPushButton:hover {
-                background: #ff8533;
-            }
-            QPushButton:disabled {
-                background: #ccc;
-            }
+            QPushButton:hover { background: #e65c00; }
+            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
         """)
         self.report_btn.clicked.connect(self.generate_report)
         self.report_btn.setEnabled(False)
@@ -316,10 +306,22 @@ class HRVTestWindow(QWidget):
         
         # Metrics display section (below buttons, without Time)
         metrics_card = QFrame()
-        metrics_card.setStyleSheet("background: white; border-radius: 10px; padding: 10px;")
+        metrics_card.setStyleSheet("QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; } QLabel { border: none; background: transparent; }")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         metrics_layout = QHBoxLayout(metrics_card)
+        metrics_layout.setContentsMargins(24, 20, 24, 20)
         metrics_layout.setSpacing(20)
+        
+        try:
+            from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+            from PyQt5.QtGui import QColor
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(20)
+            shadow.setOffset(0, 4)
+            shadow.setColor(QColor(16, 24, 40, 30))
+            metrics_card.setGraphicsEffect(shadow)
+        except Exception:
+            pass
         
         # Store metric labels for live update
         self.metric_labels = {}
@@ -327,17 +329,18 @@ class HRVTestWindow(QWidget):
             ("HR", "00", "BPM", "heart_rate"),
             ("PR", "0", "ms", "pr_interval"),
             ("QRS Complex", "0", "ms", "qrs_duration"),
-            # ("P", "0", "ms", "st_interval"),
             ("QT/QTc", "0", "ms", "qtc_interval"),
         ]
         
         for title, value, unit, key in metric_info:
             box = QVBoxLayout()
             lbl = QLabel(title)
-            lbl.setFont(QFont("Arial", 12, QFont.Bold))
+            lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            lbl.setStyleSheet("color: #101828;")
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
-            val.setFont(QFont("Arial", 18, QFont.Bold))
+            val.setFont(QFont("Segoe UI", 16, QFont.Bold))
+            val.setStyleSheet("color: #101828;")
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
@@ -348,8 +351,9 @@ class HRVTestWindow(QWidget):
         
         # Plot area
         plot_frame = QFrame()
-        plot_frame.setStyleSheet("background: #000; border-radius: 10px;")
+        plot_frame.setStyleSheet("background: #000000; border-radius: 16px; border: none;")
         plot_layout = QVBoxLayout(plot_frame)
+        plot_layout.setContentsMargins(10, 10, 10, 10)
         
         # PyQtGraph plot
         self.plot_widget = pg.PlotWidget()
@@ -362,16 +366,7 @@ class HRVTestWindow(QWidget):
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.hideButtons()  # Hide auto-scale button
 
-        # self.plot_widget.setLabel('left', 'Amplitude (mV)', color='white', fontsize=12)
-        # self.plot_widget.setLabel('bottom', 'Time (s)', color='white', fontsize=12)
         self.plot_widget.showGrid(x=False, y=False, alpha=0.3)
-        # Show Y-axis labels to indicate 0-4096 range
-        # self.plot_widget.getAxis('left').setPen(pg.mkPen(color='white', width=0.7))
-        # self.plot_widget.getAxis('bottom').setPen(pg.mkPen(color='white', width=0.7))
-        # self.plot_widget.getAxis('left').setTextPen(pg.mkPen(color='white'))
-        # self.plot_widget.getAxis('bottom').setTextPen(pg.mkPen(color='white'))
-        # self.plot_widget.showAxis('left', True)
-        # self.plot_widget.showAxis('bottom', True)
         self.plot_widget.hideAxis('left')
         self.plot_widget.hideAxis('bottom')
         
@@ -389,8 +384,8 @@ class HRVTestWindow(QWidget):
             f"Capture {m} {mw} of {current_lead} data for HRV analysis. "
             f"The capture will stop automatically after {m} {mw}."
         )
-        self.info_label.setFont(QFont("Arial", 10))
-        self.info_label.setStyleSheet("color: #666; padding: 10px;")
+        self.info_label.setFont(QFont("Segoe UI", 10))
+        self.info_label.setStyleSheet("color: #667085; padding: 10px; background: transparent;")
         self.info_label.setWordWrap(True)
         layout.addWidget(self.info_label)
 
@@ -599,7 +594,7 @@ class HRVTestWindow(QWidget):
             # Lock display interaction during capture
             self.plot_widget.setMouseEnabled(x=False, y=False)
 
-            self.status_label.setText("Status: Capturing...")
+            self.status_label.setText("Status: Capturing from RhythmUltra Device...")
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
             self._silent_data_warned = False
             
@@ -1135,14 +1130,14 @@ class HRVTestWindow(QWidget):
                 dlg.setWindowTitle("Report Generated")
                 dlg.setMinimumWidth(480)
                 dlg.setStyleSheet("""
-                    QDialog { background: #1e2a38; }
-                    QLabel  { color: #e0e0e0; font-size: 13px; }
-                    QLabel#title { color: #4CAF50; font-size: 15px; font-weight: bold; }
-                    QPushButton { background: #2a3f5f; color: #e0e0e0; border: 1px solid #3a5f8f;
-                                  border-radius: 5px; padding: 6px 18px; font-size: 12px; }
-                    QPushButton:hover { background: #3a5f8f; }
-                    QPushButton#open_btn { background: #1565C0; color: white; border: none; font-weight: bold; }
-                    QPushButton#open_btn:hover { background: #1976D2; }
+                    QDialog { background: #ffffff; }
+                    QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
+                    QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
+                    QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
+                                  border-radius: 8px; padding: 8px 20px; font-size: 12px; font-weight: bold; font-family: 'Segoe UI', Arial; }
+                    QPushButton:hover { background: #f9fafb; }
+                    QPushButton#open_btn { background: #007bff; color: white; border: none; }
+                    QPushButton#open_btn:hover { background: #0056b3; }
                 """)
                 vbox = QVBoxLayout(dlg)
                 vbox.setSpacing(12)
