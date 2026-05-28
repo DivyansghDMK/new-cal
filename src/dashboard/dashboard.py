@@ -653,12 +653,7 @@ class Dashboard(QWidget):
         self.analysis_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.analysis_btn)
 
-        # --- Add Comprehensive ECG Analysis Button ---
-        self.holter_btn = QPushButton("Comprehensive ECG analysis")
-        self.holter_btn.setStyleSheet("background: #ff7a26; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
-        self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
-        self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        greet_row.addWidget(self.holter_btn)
+
 
         dashboard_layout.addLayout(greet_row)
 
@@ -6091,6 +6086,9 @@ class Dashboard(QWidget):
                         msg.setIcon(QMessageBox.Information)
                 except Exception:
                     msg.setIcon(QMessageBox.Information)
+                # Auto-close after 2 seconds — no need for user to press OK
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(2000, msg.accept)
                 msg.exec_()
 
             # Update hardware version if it's different from current

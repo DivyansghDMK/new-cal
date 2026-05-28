@@ -71,7 +71,7 @@ SOFTWARE_VERSION: str = "2.0.0"
 PRODUCT_CODE: str = "CARDIOX"
 
 # Offline grace window (days) — app runs without internet for this many days.
-OFFLINE_GRACE_DAYS: int = 7
+OFFLINE_GRACE_DAYS: int = 1
 # How many seconds between mandatory server heartbeats.
 HEARTBEAT_INTERVAL_SECONDS: int = OFFLINE_GRACE_DAYS * 86400
 
@@ -97,6 +97,9 @@ RHYTHMULTA_PID = RHYTHMULTRA_PID
 _APPDATA = Path(os.getenv("APPDATA", Path.home()))
 _TOKEN_DIR: Path = _APPDATA / "Deckmount"
 _TOKEN_FILE: Path = _TOKEN_DIR / "cardiox.lic"
+# Sidecar: mutable metadata (last_server_check, fingerprint) stored separately
+# so the server-issued JWT in cardiox.lic is NEVER overwritten by the client.
+_META_FILE: Path = _TOKEN_DIR / "cardiox_meta.json"
 
 # Legacy cache dir (kept for backward compat — old key file)
 _LEGACY_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
@@ -520,18 +523,30 @@ def load_token_file() -> Optional[Dict]:
                 sig_b64 += "=" * ((4 - len(sig_b64) % 4) % 4)
                 sig_bytes = base64.urlsafe_b64decode(sig_b64)
                 expected = hmac.new(_HMAC_SECRET, msg, hashlib.sha256).digest()
+                signature_invalid = False
                 if not hmac.compare_digest(expected, sig_bytes):
-                    print("[License] JWT signature mismatch offline.")
-                    return None
+                    print("[License] JWT signature mismatch offline. Flagging for online verification.")
+                    signature_invalid = True
                     
                 # Map JWT claims to client expected keys
                 mapped = dict(payload)
+                if signature_invalid:
+                    mapped["signature_invalid"] = True
                 if "hardware_fingerprint" in payload:
                     mapped["fingerprint"] = payload["hardware_fingerprint"]
                 if "issued_at" in payload:
                     mapped["last_server_check"] = payload["issued_at"]
                 if "exp" in payload:
                     mapped["expires"] = payload["exp"]
+                # Merge sidecar metadata — overrides stale JWT claims with
+                # up-to-date last_server_check and fingerprint from successful heartbeats.
+                meta = _load_license_meta()
+                if "last_server_check" in meta:
+                    mapped["last_server_check"] = meta["last_server_check"]
+                if "fingerprint" in meta:
+                    mapped["fingerprint"] = meta["fingerprint"]
+                if "seat_number" in meta:
+                    mapped["seat_number"] = meta["seat_number"]
                 return mapped
             except Exception as jwt_err:
                 print(f"[License] Failed to parse raw token as JWT: {jwt_err}")
@@ -544,9 +559,15 @@ def load_token_file() -> Optional[Dict]:
             if payload and sig:
                 payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
                 expected = _token_hmac(payload_bytes)
-                if hmac.compare_digest(expected, sig):
-                    return payload
-                print("[License] Token HMAC mismatch — file tampered or secret changed.")
+                signature_invalid = False
+                if not hmac.compare_digest(expected, sig):
+                    print("[License] Token HMAC mismatch. Flagging for online verification.")
+                    signature_invalid = True
+                
+                mapped = dict(payload)
+                if signature_invalid:
+                    mapped["signature_invalid"] = True
+                return mapped
         except Exception as json_err:
             print(f"[License] Failed to parse as JSON envelope: {json_err}")
             
@@ -556,13 +577,52 @@ def load_token_file() -> Optional[Dict]:
         return None
 
 
+# ── Sidecar metadata helpers ──────────────────────────────────────────────────
+
+def _save_license_meta(meta: dict) -> None:
+    """
+    Save mutable license metadata (last_server_check, fingerprint, seat_number)
+    to a sidecar JSON file WITHOUT touching the server-issued JWT in cardiox.lic.
+
+    This prevents the client from re-signing the server's JWT with the client
+    HMAC secret, which previously caused subsequent server heartbeats to fail
+    (server couldn't verify a token it did not sign).
+    """
+    try:
+        _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        try:
+            if _META_FILE.exists():
+                existing = json.loads(_META_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        existing.update(meta)
+        _META_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[License] Could not save metadata sidecar: {e}")
+
+
+def _load_license_meta() -> dict:
+    """Load mutable license metadata from the sidecar JSON file."""
+    try:
+        if _META_FILE.exists():
+            return json.loads(_META_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
 def delete_token_file() -> None:
-    """Remove the token file (e.g. after deactivation or factory reset)."""
+    """Remove the token file and sidecar metadata (e.g. after deactivation or factory reset)."""
     try:
         if _TOKEN_FILE.exists():
             _TOKEN_FILE.unlink()
     except Exception as e:
         print(f"[License] Could not delete token file: {e}")
+    try:
+        _META_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def token_file_exists() -> bool:
@@ -842,19 +902,21 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 return res
 
             if hb_result.get("valid", False) or hb_result.get("authorized", False):
-                token["fingerprint"] = current_fp
+                # Save metadata to sidecar — do NOT overwrite the server JWT.
+                meta = {"fingerprint": current_fp, "last_server_check": int(hb_result.get("last_server_check", now))}
                 if "seat_number" in hb_result:
+                    meta["seat_number"] = hb_result["seat_number"]
                     token["seat_number"] = hb_result["seat_number"]
-                token["last_server_check"] = int(hb_result.get("last_server_check", now))
-                save_token_file(token)
+                _save_license_meta(meta)
+                token["fingerprint"] = current_fp
+                token["last_server_check"] = meta["last_server_check"]
                 res.token = token
             elif present_fields <= 2:
                 # If Windows is no longer exposing the WMI identifiers we
                 # originally used, treat this as a degraded local identity
                 # signal instead of a hard machine change.
+                _save_license_meta({"fingerprint": current_fp})
                 token["fingerprint"] = current_fp
-                token["last_server_check"] = token.get("last_server_check", now)
-                save_token_file(token)
                 print(
                     "[License] Hardware fingerprint source degraded; "
                     "accepting local machine identity fallback."
@@ -868,9 +930,8 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 return res
         except Exception:
             if present_fields <= 2:
+                _save_license_meta({"fingerprint": current_fp})
                 token["fingerprint"] = current_fp
-                token["last_server_check"] = token.get("last_server_check", now)
-                save_token_file(token)
                 print(
                     "[License] Hardware fingerprint source degraded; "
                     "accepting local machine identity fallback."
@@ -903,14 +964,23 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         )
         return res
 
-    # ── Check 5: Server heartbeat (7-day interval) ────────────────────────────
-    last_check = token.get("last_server_check", 0)
-    needs_heartbeat = force_heartbeat or (now - last_check) >= HEARTBEAT_INTERVAL_SECONDS
+    # ── Check 5: Server heartbeat (Dynamic Check) ─────────────────────────────
+    # Always attempt online server validation if connected, falling back to 1-day offline grace cache if unreachable
+    needs_heartbeat = True
 
     if needs_heartbeat:
         hb_result = heartbeat(token)
         if hb_result.get("offline"):
             # Server unreachable — apply offline grace
+            if token.get("signature_invalid"):
+                res.step_failed = 2
+                res.reason = (
+                    "License token is invalid or has been tampered with.\n"
+                    "An internet connection is required to verify your license."
+                )
+                return res
+
+            last_check = int(token.get("last_server_check", 0))
             elapsed = now - last_check
             grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
             if grace_remaining <= 0:
@@ -932,12 +1002,18 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             )
             return res
         else:
-            # Successful heartbeat — update timestamp in token
+            # Successful heartbeat — update sidecar metadata ONLY.
+            # CRITICAL: Do NOT call save_token_file(token) here — that would
+            # overwrite the server-issued JWT with a client-signed version,
+            # causing the next server heartbeat to fail with an invalid token error.
+            meta = {"fingerprint": current_fp, "last_server_check": now}
+            if "seat_number" in hb_result:
+                meta["seat_number"] = hb_result["seat_number"]
+                token["seat_number"] = hb_result["seat_number"]
+            _save_license_meta(meta)
             token["fingerprint"] = current_fp
             token["last_server_check"] = now
-            if "seat_number" in hb_result:
-                token["seat_number"] = hb_result["seat_number"]
-            save_token_file(token)
+            print(f"[License] Heartbeat OK — metadata updated (JWT preserved).")
 
     # ── All checks passed ─────────────────────────────────────────────────────
     res.ok = True
@@ -1078,9 +1154,13 @@ def clear_stored_key() -> None:
 
 
 def clear_license_cache() -> None:
-    """Remove legacy cache + new token file."""
+    """Remove legacy cache + new token file + sidecar metadata."""
     try:
         _LEGACY_CACHE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        _META_FILE.unlink(missing_ok=True)
     except Exception:
         pass
     delete_token_file()

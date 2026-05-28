@@ -965,8 +965,76 @@ class HRVTestWindow(QWidget):
         finally:
             self._plot_update_in_progress = False
     
+    def _show_loader(self):
+        """Show an animated loading dialog. Returns the dialog — caller must close it."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QApplication
+        from PyQt5.QtCore import QTimer, Qt
+        from PyQt5.QtGui import QFont
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Generating Report")
+        dlg.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        dlg.setFixedSize(340, 160)
+        dlg.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                border-radius: 16px;
+            }
+            QLabel#spinner {
+                font-size: 36px;
+            }
+            QLabel#msg {
+                color: #344054;
+                font-size: 14px;
+                font-family: 'Segoe UI', Arial;
+                font-weight: bold;
+            }
+            QLabel#sub {
+                color: #667085;
+                font-size: 11px;
+                font-family: 'Segoe UI', Arial;
+            }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(6)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setAlignment(Qt.AlignCenter)
+
+        spinner_lbl = QLabel("⌛")
+        spinner_lbl.setObjectName("spinner")
+        spinner_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(spinner_lbl)
+
+        msg_lbl = QLabel("Generating HRV Report…")
+        msg_lbl.setObjectName("msg")
+        msg_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(msg_lbl)
+
+        sub_lbl = QLabel("Please wait, this may take a few seconds.")
+        sub_lbl.setObjectName("sub")
+        sub_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(sub_lbl)
+
+        # Animate spinner frames
+        _frames = ["⌛", "⏳"]
+        _idx = [0]
+        _anim_timer = QTimer(dlg)
+
+        def _tick():
+            _idx[0] = (_idx[0] + 1) % len(_frames)
+            spinner_lbl.setText(_frames[_idx[0]])
+
+        _anim_timer.timeout.connect(_tick)
+        _anim_timer.start(500)
+        dlg._anim_timer = _anim_timer   # keep alive
+
+        dlg.show()
+        QApplication.processEvents()    # paint immediately
+        return dlg
+
     def generate_report(self):
-        """Generate HRV report without blocking capture or UI updates."""
+        """Generate HRV report without blocking the UI."""
         if len(self.captured_data) == 0:
             QMessageBox.warning(self, "No Data", "No data available to generate report.")
             return
@@ -976,11 +1044,13 @@ class HRVTestWindow(QWidget):
             QMessageBox.information(self, "Please wait", "HRV report is already being generated.")
             return
 
-        current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
-        reports_dir = os.path.join(project_root, 'reports')
-        os.makedirs(reports_dir, exist_ok=True)
-        filepath = os.path.join(reports_dir, f"HRV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+        # Disable button immediately so user cannot double-click
+        if hasattr(self, 'report_btn'):
+            self.report_btn.setEnabled(False)
+            self.report_btn.setText("Generating…")
+
+        # Show loader instantly
+        self._loader_dlg = self._show_loader()
 
         try:
             patient = resolve_patient_profile(
@@ -1000,223 +1070,287 @@ class HRVTestWindow(QWidget):
             patient.setdefault("Org. Address", "")
             patient.setdefault("doctor_mobile", "")
             patient.setdefault("doctor", "")
-            if "doctor_mobile" not in patient:
-                patient["doctor_mobile"] = ""
+        except Exception:
+            patient = {}
 
-            hr_value = 0
-            pr_value = 0
-            qrs_value = 0
-            st_value = 0
-            qt_value = 0
-            qtc_value = 0
-            hr_max = 0
-            hr_min = 0
-            hr_avg = 0
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
+        reports_dir = os.path.join(project_root, 'reports')
+        os.makedirs(reports_dir, exist_ok=True)
+        filepath = os.path.join(reports_dir, f"HRV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
-            if self.ecg_calculator and len(self.captured_data) >= 200:
+        # Snapshots — safe to pass to a worker thread
+        _patient_snap = patient.copy()
+        _captured_snap = list(self.captured_data)
+        _lead_snap = self.selected_lead
+        _sr_snap = self.sampling_rate
+        _last_hr = getattr(self, 'last_heart_rate', 0)
+        _ecg_calc = self.ecg_calculator
+        _settings = self.settings_manager
+
+        from PyQt5.QtCore import QThread, pyqtSignal as _Signal
+
+        class _PrepWorker(QThread):
+            done = _Signal(dict, str, dict)
+            failed = _Signal(str)
+
+            def __init__(self, captured_data, ecg_calculator, lead, sampling_rate,
+                         last_hr, filepath, patient, settings_manager):
+                super().__init__()
+                self._captured = captured_data
+                self._calc = ecg_calculator
+                self._lead = lead
+                self._sr = sampling_rate
+                self._last_hr = last_hr
+                self._filepath = filepath
+                self._patient = patient
+                self._sm = settings_manager
+
+            def run(self):
                 try:
-                    lead_indices = {
-                        "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
-                        "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11
+                    hr_value = 0
+                    pr_value = 0
+                    qrs_value = 0
+                    st_value = 0
+                    qt_value = 0
+                    qtc_value = 0
+                    hr_max = 0
+                    hr_min = 0
+                    hr_avg = 0
+
+                    if self._calc and len(self._captured) >= 200:
+                        try:
+                            lead_indices = {
+                                "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
+                                "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11
+                            }
+                            lead_idx = lead_indices.get(self._lead, 1)
+                            num_samples = min(2000, len(self._captured))
+                            recent_data = [d['value'] for d in self._captured[-num_samples:]]
+                            signal = np.array(recent_data, dtype=np.float32)
+
+                            buffer_size = max(len(signal), 1000)
+                            if len(self._calc.data[lead_idx]) < buffer_size:
+                                self._calc.data[lead_idx] = np.zeros(buffer_size, dtype=np.float32)
+
+                            if len(signal) <= len(self._calc.data[lead_idx]):
+                                self._calc.data[lead_idx][-len(signal):] = signal
+                            else:
+                                self._calc.data[lead_idx] = signal[-len(self._calc.data[lead_idx]):]
+
+                            if hasattr(self._calc, 'sampler') and self._calc.sampler:
+                                self._calc.sampler.sampling_rate = self._sr
+
+                            hr_value = self._calc.calculate_heart_rate(self._calc.data[lead_idx])
+                            pr_value = self._calc.calculate_pr_interval(self._calc.data[lead_idx])
+                            qrs_value = self._calc.calculate_qrs_duration(self._calc.data[lead_idx])
+                            st_value = self._calc.calculate_st_interval(self._calc.data[lead_idx])
+                            qt_value = self._calc.calculate_qt_interval(self._calc.data[lead_idx])
+
+                            if qrs_value <= 0 and hasattr(self._calc, 'last_qrs_duration'):
+                                qrs_value = int(getattr(self._calc, 'last_qrs_duration', 0) or 0)
+                            if qt_value <= 0 and hasattr(self._calc, 'last_qt_interval'):
+                                qt_value = int(getattr(self._calc, 'last_qt_interval', 0) or 0)
+                            if qtc_value <= 0 and hasattr(self._calc, 'last_qtc_interval'):
+                                qtc_value = int(getattr(self._calc, 'last_qtc_interval', 0) or 0)
+                            if pr_value <= 0 and hasattr(self._calc, 'last_pr_interval'):
+                                pr_value = int(getattr(self._calc, 'last_pr_interval', 0) or 0)
+
+                            all_hr_values = []
+                            window_size = 200
+                            for i in range(0, len(self._captured) - window_size, window_size // 2):
+                                window_data = [d['value'] for d in self._captured[i:i + window_size]]
+                                window_signal = np.array(window_data, dtype=np.float32)
+                                if len(self._calc.data[lead_idx]) >= len(window_signal):
+                                    self._calc.data[lead_idx][-len(window_signal):] = window_signal
+                                    hr = self._calc.calculate_heart_rate(self._calc.data[lead_idx])
+                                    if hr > 0:
+                                        all_hr_values.append(hr)
+
+                            if all_hr_values:
+                                hr_max = max(all_hr_values)
+                                hr_min = min(all_hr_values)
+                                hr_avg = int(np.mean(all_hr_values))
+
+                        except Exception as e:
+                            print(f" Error calculating metrics in prep worker: {e}")
+
+                    if self._last_hr > 0:
+                        hr_value = self._last_hr
+                        hr_avg = hr_value
+                        if hr_max < hr_value:
+                            hr_max = hr_value
+                        if hr_min > hr_value or hr_min == 0:
+                            hr_min = hr_value
+
+                    data = {
+                        "HR": hr_value,
+                        "beat": hr_value,
+                        "PR": pr_value,
+                        "QRS": qrs_value,
+                        "QT": qt_value,
+                        "QTc": qtc_value,
+                        "ST": st_value,
+                        "HR_max": hr_max,
+                        "HR_min": hr_min,
+                        "HR_avg": hr_avg,
+                        "Heart_Rate": hr_value,
                     }
-                    lead_idx = lead_indices.get(self.selected_lead, 1)
-                    num_samples = min(2000, len(self.captured_data))
-                    recent_data = [d['value'] for d in self.captured_data[-num_samples:]]
-                    signal = np.array(recent_data, dtype=np.float32)
 
-                    buffer_size = max(len(signal), 1000)
-                    if len(self.ecg_calculator.data[lead_idx]) < buffer_size:
-                        self.ecg_calculator.data[lead_idx] = np.zeros(buffer_size, dtype=np.float32)
+                    try:
+                        rr_interval_s = float(data.get("RR", 0) or 0) / 1000.0
+                        if rr_interval_s <= 0 and hr_value > 0:
+                            rr_interval_s = 60.0 / hr_value
+                        qtc_frid_ms = (qt_value / (np.cbrt(rr_interval_s))) if rr_interval_s > 0 else 0
+                        data["QTc_Fridericia"] = qtc_frid_ms
+                    except Exception:
+                        data["QTc_Fridericia"] = 0
 
-                    if len(signal) <= len(self.ecg_calculator.data[lead_idx]):
-                        self.ecg_calculator.data[lead_idx][-len(signal):] = signal
-                    else:
-                        self.ecg_calculator.data[lead_idx] = signal[-len(self.ecg_calculator.data[lead_idx]):]
+                    self.done.emit(data, self._filepath, self._patient)
 
-                    if hasattr(self.ecg_calculator, 'sampler') and self.ecg_calculator.sampler:
-                        self.ecg_calculator.sampler.sampling_rate = self.sampling_rate
+                except Exception as exc:
+                    self.failed.emit(str(exc))
 
-                    hr_value = self.ecg_calculator.calculate_heart_rate(self.ecg_calculator.data[lead_idx])
-                    pr_value = self.ecg_calculator.calculate_pr_interval(self.ecg_calculator.data[lead_idx])
-                    qrs_value = self.ecg_calculator.calculate_qrs_duration(self.ecg_calculator.data[lead_idx])
-                    st_value = self.ecg_calculator.calculate_st_interval(self.ecg_calculator.data[lead_idx])
-                    qt_value = self.ecg_calculator.calculate_qt_interval(self.ecg_calculator.data[lead_idx])
-                    
-                    # Re-implementing fallback if calculator failed but we have stored metrics
-                    if qrs_value <= 0 and hasattr(self.ecg_calculator, 'last_qrs_duration'):
-                        qrs_value = int(getattr(self.ecg_calculator, 'last_qrs_duration', 0) or 0)
-                    if qt_value <= 0 and hasattr(self.ecg_calculator, 'last_qt_interval'):
-                        qt_value = int(getattr(self.ecg_calculator, 'last_qt_interval', 0) or 0)
-                    if qtc_value <= 0 and hasattr(self.ecg_calculator, 'last_qtc_interval'):
-                        qtc_value = int(getattr(self.ecg_calculator, 'last_qtc_interval', 0) or 0)
-                    if pr_value <= 0 and hasattr(self.ecg_calculator, 'last_pr_interval'):
-                        pr_value = int(getattr(self.ecg_calculator, 'last_pr_interval', 0) or 0)
-
-                    all_hr_values = []
-                    window_size = 200
-                    for i in range(0, len(self.captured_data) - window_size, window_size // 2):
-                        window_data = [d['value'] for d in self.captured_data[i:i + window_size]]
-                        window_signal = np.array(window_data, dtype=np.float32)
-                        if len(self.ecg_calculator.data[lead_idx]) >= len(window_signal):
-                            self.ecg_calculator.data[lead_idx][-len(window_signal):] = window_signal
-                            hr = self.ecg_calculator.calculate_heart_rate(self.ecg_calculator.data[lead_idx])
-                            if hr > 0:
-                                all_hr_values.append(hr)
-
-                    if all_hr_values:
-                        hr_max = max(all_hr_values)
-                        hr_min = min(all_hr_values)
-                        hr_avg = int(np.mean(all_hr_values))
-
-                    print(f" Calculated metrics from HRV data: HR={hr_value}, PR={pr_value}, QRS={qrs_value}")
-                except Exception as e:
-                    print(f" Error calculating metrics: {e}")
-
-            if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
-                hr_value = self.last_heart_rate
-                hr_avg = hr_value
-                if hr_max < hr_value:
-                    hr_max = hr_value
-                if hr_min > hr_value or hr_min == 0:
-                    hr_min = hr_value
-
-            data = {
-                "HR": hr_value,
-                "beat": hr_value,
-                "PR": pr_value,
-                "QRS": qrs_value,
-                "QT": qt_value,
-                "QTc": qtc_value,
-                "ST": st_value,
-                "HR_max": hr_max,
-                "HR_min": hr_min,
-                "HR_avg": hr_avg,
-                "Heart_Rate": hr_value,
-            }
-
+        def _on_success(fname):
+            print(f"✅ HRV ECG report saved successfully: {fname}")
             try:
-                rr_interval_s = float(data.get("RR", 0) or 0) / 1000.0
-                if rr_interval_s <= 0 and hr_value > 0:
-                    rr_interval_s = 60.0 / hr_value
-                qtc_frid_ms = (qt_value / (np.cbrt(rr_interval_s))) if rr_interval_s > 0 else 0
-                data["QTc_Fridericia"] = qtc_frid_ms
-            except Exception:
-                data["QTc_Fridericia"] = 0
-
-            from utils.pdf_process_runner import PDFProcessRunner
-
-            _patient_snap = patient.copy() if patient else {}
-            _filepath_snap = filepath
-
-            def _on_success(fname):
-                print(f"✅ HRV ECG report saved successfully: {fname}")
-                try:
-                    h_pat = _patient_snap.copy()
-                    if 'patient_name' not in h_pat:
-                        h_pat['patient_name'] = f"{h_pat.get('first_name', '')} {h_pat.get('last_name', '')}".strip()
-                    append_history_entry(
-                        h_pat,
-                        fname,
-                        report_type="HRV",
-                        username=self.username,
-                        owner_full_name=(getattr(self.dashboard_instance, "user_details", {}) or {}).get("full_name") or self.username,
-                    )
-                except Exception as hist_err:
-                    print(f" Failed to append HRV history: {hist_err}")
-
-                from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-
-                dlg = QDialog(self)
-                dlg.setWindowTitle("Report Generated")
-                dlg.setMinimumWidth(480)
-                dlg.setStyleSheet("""
-                    QDialog { background: #ffffff; }
-                    QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
-                    QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
-                    QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
-                                  border-radius: 8px; padding: 8px 20px; font-size: 12px; font-weight: bold; font-family: 'Segoe UI', Arial; }
-                    QPushButton:hover { background: #f9fafb; }
-                    QPushButton#open_btn { background: #007bff; color: white; border: none; }
-                    QPushButton#open_btn:hover { background: #0056b3; }
-                """)
-                vbox = QVBoxLayout(dlg)
-                vbox.setSpacing(12)
-                vbox.setContentsMargins(20, 20, 20, 20)
-                title_lbl = QLabel("✅  HRV Report Generated Successfully")
-                title_lbl.setObjectName("title")
-                vbox.addWidget(title_lbl)
-                path_lbl = QLabel(f"<b>Saved at:</b><br>{fname}")
-                path_lbl.setWordWrap(True)
-                vbox.addWidget(path_lbl)
-                hint_lbl = QLabel("You can view this report on the <b>History</b> page.")
-                vbox.addWidget(hint_lbl)
-                btn_row = QHBoxLayout()
-                open_btn = QPushButton("Open PDF")
-                open_btn.setObjectName("open_btn")
-
-                def _open_pdf():
-                    import subprocess
-                    import sys
-
-                    if sys.platform == 'win32':
-                        subprocess.Popen(['start', '', fname], shell=True)
-                    else:
-                        subprocess.Popen(['xdg-open', fname])
-
-                open_btn.clicked.connect(_open_pdf)
-                ok_btn = QPushButton("OK")
-                ok_btn.clicked.connect(dlg.accept)
-                btn_row.addStretch()
-                btn_row.addWidget(open_btn)
-                btn_row.addWidget(ok_btn)
-                vbox.addLayout(btn_row)
-
-                if hasattr(self, 'report_btn'):
-                    self.report_btn.setEnabled(True)
-                    self.report_btn.setText("Generate HRV Report")
-                dlg.exec_()
-
-            def _on_failure(err):
-                print(f"❌ Failed to generate HRV report: {err}")
-                self.crash_logger.log_error(
-                    message=f"HRV report generation error: {err}",
-                    exception=None,
-                    category="HRV_REPORT_ERROR"
+                h_pat = _patient_snap.copy()
+                if 'patient_name' not in h_pat:
+                    h_pat['patient_name'] = f"{h_pat.get('first_name', '')} {h_pat.get('last_name', '')}".strip()
+                append_history_entry(
+                    h_pat,
+                    fname,
+                    report_type="HRV",
+                    username=self.username,
+                    owner_full_name=(getattr(self.dashboard_instance, "user_details", {}) or {}).get("full_name") or self.username,
                 )
-                if hasattr(self, 'report_btn'):
-                    self.report_btn.setEnabled(True)
-                    self.report_btn.setText("Generate HRV Report")
-                QMessageBox.critical(self, "Failed", str(err)[:300])
+            except Exception as hist_err:
+                print(f" Failed to append HRV history: {hist_err}")
+
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Report Generated")
+            dlg.setMinimumWidth(480)
+            dlg.setStyleSheet("""
+                QDialog { background: #ffffff; }
+                QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
+                QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
+                QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
+                              border-radius: 8px; padding: 8px 20px; font-size: 12px;
+                              font-weight: bold; font-family: 'Segoe UI', Arial; }
+                QPushButton:hover { background: #f9fafb; }
+                QPushButton#open_btn { background: #007bff; color: white; border: none; }
+                QPushButton#open_btn:hover { background: #0056b3; }
+            """)
+            vbox = QVBoxLayout(dlg)
+            vbox.setSpacing(12)
+            vbox.setContentsMargins(20, 20, 20, 20)
+            title_lbl = QLabel("✅  HRV Report Generated Successfully")
+            title_lbl.setObjectName("title")
+            vbox.addWidget(title_lbl)
+            path_lbl = QLabel(f"<b>Saved at:</b><br>{fname}")
+            path_lbl.setWordWrap(True)
+            vbox.addWidget(path_lbl)
+            hint_lbl = QLabel("You can view this report on the <b>History</b> page.")
+            vbox.addWidget(hint_lbl)
+            btn_row = QHBoxLayout()
+            open_btn = QPushButton("Open PDF")
+            open_btn.setObjectName("open_btn")
+
+            def _open_pdf():
+                import subprocess, sys
+                if sys.platform == 'win32':
+                    subprocess.Popen(['start', '', fname], shell=True)
+                else:
+                    subprocess.Popen(['xdg-open', fname])
+
+            open_btn.clicked.connect(_open_pdf)
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(dlg.accept)
+            btn_row.addStretch()
+            btn_row.addWidget(open_btn)
+            btn_row.addWidget(ok_btn)
+            vbox.addLayout(btn_row)
 
             if hasattr(self, 'report_btn'):
-                self.report_btn.setEnabled(False)
-                self.report_btn.setText("Generating…")
-
-            self._pdf_runner = PDFProcessRunner(parent_widget=self)
-            started = self._pdf_runner.start_hrv_report(
-                filename=_filepath_snap,
-                captured_data=self.captured_data,
-                data=data,
-                patient=_patient_snap,
-                settings_manager=self.settings_manager,
-                selected_lead=self.selected_lead,
-                on_success=_on_success,
-                on_failure=_on_failure,
-            )
-            if not started and hasattr(self, 'report_btn'):
                 self.report_btn.setEnabled(True)
                 self.report_btn.setText("Generate HRV Report")
+            # Close loader
+            try:
+                if hasattr(self, '_loader_dlg') and self._loader_dlg:
+                    self._loader_dlg.close()
+                    self._loader_dlg = None
+            except Exception:
+                pass
+            dlg.exec_()
 
-        except Exception as e:
-            print(f"❌ Failed to generate HRV report: {str(e)}")
+        def _on_failure(err):
+            print(f"❌ Failed to generate HRV report: {err}")
             self.crash_logger.log_error(
-                message=f"HRV report generation error: {e}",
-                exception=e,
+                message=f"HRV report generation error: {err}",
+                exception=None,
                 category="HRV_REPORT_ERROR"
             )
             if hasattr(self, 'report_btn'):
                 self.report_btn.setEnabled(True)
                 self.report_btn.setText("Generate HRV Report")
+            # Close loader
+            try:
+                if hasattr(self, '_loader_dlg') and self._loader_dlg:
+                    self._loader_dlg.close()
+                    self._loader_dlg = None
+            except Exception:
+                pass
+            QMessageBox.critical(self, "Failed", str(err)[:300])
+
+        def _on_prep_done(data, fp, pat):
+            # Called on main thread via Qt queued signal — safe to touch UI
+            from utils.pdf_process_runner import PDFProcessRunner
+            self._pdf_runner = PDFProcessRunner(parent_widget=self)
+            started = self._pdf_runner.start_hrv_report(
+                filename=fp,
+                captured_data=_captured_snap,
+                data=data,
+                patient=pat,
+                settings_manager=_settings,
+                selected_lead=_lead_snap,
+                on_success=_on_success,
+                on_failure=_on_failure,
+            )
+            if not started:
+                if hasattr(self, 'report_btn'):
+                    self.report_btn.setEnabled(True)
+                    self.report_btn.setText("Generate HRV Report")
+
+        def _on_prep_failed(err):
+            print(f"❌ Prep worker failed: {err}")
+            if hasattr(self, 'report_btn'):
+                self.report_btn.setEnabled(True)
+                self.report_btn.setText("Generate HRV Report")
+            # Close loader
+            try:
+                if hasattr(self, '_loader_dlg') and self._loader_dlg:
+                    self._loader_dlg.close()
+                    self._loader_dlg = None
+            except Exception:
+                pass
+            QMessageBox.critical(self, "Failed", f"Could not prepare report data:\n{err[:300]}")
+
+        # Kick off background prep — main thread stays responsive
+        self._prep_worker = _PrepWorker(
+            captured_data=_captured_snap,
+            ecg_calculator=_ecg_calc,
+            lead=_lead_snap,
+            sampling_rate=_sr_snap,
+            last_hr=_last_hr,
+            filepath=filepath,
+            patient=_patient_snap,
+            settings_manager=_settings,
+        )
+        self._prep_worker.done.connect(_on_prep_done)
+        self._prep_worker.failed.connect(_on_prep_failed)
+        self._prep_worker.start()
 
     def calculate_time_domain_hrv_metrics(self):
         """

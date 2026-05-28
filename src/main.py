@@ -450,8 +450,8 @@ def get_dashboard_module():
 
 def _recover_license_in_place(app, window=None, reason: str = "", title: str = "License Invalid") -> bool:
     """
-    Disable current features, reopen the license dialog, and keep the app alive
-    if reactivation succeeds.
+    Disable current features, clear license details, close the dashboard,
+    and return the user to the login/signup page.
     """
     message = reason or "License key is revoked. Contact support."
     try:
@@ -461,42 +461,31 @@ def _recover_license_in_place(app, window=None, reason: str = "", title: str = "
         pass
 
     try:
-        QMessageBox.critical(
+        QMessageBox.warning(
             window,
             title,
-            f"{message}\n\nYou will be returned to the license activation page.",
+            f"{message}\n\nYou will be redirected to the signup page to register again.",
         )
     except Exception:
         pass
 
     try:
         from utils.license_manager import clear_license_cache, clear_stored_key
-        from utils.license_dialog import LicenseDialog
-
         clear_stored_key()
         clear_license_cache()
-
-        dlg = LicenseDialog(parent=window)
-        accepted = dlg.exec_() == QDialog.Accepted
-        if accepted:
-            try:
-                if window is not None:
-                    window.setEnabled(True)
-            except Exception:
-                pass
-            return True
     except Exception as e:
-        logger.warning(f"Could not reopen license dialog after revocation: {e}")
+        logger.warning(f"Error clearing license details: {e}")
 
     try:
         if window is not None:
+            try:
+                window.closed_by_sign_out = True
+            except Exception:
+                pass
             window.close()
     except Exception:
         pass
-    try:
-        app.quit()
-    except Exception:
-        pass
+
     return False
 
 # Import ECG modules with fallback
@@ -1566,6 +1555,55 @@ class LoginRegisterDialog(QDialog):
                 "Please enter your full name or phone number, and the password you used at signup.",
             )
             return
+
+        # Enforce license key check at login step
+        try:
+            from utils.license_manager import load_stored_key, run_startup_checks, clear_stored_key, clear_license_cache
+            stored_key = load_stored_key()
+            if not stored_key:
+                QMessageBox.warning(
+                    self,
+                    "License Required",
+                    "No valid license key found on this system.\n\nPlease register or activate a license in the Sign Up tab first.",
+                )
+                return
+
+            result = run_startup_checks(force_heartbeat=False)
+            if not result.ok:
+                logger.warning(f"Login blocked due to license failure: {result.reason}")
+                is_explicit_revocation = (
+                    result.step_failed == 5
+                    and "revoked" in result.reason.lower()
+                )
+                if is_explicit_revocation:
+                    QMessageBox.warning(
+                        self,
+                        "License Revoked",
+                        f"License has been revoked: {result.reason}\n\nPlease sign up again in the Sign Up tab.",
+                    )
+                    clear_stored_key()
+                    clear_license_cache()
+                    return
+                elif result.step_failed == 4:
+                    # Device temporarily disconnected — warn but still allow login
+                    reply = QMessageBox.question(
+                        self,
+                        "Device Not Connected",
+                        f"{result.reason}\n\nDo you want to continue without device verification? (Not recommended)",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply != QMessageBox.Yes:
+                        return
+                else:
+                    # Offline or other non-revocation failure — warn but allow
+                    QMessageBox.warning(
+                        self,
+                        "License Check Warning",
+                        f"{result.reason}\n\nIf this persists, please contact Deckmount support.",
+                    )
+        except Exception as le:
+            logger.warning(f"Failed to check license during login: {le}")
         # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
         # Refresh from disk before validating so new accounts can log in immediately.
         try:
@@ -2035,10 +2073,12 @@ class LoginRegisterDialog(QDialog):
                 try:
                     import json as _json
                     if isinstance(token_str, dict):
-                        token_envelope = token_str
+                        save_token_file(token_str.get("payload", token_str))
+                    elif isinstance(token_str, str) and token_str.count(".") == 2:
+                        save_token_file(token_str)
                     else:
                         token_envelope = _json.loads(token_str)
-                    save_token_file(token_envelope["payload"])
+                        save_token_file(token_envelope.get("payload", token_envelope))
                 except Exception as te:
                     print(f"Could not parse token: {te}")
                     remember_valid_license(assigned_key, get_hardware_fingerprint(), res)
@@ -2119,7 +2159,8 @@ class LoginRegisterDialog(QDialog):
             "with the same password shown above."
         )
 
-        self.login_email.setText(name)
+        self.login_email.setText(phone)
+        self.login_password.setText(password)
         self.login_password.setFocus()
         
         # Clear register form inputs
@@ -2238,10 +2279,61 @@ def main():
         threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
         # ──────────────────────────────────────────────────────────────
 
-        # License gate removed — go straight to login
+        # ── Startup License Verification Enforcer ──
+        try:
+            from utils.license_manager import run_startup_checks, load_stored_key, clear_stored_key, clear_license_cache
+
+            stored_key = load_stored_key()
+            if stored_key:
+                result = run_startup_checks(force_heartbeat=False)
+                if not result.ok:
+                    logger.warning(f"Startup license checks failed: {result.reason}")
+                    # Only clear license and redirect to signup on EXPLICIT server revocation.
+                    # For device-not-connected (step 4) or offline/expired-grace (step 5 non-revoked),
+                    # show a warning but keep the license so the user can retry.
+                    is_explicit_revocation = (
+                        result.step_failed == 5
+                        and "revoked" in result.reason.lower()
+                    )
+                    is_no_token = result.step_failed == 1
+                    if is_explicit_revocation or is_no_token:
+                        title = "License Revoked" if is_explicit_revocation else "License Not Found"
+                        QMessageBox.warning(
+                            None,
+                            title,
+                            f"{result.reason}\n\nYou will be redirected to the signup page to register again.",
+                        )
+                        clear_stored_key()
+                        clear_license_cache()
+                    elif result.step_failed == 4:
+                        QMessageBox.warning(
+                            None,
+                            "Device Not Connected",
+                            f"{result.reason}\n\nPlease connect your RhythmUltra device and restart the application.",
+                        )
+                    else:
+                        # Offline / grace expired / other — warn but keep license
+                        QMessageBox.warning(
+                            None,
+                            "License Check Warning",
+                            f"{result.reason}\n\nIf this persists, please contact Deckmount support.",
+                        )
+            else:
+                logger.info("No license key found. Redirecting directly to signup page.")
+        except Exception as e:
+            logger.error(f"Error during startup license check: {e}")
+        # ─────────────────────────────────────────────
 
         # Initialize login dialog
         login = LoginRegisterDialog()
+
+        # If there is no license key, show the Sign Up tab first to guide them to register
+        try:
+            from utils.license_manager import load_stored_key
+            if not load_stored_key():
+                login.stacked.setCurrentIndex(1)  # 1 is the register/SignUp widget!
+        except Exception as e:
+            logger.error(f"Failed to set default tab: {e}")
 
         # Main application loop
         while True:
@@ -2353,6 +2445,14 @@ def main():
                             try:
                                 stored_key = load_stored_key()
                                 if not stored_key:
+                                    logger.warning("Watchdog: Stored license key is missing! Blocking access.")
+                                    _license_timer.stop()
+                                    _recover_license_in_place(
+                                        app,
+                                        dashboard,
+                                        "No valid license key found on this system.",
+                                        "License Missing"
+                                    )
                                     return
                                 res = check_license(stored_key, force_server=False)
                                 if res.get("revoked"):

@@ -267,7 +267,7 @@ class _ValidateWorker(QThread):
             res = activate_with_server(self._key, fingerprint)
             if res.get("valid"):
                 res.setdefault("source", "server")
-            else:
+            elif res.get("offline"):
                 res = check_license(self._key)
         except Exception as e:
             res = {"valid": False, "message": str(e)}
@@ -847,6 +847,17 @@ class RegistrationDialog(QDialog):
 
     def get_assigned_key(self) -> str:
         return self._assigned_key
+
+    def get_registration_details(self) -> dict:
+        return {
+            "full_name": self._full_name.text().strip(),
+            "doctor": self._doctor.text().strip(),
+            "org_name": self._org_name.text().strip(),
+            "org_address": self._org_address.text().strip(),
+            "phone": self._phone.text().strip(),
+            "password": self._password.text(),
+            "serial_id": self._machine_serial_field.text().strip(),
+        }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
