@@ -1288,6 +1288,41 @@ class CloudUploader:
                         if filename:
                             uploaded_files.append(filename)
                 
+        except Exception as e:
+            print(f"Warning: Could not log upload: {e}")
+    
+    def get_upload_history(self, limit=50):
+        """Get recent upload history"""
+        try:
+            if os.path.exists(self.upload_log_path):
+                with open(self.upload_log_path, 'r') as f:
+                    log_data = json.load(f)
+                return log_data[-limit:]
+            return []
+        except Exception:
+            return []
+    
+    def get_uploaded_files_list(self):
+        """
+        Get a list of all uploaded filenames for easy checking
+        
+        Returns:
+            list: List of successfully uploaded filenames
+        """
+        try:
+            if os.path.exists(self.upload_log_path):
+                with open(self.upload_log_path, 'r') as f:
+                    log_data = json.load(f)
+                
+                uploaded_files = []
+                for entry in log_data:
+                    if entry.get('result', {}).get('status') == 'success':
+                        filename = entry.get('metadata', {}).get('filename', '')
+                        if not filename:
+                            filename = os.path.basename(entry.get('local_path', ''))
+                        if filename:
+                            uploaded_files.append(filename)
+                
                 return uploaded_files
             return []
         except Exception as e:
@@ -1379,6 +1414,19 @@ class CloudUploader:
             if self.doctor_review_api_key:
                 headers['x-api-key'] = self.doctor_review_api_key
 
+            # Load dynamic rhythmulta_serial from local license token or USB probe
+            try:
+                from utils.license_manager import load_token_file, get_rhythmulta_serial
+                token = load_token_file()
+                rhythmulta_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", ""))
+                if not rhythmulta_serial:
+                    rhythmulta_serial = get_rhythmulta_serial() or ""
+            except Exception:
+                rhythmulta_serial = ""
+
+            if not rhythmulta_serial:
+                rhythmulta_serial = "DM ECG V1.0 A010"
+
             with open(file_path, 'rb') as f:
                 files = {
                     "pdfFile": (os.path.basename(file_path), f, "application/pdf")
@@ -1387,6 +1435,7 @@ class CloudUploader:
                     "doctorName": doctor_name,
                     "patientName": patient_name,
                     "reportType": report_type,
+                    "rhythmulta_serial": rhythmulta_serial,
                 }
                 response = requests.post(
                     upload_url_endpoint,
@@ -1398,10 +1447,7 @@ class CloudUploader:
 
             if response.status_code in [200, 201]:
                 print(f"[OK] Report uploaded successfully for review!")
-                
-                # Log success
                 self._log_upload(file_path, {"status": "success"}, {"type": "doctor_review", "doctor": doctor_name})
-                
                 return {"status": "success", "message": "Report sent for review successfully"}
             else:
                 print(f"[ERR] Upload failed: {response.status_code} - {response.text}")
@@ -1410,7 +1456,6 @@ class CloudUploader:
         except Exception as e:
             print(f"[ERR] Error sending for review: {e}")
             return {"status": "error", "message": str(e)}
-
 
 # Global instance
 _cloud_uploader = None
@@ -1421,4 +1466,3 @@ def get_cloud_uploader():
     if _cloud_uploader is None:
         _cloud_uploader = CloudUploader()
     return _cloud_uploader
-

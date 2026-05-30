@@ -99,8 +99,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         return None
     
     # Create output directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    ecg_data_dir = os.path.join(base_dir, 'reports', 'ecg_data')
+    ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
     os.makedirs(ecg_data_dir, exist_ok=True)
     
     # Generate filename with timestamp
@@ -923,8 +922,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         }
 
     # Define base_dir and reports_dir for file operations
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    reports_dir = os.path.join(base_dir, 'reports')
+    reports_dir = str(data_file("reports"))
     os.makedirs(reports_dir, exist_ok=True)
 
     from utils.settings_manager import SettingsManager
@@ -2764,8 +2762,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Save parameters to a JSON index for later reuse
     try:
         from datetime import datetime
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        reports_dir = os.path.join(base_dir, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         index_path = os.path.join(reports_dir, 'index.json')
         metrics_path = os.path.join(reports_dir, 'hyper_metric.json')
@@ -3037,14 +3034,15 @@ def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampl
         data=data,
         patient=patient,
         settings_manager=settings_manager,
-        ecg_data_file=ecg_data_file
+        ecg_data_file=ecg_data_file,
+        ecg_test_page=ecg_page
     )
 
 
 # ==================== Hyperkalemia ECG REPORT GENERATION ====================
 # COMPLETE ECG REPORT FORMAT - Same as generate_ecg_report() but with 5 one-minute Lead II graphs
 
-def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lead_ii_data=None, data=None, patient=None, settings_manager=None, ecg_data_file=None):
+def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lead_ii_data=None, data=None, patient=None, settings_manager=None, ecg_data_file=None, ecg_test_page=None):
     """
     Generate Hyperkalemia ECG report PDF with EXACT SAME format as main 12-lead ECG report
     Only difference: Page 2 shows 5 one-minute Lead II graphs in LANDSCAPE mode instead of 12 leads
@@ -3065,8 +3063,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     output_dir = os.path.dirname(filename)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    reports_dir = os.path.join(base_dir, 'reports')
+    reports_dir = str(data_file("reports"))
     os.makedirs(reports_dir, exist_ok=True)
     
     if lead_ii_data is None or len(lead_ii_data) == 0:
@@ -3505,7 +3502,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Extract minimal patient info needed for drawing
     def _load_latest_patient_from_file():
         try:
-            patients_file = os.path.abspath(os.path.join(base_dir, "all_patients.json"))
+            patients_file = str(data_file("all_patients.json"))
             if not os.path.exists(patients_file):
                 return {}
             with open(patients_file, "r", encoding="utf-8") as f:

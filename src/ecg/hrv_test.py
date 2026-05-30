@@ -48,6 +48,7 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
+from utils.app_paths import data_file
 from ecg.ecg_filters import (
     apply_ac_filter,
     apply_emg_filter,
@@ -66,6 +67,37 @@ try:
 except ImportError:
     ECG_TEST_AVAILABLE = False
     print(" ECGTestPage not available - using fallback calculations")
+
+
+def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
+    from PyQt5.QtCore import Qt
+    
+    grid_size = 50
+    pixmap = QPixmap(grid_size, grid_size)
+    pixmap.fill(QColor('#FFF2F2'))
+    
+    painter = QPainter(pixmap)
+    try:
+        # Minor lines every 10px
+        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
+        painter.setPen(minor_pen)
+        for i in range(1, 5):
+            x = i * 10
+            painter.drawLine(x, 0, x, grid_size)
+            painter.drawLine(0, x, grid_size, x)
+            
+        # Major lines every 50px
+        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        painter.setPen(major_pen)
+        painter.drawLine(0, 0, grid_size, 0)
+        painter.drawLine(0, 0, 0, grid_size)
+        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
+        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
+    finally:
+        painter.end()
+        
+    return QBrush(pixmap)
 
 
 class HRVTestWindow(QWidget):
@@ -351,13 +383,13 @@ class HRVTestWindow(QWidget):
         
         # Plot area
         plot_frame = QFrame()
-        plot_frame.setStyleSheet("background: #000000; border-radius: 16px; border: none;")
+        plot_frame.setStyleSheet("background: #ffffff; border-radius: 16px; border: 1px solid #e0e5eb;")
         plot_layout = QVBoxLayout(plot_frame)
         plot_layout.setContentsMargins(10, 10, 10, 10)
         
         # PyQtGraph plot
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground('black')
+        self.plot_widget.setBackground(create_pink_grid_brush())
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.setClipToView(True)
         self.plot_widget.setDownsampling(auto=True, mode='peak')
@@ -370,8 +402,8 @@ class HRVTestWindow(QWidget):
         self.plot_widget.hideAxis('left')
         self.plot_widget.hideAxis('bottom')
         
-        # Plot curve
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.7))
+        # Plot curve (black wave on white background)
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#000000', width=1.7))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -1073,9 +1105,7 @@ class HRVTestWindow(QWidget):
         except Exception:
             patient = {}
 
-        current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
-        reports_dir = os.path.join(project_root, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         filepath = os.path.join(reports_dir, f"HRV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
@@ -1408,7 +1438,7 @@ class HRVTestWindow(QWidget):
             # R‑R intervals in milliseconds
             rr_intervals = np.diff(peaks) * (1000.0 / fs)
 
-            rr = rr_intervals[(rr > 300.0) & (rr < 1500.0)]
+            rr = rr_intervals[(rr_intervals > 300.0) & (rr_intervals < 1500.0)]
             print(rr[:50])
             print(np.abs(np.diff(rr))[:50])
             if rr.size < 2:

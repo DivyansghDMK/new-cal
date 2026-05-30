@@ -2,6 +2,14 @@ import sys
 import os
 import shutil
 
+# Ensure stdout/stderr replace unencodable characters instead of crashing
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(errors='replace')
+        except Exception:
+            pass
+
 # ── BUG-05 FIX: Force software OpenGL rendering ──────────────────────────────
 # MUST be set BEFORE any Qt/PyQtGraph import.
 # This fixes blank waves on laptops with Intel HD, AMD integrated, or no GPU.
@@ -2435,53 +2443,84 @@ def main():
                     dashboard.show()
 
                     # Periodic license re-validation so revocations take effect during runtime.
+                    # The check (HTTP heartbeat + WMI fingerprint) runs on a background thread
+                    # so it NEVER blocks the main UI thread.
                     try:
+                        from PyQt5.QtCore import QObject, QThread, pyqtSignal as _pyqtSignal
                         from utils.license_manager import check_license, load_stored_key
+
+                        class _LicenseCheckWorker(QObject):
+                            """Runs blocking license check off the main thread."""
+                            result_ready = _pyqtSignal(dict)   # emits check_license() result
+                            key_missing  = _pyqtSignal()       # emits when stored_key is absent
+
+                            def run(self):
+                                try:
+                                    stored_key = load_stored_key()
+                                    if not stored_key:
+                                        self.key_missing.emit()
+                                        return
+                                    res = check_license(stored_key, force_server=False)
+                                    self.result_ready.emit(res)
+                                except Exception as _e:
+                                    logger.warning(f"Periodic license check failed: {_e}")
+
+                        # Keep strong references so GC doesn't collect mid-run
+                        _lic_threads: list = []
+
+                        def _on_license_result(res):
+                            """Called on main thread after background check completes."""
+                            if res.get("revoked"):
+                                _license_timer.stop()
+                                if _recover_license_in_place(
+                                    app,
+                                    dashboard,
+                                    res.get("message", "License key is revoked. Contact support."),
+                                    "License Revoked",
+                                ):
+                                    try:
+                                        dashboard.closed_by_sign_out = True
+                                    except Exception:
+                                        pass
+                                    app.quit()
+                            elif not res.get("valid"):
+                                logger.warning(
+                                    "License validation returned non-valid but not revoked; "
+                                    "keeping current session active."
+                                )
+
+                        def _on_key_missing():
+                            """Called on main thread when license key file is gone."""
+                            logger.warning("Watchdog: Stored license key is missing! Blocking access.")
+                            _license_timer.stop()
+                            _recover_license_in_place(
+                                app,
+                                dashboard,
+                                "No valid license key found on this system.",
+                                "License Missing",
+                            )
+
+                        def _launch_license_check():
+                            """Timer callback: spawn a new worker thread for this check cycle."""
+                            thread = QThread()
+                            worker = _LicenseCheckWorker()
+                            worker.moveToThread(thread)
+                            worker.result_ready.connect(_on_license_result)
+                            worker.key_missing.connect(_on_key_missing)
+                            # Clean up thread after it finishes
+                            thread.finished.connect(thread.deleteLater)
+                            thread.started.connect(worker.run)
+                            thread.finished.connect(lambda: _lic_threads.remove(thread) if thread in _lic_threads else None)
+                            _lic_threads.append(thread)
+                            thread.start()
 
                         _license_timer = QTimer(dashboard)
                         _license_timer.setInterval(60 * 1000)
-
-                        def _revalidate_license():
-                            try:
-                                stored_key = load_stored_key()
-                                if not stored_key:
-                                    logger.warning("Watchdog: Stored license key is missing! Blocking access.")
-                                    _license_timer.stop()
-                                    _recover_license_in_place(
-                                        app,
-                                        dashboard,
-                                        "No valid license key found on this system.",
-                                        "License Missing"
-                                    )
-                                    return
-                                res = check_license(stored_key, force_server=False)
-                                if res.get("revoked"):
-                                    _license_timer.stop()
-                                    if _recover_license_in_place(
-                                        app,
-                                        dashboard,
-                                        res.get("message", "License key is revoked. Contact support."),
-                                        "License Revoked",
-                                    ):
-                                        try:
-                                            dashboard.closed_by_sign_out = True
-                                        except Exception:
-                                            pass
-                                        app.quit()
-                                    return
-                                if not res.get("valid"):
-                                    logger.warning(
-                                        "License validation returned non-valid but not revoked; "
-                                        "keeping current session active."
-                                    )
-                                    return
-                            except Exception as lic_err:
-                                logger.warning(f"Periodic license check failed: {lic_err}")
-
-                        _license_timer.timeout.connect(_revalidate_license)
+                        _license_timer.timeout.connect(_launch_license_check)
                         _license_timer.start()
                         dashboard._license_timer = _license_timer
-                        QTimer.singleShot(1500, _revalidate_license)
+                        # First check after 5 s (avoids contention right at app launch)
+                        QTimer.singleShot(5000, _launch_license_check)
                     except Exception as e:
                         logger.warning(f"Could not start license watchdog: {e}")
 

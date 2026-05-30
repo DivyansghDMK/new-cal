@@ -515,6 +515,9 @@ class ExpandedLeadView(QDialog):
         # Initialize history slider range after analyzing data
         self.update_history_slider()
         
+        # Force initial plot update once the UI is completely set up
+        self.update_plot()
+        
         # Start live updates if parent is available (hardware data)
         if parent is not None:
             self.start_live_mode()
@@ -1059,124 +1062,20 @@ class ExpandedLeadView(QDialog):
             pass
     
     def setup_ecg_plot(self):
-        """Setup the ECG plot with proper styling"""
+        """Setup the ECG plot with proper styling, but without plotting raw squeezed data"""
         if len(self.ecg_data) == 0:
             self.ax.text(0.5, 0.5, 'No ECG Data Available', 
                         transform=self.ax.transAxes, ha='center', va='center',
                         fontsize=16, color='gray')
             return
         
-        # Calculate time axis based on demo mode or normal mode
-        if self.demo_mode_active and self.demo_manager:
-            # Demo mode: use time window from demo manager
-            try:
-                time_window = self.demo_manager.time_window
-                num_samples = len(self.ecg_data)
-                time = np.linspace(0, time_window, num_samples)
-            except Exception as e:
-                print(f" Error getting demo time window in setup: {e}")
-                time = np.arange(len(self.ecg_data)) / self.sampling_rate
-        else:
-            # Normal mode: calculate time window based on wave speed (same as 12-lead view)
-            try:
-                parent = self.parent()
-                if parent and hasattr(parent, 'settings_manager'):
-                    wave_speed = float(parent.settings_manager.get_wave_speed())
-                    # Calculate time window based on wave speed (same logic as 12-lead view)
-                    baseline_seconds = 10.0
-                    seconds_scale = (25.0 / max(1e-6, wave_speed))
-                    time_window = baseline_seconds * seconds_scale
-                    
-                    # Create time axis that matches the time window
-                    num_samples = len(self.ecg_data)
-                    time = np.linspace(0, time_window, num_samples)
-                else:
-                    # Fallback: use sampling rate if settings not available
-                    time = np.arange(len(self.ecg_data)) / self.sampling_rate
-            except Exception as e:
-                print(f" Error calculating time window in setup: {e}")
-                # Fallback: use sampling rate
-                time = np.arange(len(self.ecg_data)) / self.sampling_rate
-        
-        # 🫀 DISPLAY: Low-frequency baseline anchor (removes respiration from baseline)
-        # Extract very-low-frequency baseline (< 0.3 Hz) to prevent baseline from "breathing"
-        try:
-            # Initialize slow anchor if needed
-            if not hasattr(self, '_baseline_anchor'):
-                self._baseline_anchor = 0.0
-                self._baseline_alpha_slow = 0.0005  # Monitor-grade: ~4 sec time constant at 500 Hz
-            
-            if len(self.ecg_data) > 0:
-                # Extract low-frequency baseline estimate (removes respiration 0.1-0.35 Hz)
-                baseline_estimate = extract_low_frequency_baseline(self.ecg_data, self.sampling_rate)
-                
-                # Update anchor with slow EMA (tracks only very-low-frequency drift)
-                self._baseline_anchor = (1 - self._baseline_alpha_slow) * self._baseline_anchor + self._baseline_alpha_slow * baseline_estimate
-                
-                # Subtract anchor
-                ecg_filtered = self.ecg_data - self._baseline_anchor
-            else:
-                ecg_filtered = self.ecg_data
-        except Exception as filter_error:
-            # Fallback: simple mean if low-frequency extraction fails
-            ecg_filtered = self.ecg_data - np.mean(self.ecg_data) if len(self.ecg_data) > 0 else self.ecg_data
-            print(f" Expanded view init filter error: {filter_error}")
-        
-        # Plot at 1.0x to establish baseline
-        scaled = ecg_filtered * self.display_gain * 1.0  # Use 1.0x for baseline
-        
-        # Calculate and store the baseline (mean) for proper zooming
-        self.signal_baseline = 0.0  # Signal is centered at zero after filtering
-        
-        # Ensure time and scaled arrays match
-        if len(time) != len(scaled):
-            min_len = min(len(time), len(scaled))
-            time = time[:min_len]
-            scaled = scaled[:min_len]
-        
-        if len(scaled) > 0:
-            # Ensure we have valid (non-NaN) data
-            valid_mask = ~np.isnan(scaled)
-            if np.any(valid_mask):
-                if np.all(valid_mask):
-                    # Apply light smoothing for smooth wave appearance
-                    try:
-                        from scipy.ndimage import gaussian_filter1d
-                        if len(scaled) > 3:
-                            scaled = gaussian_filter1d(scaled, sigma=0.5)
-                    except (ImportError, Exception):
-                        if len(scaled) > 3:
-                            kernel_size = 3
-                            kernel = np.ones(kernel_size) / kernel_size
-                            scaled = np.convolve(scaled, kernel, mode='same')
-                    self.ax.plot(time, scaled, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
-                else:
-                    # Plot only valid segments
-                    time_valid = time[valid_mask]
-                    scaled_valid = scaled[valid_mask]
-                    if len(time_valid) > 1:
-                        # Apply smoothing to valid segment
-                        try:
-                            from scipy.ndimage import gaussian_filter1d
-                            if len(scaled_valid) > 3:
-                                scaled_valid = gaussian_filter1d(scaled_valid, sigma=0.5)
-                        except (ImportError, Exception):
-                            if len(scaled_valid) > 3:
-                                kernel_size = 3
-                                kernel = np.ones(kernel_size) / kernel_size
-                                scaled_valid = np.convolve(scaled_valid, kernel, mode='same')
-                        self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
-            else:
-                print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
-        
-        # self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
+        self.ax.clear()
         self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
         
         # Add demo mode or wave speed info to title
         if self.demo_mode_active and self.demo_manager:
             mode_text = f" [{self.demo_manager.current_wave_speed}mm/s]"
         else:
-            # Show wave speed for normal mode too
             try:
                 parent = self.parent()
                 if parent and hasattr(parent, 'settings_manager'):
@@ -1186,23 +1085,23 @@ class ExpandedLeadView(QDialog):
                     mode_text = ""
             except Exception:
                 mode_text = ""
+        
         self.ax.set_title(f'Lead {self.lead_name} - PQRST Analysis{mode_text}', 
                          fontsize=18, fontweight='bold', color='#2c3e50')
         
-        self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
+        self.ax.set_facecolor('#FFF2F2')
+        self.ax.minorticks_on()
+        self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
+        self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')
         self.ax.spines['top'].set_visible(False)
         self.ax.spines['right'].set_visible(False)
         
-        self.ax.set_xlim(0, max(time) if len(time) > 0 else 1)
+        # Set stable default axes limits
+        self.ax.set_xlim(0, self.view_window_duration)
         
-        # Store fixed y-limits based on original data (1.0x amplification)
-        self.display_ylim = None
-        if len(self.ecg_data) > 0:
-            y_margin = (np.max(scaled) - np.min(scaled)) * 0.1
-            y_min = np.min(scaled) - y_margin
-            y_max = np.max(scaled) + y_margin
-            self.display_ylim = (y_min, y_max)
-            self.ax.set_ylim(y_min, y_max)
+        ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
+        self.display_ylim = (ylim_low, ylim_high)
+        self.ax.set_ylim(ylim_low, ylim_high)
 
         if hasattr(self, 'canvas'):
             self.canvas.draw_idle()
@@ -2049,7 +1948,7 @@ class ExpandedLeadView(QDialog):
                     # Plot only valid points
                     if np.all(valid_mask):
                         # All data is valid - plot normally with anti-aliasing
-                        self.ax.plot(time, display_adc, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                        self.ax.plot(time, display_adc, color='#000000', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
                     else:
                         # Some NaN values - plot segments
                         time_valid = time[valid_mask]
@@ -2058,7 +1957,7 @@ class ExpandedLeadView(QDialog):
                             # Apply smoothing to valid segment without edge
                             # artifacts at the segment tail.
                             scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
-                            self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                            self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
                 else:
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
@@ -2105,7 +2004,10 @@ class ExpandedLeadView(QDialog):
             else:
                 self.ax.set_xlim(0, 1)  # Fallback
             
-            self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
+            self.ax.set_facecolor('#FFF2F2')
+            self.ax.minorticks_on()
+            self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
+            self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')
             self.ax.spines['top'].set_visible(False)
             self.ax.spines['right'].set_visible(False)
             

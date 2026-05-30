@@ -60,6 +60,18 @@ PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
     "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports",
 ).strip()
 
+
+def _get_rhythmulta_serial() -> str:
+    try:
+        from utils.license_manager import load_token_file, get_rhythmulta_serial
+        token = load_token_file()
+        serial = (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", ""))
+        if not serial:
+            serial = get_rhythmulta_serial() or ""
+    except Exception:
+        serial = ""
+    return serial or "DM ECG V1.0 A010"
+
 HL7_VERSION = "2.5.1"
 HL7_APP_NAME = "ECGMONITOR"
 HL7_REPORT_DIR = os.path.join(REPORTS_DIR, "hl7")
@@ -1305,7 +1317,11 @@ class HistoryWindow(QDialog):
         try:
             # The backend Lambda expects `doctor`, not `doctorName`.
             # Keep both for compatibility with any older deployments.
-            params = {"doctor": doc_name, "doctorName": doc_name}
+            params = {
+                "doctor": doc_name,
+                "doctorName": doc_name,
+                "rhythmulta_serial": _get_rhythmulta_serial(),
+            }
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
                 params=params,
@@ -2204,8 +2220,10 @@ class HistoryWindow(QDialog):
 
     def refresh_reviewed_reports(self):
         try:
+            params = {"rhythmulta_serial": _get_rhythmulta_serial()}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
+                params=params,
                 headers=_reviewed_reports_headers(),
                 timeout=10,
             )
@@ -2478,7 +2496,11 @@ class ReviewedReportsDialog(QDialog):
         dname = self.doctor_combo.currentText().strip()
         rows = []
         try:
-            params = {"doctor": dname, "doctorName": dname} if dname else {}
+            params = {
+                "doctor": dname,
+                "doctorName": dname,
+                "rhythmulta_serial": _get_rhythmulta_serial(),
+            } if dname else {"rhythmulta_serial": _get_rhythmulta_serial()}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
                 params=params,

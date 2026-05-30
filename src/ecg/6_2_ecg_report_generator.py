@@ -49,7 +49,7 @@ ECG_LARGE_BOX_MM = 210.0 / 40.0  # = 5.25mm
 ECG_SMALL_BOX_MM = ECG_LARGE_BOX_MM / 5.0  # = 1.05mm
 ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM  # = 1.05
 SIX_TWO_SAMPLES_COLUMN = 2500
-SIX_TWO_SAMPLES_EXTRA_II = 5200
+SIX_TWO_SAMPLES_EXTRA_II = 5000  # 5 seconds at 500Hz = 5000 samples for Lead II rhythm strip
 
 # UNIFIED BOX CONFIGURATION
 COLUMN1_BOXES = 26.3
@@ -95,8 +95,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         return None
     
     # Create output directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    ecg_data_dir = os.path.join(base_dir, 'reports', 'ecg_data')
+    ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
     os.makedirs(ecg_data_dir, exist_ok=True)
     
     # Generate filename with timestamp
@@ -1340,8 +1339,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         }
 
     # Define base_dir and reports_dir for file operations
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    reports_dir = os.path.join(base_dir, 'reports')
+    reports_dir = str(data_file("reports"))
     os.makedirs(reports_dir, exist_ok=True)
 
     from utils.settings_manager import SettingsManager
@@ -3975,8 +3973,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # Save parameters to a JSON index for later reuse
     try:
         from datetime import datetime
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        reports_dir = os.path.join(base_dir, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         index_path = os.path.join(reports_dir, 'index.json')
         metrics_path = os.path.join(reports_dir, 'metrics.json')

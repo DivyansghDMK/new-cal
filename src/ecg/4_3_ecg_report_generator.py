@@ -49,7 +49,7 @@ COLUMN_BOXES = 17.5
 # Scale wave speed so 1 second equals 5 large boxes at 25 mm/s on 40-box grid
 ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM
 FOUR_THREE_SAMPLES_COLUMN = 1750  # 17.5 boxes * 100 samples per box (at 500Hz/5boxes_per_sec)
-FOUR_THREE_SAMPLES_EXTRA_II = 5100 # 51 boxes
+FOUR_THREE_SAMPLES_EXTRA_II = 5000 # 50 boxes (5 seconds at 500Hz = 5000 samples for Lead II rhythm strip)
 
 # matplotlib.use('Agg') # Removed to prevent main thread Qt canvas corruption
 
@@ -91,8 +91,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         return None
     
     # Create output directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    ecg_data_dir = os.path.join(base_dir, 'reports', 'ecg_data')
+    ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
     os.makedirs(ecg_data_dir, exist_ok=True)
     
     # Generate filename with timestamp
@@ -1305,8 +1304,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         }
 
     # Define base_dir and reports_dir for file operations
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    reports_dir = os.path.join(base_dir, 'reports')
+    reports_dir = str(data_file("reports"))
     os.makedirs(reports_dir, exist_ok=True)
 
     from utils.settings_manager import SettingsManager
@@ -3883,8 +3881,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # Save parameters to a JSON index for later reuse
     try:
         from datetime import datetime
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        reports_dir = os.path.join(base_dir, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         index_path = os.path.join(reports_dir, 'index.json')
         metrics_path = os.path.join(reports_dir, 'metrics.json')

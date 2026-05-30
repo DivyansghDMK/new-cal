@@ -680,6 +680,37 @@ except ImportError as e:
     print(f" Holter modules not available: {e}")
     HOLTER_AVAILABLE = False
 
+def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
+    from PyQt5.QtCore import Qt
+    
+    grid_size = 50
+    pixmap = QPixmap(grid_size, grid_size)
+    pixmap.fill(QColor('#FFF2F2'))
+    
+    painter = QPainter(pixmap)
+    try:
+        # Minor lines every 10px
+        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
+        painter.setPen(minor_pen)
+        for i in range(1, 5):
+            x = i * 10
+            painter.drawLine(x, 0, x, grid_size)
+            painter.drawLine(0, x, grid_size, x)
+            
+        # Major lines every 50px
+        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        painter.setPen(major_pen)
+        painter.drawLine(0, 0, grid_size, 0)
+        painter.drawLine(0, 0, 0, grid_size)
+        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
+        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
+    finally:
+        painter.end()
+        
+    return QBrush(pixmap)
+
+
 class ECGTestPage(QWidget):
     LEADS_MAP = {
         "Lead II ECG Test": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
@@ -1198,28 +1229,27 @@ class ECGTestPage(QWidget):
         self.plot_widgets = []
         self.data_lines = []
         
-        # Define colors for each lead type for consistent color coding (darker shades)
-        # Much darker colors for better visibility on large screens/TV displays
+        # Define colors for each lead type for consistent color coding (all black as requested)
         lead_colors = {
-            'I': '#8B0000',      # Dark Red (very dark)
-            'II': '#006666',     # Dark Teal (very dark)
-            'III': '#003366',    # Dark Blue (very dark)
-            'aVR': '#2d5016',    # Dark Green (very dark)
-            'aVL': '#8B6914',    # Dark Yellow/Brown (very dark)
-            'aVF': '#8B008B',    # Dark Magenta (very dark)
-            'V1': '#000080',     # Navy Blue (very dark)
-            'V2': '#4B0082',     # Indigo (very dark)
-            'V3': '#008080',     # Dark Cyan (very dark)
-            'V4': '#CC6600',     # Dark Orange (darker)
-            'V5': '#006400',     # Dark Green (very dark)
-            'V6': '#8B0000'      # Dark Red (very dark, same as I for contrast)
+            'I': '#000000',
+            'II': '#000000',
+            'III': '#000000',
+            'aVR': '#000000',
+            'aVL': '#000000',
+            'aVF': '#000000',
+            'V1': '#000000',
+            'V2': '#000000',
+            'V3': '#000000',
+            'V4': '#000000',
+            'V5': '#000000',
+            'V6': '#000000'
         }
         
         positions = [(i, j) for i in range(4) for j in range(3)]
         for i in range(len(self.leads)):
             plot_widget = pg.PlotWidget()
-            plot_widget.setBackground('w')
-            plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            plot_widget.setBackground(create_pink_grid_brush())
+            plot_widget.showGrid(x=False, y=False)
             plot_widget.setClipToView(True)
             plot_widget.setDownsampling(auto=True, mode='peak')
             # Hide Y-axis labels for cleaner display
@@ -1452,6 +1482,8 @@ class ECGTestPage(QWidget):
 
     def _can_generate_report(self) -> bool:
         """Generate report is allowed when acquisition is running or demo mode is ON."""
+        if getattr(self, "_start_cooldown_active", False):
+            return False
         try:
             is_demo_mode = False
             if hasattr(self, 'demo_toggle') and self.demo_toggle is not None:
@@ -6199,6 +6231,35 @@ class ECGTestPage(QWidget):
     # ---------------------- Start Button Functionality ----------------------
 
     def start_acquisition(self):
+        # Disable "Generate Report" button for 10 seconds after Start is pressed
+        self._start_cooldown_active = True
+        self._cooldown_seconds_remaining = 10
+        if hasattr(self, "_update_generate_report_button_state"):
+            self._update_generate_report_button_state()
+            
+        # Cancel any existing cooldown timer to prevent overlapping
+        if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
+            try:
+                self._cooldown_timer.stop()
+            except Exception:
+                pass
+                
+        self._cooldown_timer = QTimer(self)
+        
+        def update_cooldown_tick():
+            self._cooldown_seconds_remaining -= 1
+            if self._cooldown_seconds_remaining <= 0:
+                self._start_cooldown_active = False
+                if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
+                    self._cooldown_timer.stop()
+                if hasattr(self, "_update_generate_report_button_state"):
+                    self._update_generate_report_button_state()
+            else:
+                if hasattr(self, "_update_generate_report_button_state"):
+                    self._update_generate_report_button_state()
+                    
+        self._cooldown_timer.timeout.connect(update_cooldown_tick)
+        self._cooldown_timer.start(1000)
 
         # CHECK: Ensure no other test is running
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
@@ -7027,7 +7088,10 @@ class ECGTestPage(QWidget):
             if hasattr(self, 'generate_report_btn') and hasattr(self, 'settings_manager'):
                 _f   = self.settings_manager.get_setting('report_format', '12_1') or '12_1'
                 _lbl = {"12_1": "12:1", "6_2": "6:2", "4_3": "4:3"}.get(_f, "12:1")
-                self.generate_report_btn.setText(f"Generate Report ({_lbl})")
+                if getattr(self, "_start_cooldown_active", False) and getattr(self, "_cooldown_seconds_remaining", 0) > 0:
+                    self.generate_report_btn.setText(f"Generate Report ({_lbl}) ({self._cooldown_seconds_remaining}s)")
+                else:
+                    self.generate_report_btn.setText(f"Generate Report ({_lbl})")
         except Exception:
             pass
 
@@ -7151,8 +7215,7 @@ class ECGTestPage(QWidget):
 
         # Output path
         stamp   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        rpt_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', '..', 'reports'))
+        rpt_dir = str(data_file("reports"))
         os.makedirs(rpt_dir, exist_ok=True)
         filename = os.path.join(rpt_dir, f"ECG_Report_{fmt}_{stamp}.pdf")
 

@@ -1783,8 +1783,7 @@ class Dashboard(QWidget):
     def refresh_recent_reports_ui(self, filter_date=None):
         import os, json
         
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        reports_dir = os.path.join(base_dir, "..", "reports")
+        reports_dir = str(data_file("reports"))
         index_path = os.path.join(reports_dir, "index.json")
 
         # Clear list
@@ -1969,8 +1968,7 @@ class Dashboard(QWidget):
         # Add debug output to track when this is called
         print(f" load_metrics_into_parameters called for: {os.path.basename(report_path)}")
         
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        reports_dir = os.path.join(base_dir, "..", "reports")
+        reports_dir = str(data_file("reports"))
         metrics_path = os.path.join(reports_dir, "metrics.json")
 
         line = "No metrics found for this report."
@@ -2003,8 +2001,7 @@ class Dashboard(QWidget):
                     }
             else:
                 # Fallback: look in old-style metrics.json
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                reports_dir = os.path.join(base_dir, "..", "reports")
+                reports_dir = str(data_file("reports"))
                 metrics_path = os.path.join(reports_dir, "metrics.json")
                 
                 if os.path.exists(metrics_path):
@@ -3702,9 +3699,34 @@ class Dashboard(QWidget):
             except Exception:
                 pass
             print(f"✅ ECG Report generated successfully: {fname}")
+            
+            # Interactive prompt to open the generated PDF report
+            from PyQt5.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self,
+                "Report Generated",
+                f"12-Lead ECG Report generated successfully!\n\nSaved at:\n{fname}\n\nWould you like to open it now?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if reply == QMessageBox.Yes:
+                try:
+                    import subprocess, sys
+                    if sys.platform == 'win32':
+                        subprocess.Popen(['start', '', fname], shell=True)
+                    else:
+                        subprocess.Popen(['xdg-open', fname])
+                except Exception as open_err:
+                    QMessageBox.warning(self, "Error Opening PDF", f"Could not open PDF file:\n{open_err}")
 
         def _on_failed(err):
             print(f"❌ Failed to generate PDF: {err}")
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "PDF Generation Failed",
+                f"An error occurred while generating the 12-Lead ECG PDF report:\n\n{err}"
+            )
 
         self._pdf_runner = PDFProcessRunner(parent_widget=self)
         spawned = self._pdf_runner.start_ecg_report(
@@ -6369,7 +6391,7 @@ class Dashboard(QWidget):
                 if not cloud_uploader.is_configured():
                     return
 
-                reports_dir = "reports"
+                reports_dir = str(data_file("reports"))
                 os.makedirs(reports_dir, exist_ok=True)
                 uploaded_names = set()
                 try:
@@ -6466,7 +6488,7 @@ class Dashboard(QWidget):
             
             # Find and upload all report files
             import glob
-            reports_dir = "reports"
+            reports_dir = str(data_file("reports"))
             uploaded_count = 0
             errors = []
             

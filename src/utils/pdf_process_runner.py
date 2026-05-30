@@ -8,10 +8,26 @@ import traceback
 from typing import Callable, Optional
 
 
+# Ensure stdout/stderr replace unencodable characters instead of crashing
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(errors='replace')
+        except Exception:
+            pass
+
+
 _MP_CTX = multiprocessing.get_context("spawn")
 
 
 def _child_ecg_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
+    # Ensure stdout/stderr replace unencodable characters inside child process
+    for _stream in (sys.stdout, sys.stderr):
+        if _stream is not None and hasattr(_stream, 'reconfigure'):
+            try:
+                _stream.reconfigure(errors='replace')
+            except Exception:
+                pass
     try:
         import matplotlib
 
@@ -37,6 +53,13 @@ def _child_ecg_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
 
 
 def _child_hrv_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
+    # Ensure stdout/stderr replace unencodable characters inside child process
+    for _stream in (sys.stdout, sys.stderr):
+        if _stream is not None and hasattr(_stream, 'reconfigure'):
+            try:
+                _stream.reconfigure(errors='replace')
+            except Exception:
+                pass
     try:
         import matplotlib
 

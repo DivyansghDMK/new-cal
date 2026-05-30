@@ -198,12 +198,20 @@ def _run_wmic(args: List[str]) -> str:
 
     return ""
 
+_cached_wmi_fields: Optional[Dict[str, str]] = None
+_cached_machine_info: Optional[Dict[str, str]] = None
+
 
 def _collect_wmi_fields() -> Dict[str, str]:
     """
     Collect the 5 hardware identifiers used in the fingerprint.
     Returns a dict — missing/blank fields are empty strings.
+    Cached after first collection to avoid repeating slow subprocess/WMI spawns.
     """
+    global _cached_wmi_fields
+    if _cached_wmi_fields is not None:
+        return _cached_wmi_fields
+
     fields: Dict[str, str] = {}
 
     # 1. BIOS serial — never changes
@@ -224,11 +232,19 @@ def _collect_wmi_fields() -> Dict[str, str]:
     except Exception:
         fields["mac"] = ""
 
+    _cached_wmi_fields = fields
     return fields
 
 
 def _collect_machine_info() -> Dict[str, str]:
-    """Collect display-only machine metadata (not used in fingerprint)."""
+    """
+    Collect display-only machine metadata (not used in fingerprint).
+    Cached after first collection to avoid repeating slow WMI/subprocess runs.
+    """
+    global _cached_machine_info
+    if _cached_machine_info is not None:
+        return _cached_machine_info
+
     info: Dict[str, str] = {}
     try:
         info["pc_name"] = os.getenv("COMPUTERNAME", "") or platform.node()
@@ -238,6 +254,8 @@ def _collect_machine_info() -> Dict[str, str]:
         info["windows_version"] = _run_wmic(["os", "get", "caption"]) or platform.version()
     except Exception:
         info["windows_version"] = platform.version()
+    
+    _cached_machine_info = info
     return info
 
 

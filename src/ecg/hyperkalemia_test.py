@@ -44,6 +44,7 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
+from utils.app_paths import data_file
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 from ecg.lead_off_detection import detect_lead_off
@@ -57,6 +58,37 @@ try:
 except ImportError:
     ECG_TEST_AVAILABLE = False
     print(" ECGTestPage not available - using fallback calculations")
+
+
+def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
+    from PyQt5.QtCore import Qt
+    
+    grid_size = 50
+    pixmap = QPixmap(grid_size, grid_size)
+    pixmap.fill(QColor('#FFF2F2'))
+    
+    painter = QPainter(pixmap)
+    try:
+        # Minor lines every 10px
+        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
+        painter.setPen(minor_pen)
+        for i in range(1, 5):
+            x = i * 10
+            painter.drawLine(x, 0, x, grid_size)
+            painter.drawLine(0, x, grid_size, x)
+            
+        # Major lines every 50px
+        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        painter.setPen(major_pen)
+        painter.drawLine(0, 0, grid_size, 0)
+        painter.drawLine(0, 0, 0, grid_size)
+        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
+        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
+    finally:
+        painter.end()
+        
+    return QBrush(pixmap)
 
 
 class HyperkalemiaTestWindow(QWidget):
@@ -426,21 +458,21 @@ class HyperkalemiaTestWindow(QWidget):
             'II': (3, 0),
         }
         
-        # Consistent colors from 12-lead dashboard
+        # Consistent colors from 12-lead dashboard (all black as requested)
         lead_colors = {
-            'II': '#ff0055', 
-            'V1': '#ffcc00',
-            'V2': '#00ffcc',
-            'V3': '#ff6600',
-            'V4': '#6600ff',
-            'V5': '#00b894',
-            'V6': '#ff0066'
+            'II': '#000000', 
+            'V1': '#000000',
+            'V2': '#000000',
+            'V3': '#000000',
+            'V4': '#000000',
+            'V5': '#000000',
+            'V6': '#000000'
         }
         
         for i, lead_name in enumerate(lead_names):
             # Create plot widget
             plot_widget = pg.PlotWidget()
-            plot_widget.setBackground('w')
+            plot_widget.setBackground(create_pink_grid_brush())
             plot_widget.setMenuEnabled(False)
             plot_widget.showGrid(x=False, y=False)
             
@@ -1520,9 +1552,7 @@ class HyperkalemiaTestWindow(QWidget):
             return
         
         # Consistently save to the local project 'reports' directory
-        current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
-        reports_dir = os.path.join(project_root, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         filepath = os.path.join(reports_dir, f"Hyperkalemia_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         
@@ -1555,8 +1585,7 @@ class HyperkalemiaTestWindow(QWidget):
             # Save ECG data (including V1-V6) to file so report generator can load it
             ecg_data_file = None
             try:
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                ecg_data_dir = os.path.join(base_dir, 'reports', 'ecg_data')
+                ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
                 os.makedirs(ecg_data_dir, exist_ok=True)
                 
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1616,8 +1645,7 @@ class HyperkalemiaTestWindow(QWidget):
             print(f"   ECG data file: {ecg_data_file}")
             
             try:
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                reports_dir = os.path.join(base_dir, 'reports')
+                reports_dir = str(data_file("reports"))
                 os.makedirs(reports_dir, exist_ok=True)
                 hyper_metrics_path = os.path.join(reports_dir, 'hyper_metric.json')
 

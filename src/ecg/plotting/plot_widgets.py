@@ -5,6 +5,37 @@ from PyQt5.QtWidgets import QGridLayout, QWidget
 from typing import List, Tuple, Callable
 
 
+def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
+    from PyQt5.QtCore import Qt
+    
+    grid_size = 50
+    pixmap = QPixmap(grid_size, grid_size)
+    pixmap.fill(QColor('#FFF2F2'))
+    
+    painter = QPainter(pixmap)
+    try:
+        # Minor lines every 10px
+        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
+        painter.setPen(minor_pen)
+        for i in range(1, 5):
+            x = i * 10
+            painter.drawLine(x, 0, x, grid_size)
+            painter.drawLine(0, x, grid_size, x)
+            
+        # Major lines every 50px
+        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        painter.setPen(major_pen)
+        painter.drawLine(0, 0, grid_size, 0)
+        painter.drawLine(0, 0, 0, grid_size)
+        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
+        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
+    finally:
+        painter.end()
+        
+    return QBrush(pixmap)
+
+
 # Lead colors for consistent visualization
 LEAD_COLORS_PLOT = {
     'I': '#ff6b6b',      # Red
@@ -43,8 +74,8 @@ def create_plot_grid(plot_area: QWidget, leads: List[str], click_handler: Callab
     
     for i in range(len(leads)):
         plot_widget = pg.PlotWidget()
-        plot_widget.setBackground('w')
-        plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        plot_widget.setBackground(create_pink_grid_brush())
+        plot_widget.showGrid(x=False, y=False)
         
         # Hide Y-axis labels for cleaner display
         plot_widget.getAxis('left').setTicks([])
@@ -79,7 +110,7 @@ def create_plot_grid(plot_area: QWidget, leads: List[str], click_handler: Callab
         
         row, col = positions[i]
         grid.addWidget(plot_widget, row, col)
-        data_line = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=0.7))
+        data_line = plot_widget.plot(pen=pg.mkPen(color='#000000', width=1.0))
         
         plot_widgets.append(plot_widget)
         data_lines.append(data_line)
