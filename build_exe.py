@@ -139,6 +139,7 @@ def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
         "ecg_settings.json",
         "last_conclusions.json",
         "ecg_auth_session.json",
+        "Animation - 1777012518993.gif",
     ]:
         file_path = project_root / filename
         if filename == ".env":

@@ -45,11 +45,18 @@ Write-Host "`n[1/2] Building EXE..." -ForegroundColor Yellow
 $buildArgs = @("build_exe.py", "--name", $Name)
 if ($ConsoleBuild) { $buildArgs += "--console" }
 if ($OneFile) { $buildArgs += "--onefile" }
-python @buildArgs
+
+$pythonPath = "python"
+if (Test-Path ".\.venv\Scripts\python.exe") {
+  $pythonPath = ".\.venv\Scripts\python.exe"
+  Write-Host "Using virtual environment python: $pythonPath" -ForegroundColor Gray
+}
+
+& $pythonPath @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "EXE build failed" }
 
 Write-Host "`n[2/2] Building setup.exe..." -ForegroundColor Yellow
-python build_setup.py --name $Name --version $Version --channel $Channel --repository $Repository
+& $pythonPath build_setup.py --name $Name --version $Version --channel $Channel --repository $Repository
 if ($LASTEXITCODE -ne 0) {
   Write-Host "Setup build could not be completed (likely ISCC missing)." -ForegroundColor Red
   Write-Host "Install Inno Setup 6, then rerun: python build_setup.py --name $Name --version $Version"
