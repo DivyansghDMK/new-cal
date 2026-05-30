@@ -7121,6 +7121,15 @@ class ECGTestPage(QWidget):
             pass
         fmt_label = {"12_1": "12:1", "6_2": "6:2", "4_3": "4:3"}.get(fmt, "12:1")
 
+        # Prevent crash if thread is already running
+        if hasattr(self, "_report_thread") and self._report_thread is not None:
+            try:
+                if self._report_thread.isRunning():
+                    print("⚠️ A report generation thread is already running. Please wait.")
+                    return
+            except Exception:
+                pass
+
         self._start_generate_report_cooldown(seconds=10, reason="Report Click")
         self._report_generating = True
 
@@ -7345,6 +7354,12 @@ class ECGTestPage(QWidget):
                     dash.refresh_recent_reports_ui()
             except Exception:
                 pass
+            try:
+                if getattr(self, "_report_thread", None) is thread:
+                    self._report_thread = None
+                    self._report_worker = None
+            except Exception:
+                pass
             try: thread.quit(); thread.wait(3000)
             except Exception: pass
 
@@ -7354,6 +7369,12 @@ class ECGTestPage(QWidget):
             try: QMessageBox.critical(self, "Report Failed",
                      f"PDF generation failed.\n\n{msg.split(chr(10))[0]}")
             except Exception: pass
+            try:
+                if getattr(self, "_report_thread", None) is thread:
+                    self._report_thread = None
+                    self._report_worker = None
+            except Exception:
+                pass
             try: thread.quit(); thread.wait(3000)
             except Exception: pass
 
