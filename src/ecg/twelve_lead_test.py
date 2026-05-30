@@ -683,22 +683,34 @@ except ImportError as e:
 def create_pink_grid_brush():
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
-    
-    grid_size = 50
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    dpi = 96.0
+    try:
+        screen = app.primaryScreen() if app else None
+        if screen is not None:
+            dpi = float(screen.logicalDotsPerInchX() or screen.logicalDotsPerInch() or dpi)
+    except Exception:
+        dpi = 96.0
+
+    px_per_mm = max(1.0, dpi / 25.4)
+    minor_step = max(2, int(round(px_per_mm)))
+    grid_size = minor_step * 5
     pixmap = QPixmap(grid_size, grid_size)
     pixmap.fill(QColor('#FFF2F2'))
     
     painter = QPainter(pixmap)
     try:
-        # Minor lines every 10px
+        # Minor lines every 1 mm
         minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
         painter.setPen(minor_pen)
         for i in range(1, 5):
-            x = i * 10
-            painter.drawLine(x, 0, x, grid_size)
-            painter.drawLine(0, x, grid_size, x)
+            pos = i * minor_step
+            painter.drawLine(pos, 0, pos, grid_size)
+            painter.drawLine(0, pos, grid_size, pos)
             
-        # Major lines every 50px
+        # Major lines every 5 mm
         major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
         painter.setPen(major_pen)
         painter.drawLine(0, 0, grid_size, 0)
@@ -1251,7 +1263,7 @@ class ECGTestPage(QWidget):
             plot_widget.setBackground(create_pink_grid_brush())
             plot_widget.showGrid(x=False, y=False)
             plot_widget.setClipToView(True)
-            plot_widget.setDownsampling(auto=True, mode='peak')
+            plot_widget.setDownsampling(ds=1, auto=False, mode='subsample')
             # Hide Y-axis labels for cleaner display
             plot_widget.getAxis('left').setTicks([])
             plot_widget.getAxis('left').setLabel('')
@@ -7121,7 +7133,11 @@ class ECGTestPage(QWidget):
             if display_mode == "frozen" and frozen_snapshot and any(np.asarray(arr).size > 0 for arr in frozen_snapshot):
                 snap_raw = [np.asarray(arr, dtype=float).copy() for arr in frozen_snapshot]
             else:
-                snap_raw = self._capture_report_snapshot(window_sec=7.0)
+                # Landscape formats (6:2, 4:3) have a full-width Lead II rhythm
+                # strip ~249 mm wide → 9.96 s at 25 mm/s. Capture 10 s so the
+                # strip is completely filled. Portrait 12:1 only needs 7 s (180 mm).
+                _snap_sec = 10.0 if fmt in ('6_2', '4_3') else 7.0
+                snap_raw = self._capture_report_snapshot(window_sec=_snap_sec)
         finally:
             self._report_generating = False
 

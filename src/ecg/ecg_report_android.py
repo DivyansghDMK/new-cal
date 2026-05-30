@@ -53,8 +53,8 @@ REPORT_DEMO_MODE = False
 # At wave_gain=10: ADC_per_mm = 128  ✓
 ADC_PER_MM    = 128.0   # updated dynamically from wave_gain setting in generate_report()
 
-COL_MINOR = '#f5dcdc'
-COL_MAJOR = '#e69696'
+COL_MINOR = '#fce8e8'   # very light pink — minor 1mm grid
+COL_MAJOR = '#e8a0a0'   # soft pink-red  — major 5mm grid
 COL_BG    = 'white'      # ← pure white
 
 ALL_LEADS  = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
@@ -636,21 +636,31 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
 
         _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
 
+        # lead_strip_samples: only request as many samples as 'lead_w' mm can
+        # physically display at 25 mm/s (MM_PER_SAMPLE = 0.05 mm/sample).
+        # Forcing 7-second (3500-sample) data into a 123 mm strip caused waves
+        # to be interpolation-compressed and appear at the wrong clinical speed.
+        lead_strip_samples = int(round(lead_w / MM_PER_SAMPLE))   # 123/0.05 = 2460 ≈ 4.92 s
+
         _t(ax, l1, left_margin+9, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l1, np.array([])),
-                       left_margin+14, mid_y, lead_w, half_clip, target_samples=target_samples)
+                       left_margin+14, mid_y, lead_w, half_clip, target_samples=lead_strip_samples)
 
         _t(ax, l2, right_x, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l2, np.array([])),
-                       right_x+5, mid_y, lead_w, half_clip, target_samples=target_samples)
+                       right_x+5, mid_y, lead_w, half_clip, target_samples=lead_strip_samples)
 
     rhythm_mid = start_y + 6*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
+    # Rhythm strip target: use all samples the physical width can hold at 25 mm/s.
+    # (249 mm / 0.05 mm·sample⁻¹ = 4980 samples ≈ 9.96 s). The 10-second snapshot
+    # now provides enough data to fill the strip completely.
+    _rhythm_w_6_2 = PW - left_margin - MR - 25
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.90,
-                   target_samples=int(round(ECG_FS * REPORT_STRIP_SECONDS)))
+                   _rhythm_w_6_2, row_h*0.90,
+                   target_samples=int(round(_rhythm_w_6_2 / MM_PER_SAMPLE)))
 
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
@@ -694,11 +704,16 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
         # half_clip: 90% of row half-height to show true peak amplitude
         half_clip = row_h * 0.90
         _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
+        # lead_strip_samples: only request as many samples as 'lead_w' mm can
+        # physically display at 25 mm/s (MM_PER_SAMPLE = 0.05 mm/sample).
+        # Forcing 7-second (3500-sample) data into an 80 mm strip caused heavy
+        # compression — waves appeared at the wrong clinical speed.
+        lead_strip_samples = int(round(lead_w / MM_PER_SAMPLE))   # 80/0.05 = 1600 ≈ 3.2 s
         for c, lead in enumerate(group):
             x_start = left_pad if c == 0 else left_pad + c*(lead_w+div_pad+div_pad)
             _t(ax, lead, x_start, label_y, 10.5, bold=True)
             _draw_waveform(ax, lead_mv.get(lead, np.array([])),
-                           x_start, mid_y, lead_w, half_clip, target_samples=target_samples)
+                           x_start, mid_y, lead_w, half_clip, target_samples=lead_strip_samples)
             if c < 2:
                 div_x = x_start + lead_w + div_pad
                 if div_x not in col_dividers:
@@ -707,10 +722,14 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     rhythm_mid = start_y + 4*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
+    # Rhythm strip target: use all samples the physical width can hold at 25 mm/s.
+    # (249 mm / 0.05 mm·sample⁻¹ = 4980 samples ≈ 9.96 s). The 10-second snapshot
+    # now provides enough data to fill the strip completely.
+    _rhythm_w_4_3 = PW - left_margin - MR - 25
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.90,
-                   target_samples=int(round(ECG_FS * REPORT_STRIP_SECONDS)))
+                   _rhythm_w_4_3, row_h*0.90,
+                   target_samples=int(round(_rhythm_w_4_3 / MM_PER_SAMPLE)))
 
     # Draw column dividers AFTER all waveforms, stopping at TOP of rhythm strip
     # (rhythm strip is full-width — no dividers should cross through it)
@@ -867,7 +886,7 @@ def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0, targe
     # the root cause of V4/V5 flat-topped peaks.
     ys = np.clip(ys, y0_mm - half_cell_mm, y0_mm + half_cell_mm)
 
-    ax.plot(xs, ys, color='black', linewidth=0.5,
+    ax.plot(xs, ys, color='black', linewidth=0.7,
             solid_joinstyle='round', solid_capstyle='round', zorder=5)
 
 
