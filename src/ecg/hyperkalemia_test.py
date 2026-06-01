@@ -63,23 +63,36 @@ except ImportError:
 def create_pink_grid_brush():
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
-    
-    grid_size = 50
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    dpi = 96.0
+    try:
+        screen = app.primaryScreen() if app else None
+        if screen is not None:
+            dpi = float(screen.logicalDotsPerInchX() or screen.logicalDotsPerInch() or dpi)
+    except Exception:
+        dpi = 96.0
+
+    px_per_mm = max(1.0, dpi / 25.4)
+    minor_step = max(2, int(round(px_per_mm)))
+    grid_size = minor_step * 5
     pixmap = QPixmap(grid_size, grid_size)
-    pixmap.fill(QColor('#FFF2F2'))
+    pixmap.fill(QColor('#FFF5F5'))
     
     painter = QPainter(pixmap)
     try:
-        # Minor lines every 10px
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        # Minor lines every 1 mm
         minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
         painter.setPen(minor_pen)
         for i in range(1, 5):
-            x = i * 10
+            x = i * minor_step
             painter.drawLine(x, 0, x, grid_size)
             painter.drawLine(0, x, grid_size, x)
             
-        # Major lines every 50px
-        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        # Major lines every 5 mm
+        major_pen = QPen(QColor('#FFB3B3'), 1.0, Qt.SolidLine)
         painter.setPen(major_pen)
         painter.drawLine(0, 0, grid_size, 0)
         painter.drawLine(0, 0, 0, grid_size)
@@ -470,11 +483,25 @@ class HyperkalemiaTestWindow(QWidget):
         }
         
         for i, lead_name in enumerate(lead_names):
+            # Create rounded card container so the ECG paper edges don't clip.
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background: #FFF5F5;
+                    border: 1px solid #d9b3b3;
+                    border-radius: 12px;
+                }
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(5, 5, 5, 5)
+            card_layout.setSpacing(0)
+
             # Create plot widget
             plot_widget = pg.PlotWidget()
             plot_widget.setBackground(create_pink_grid_brush())
             plot_widget.setMenuEnabled(False)
-            plot_widget.showGrid(x=False, y=False)
+            plot_widget.setStyleSheet("border: none;")
+            plot_widget.showGrid(x=True, y=True, alpha=0.12)
             
             # Hide Y-axis numeric labels (clean clinical look)
             plot_widget.getAxis('left').setPen('k')
@@ -509,17 +536,18 @@ class HyperkalemiaTestWindow(QWidget):
                     pass
             
             # Create plot curve with clinical line width
-            plot_curve = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.5))
+            plot_curve = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.0))
             
             self.plot_widgets[lead_name] = plot_widget
             self.plot_curves[lead_name] = plot_curve
             self.data_lines[lead_name] = plot_curve
-            
+
+            card_layout.addWidget(plot_widget)
             row, col = positions[lead_name]
             if lead_name == 'II':
-                plot_layout.addWidget(plot_widget, row, col, 1, 2) # Lead II spanning 2 columns at bottom
+                plot_layout.addWidget(card, row, col, 1, 2) # Lead II spanning 2 columns at bottom
             else:
-                plot_layout.addWidget(plot_widget, row, col)
+                plot_layout.addWidget(card, row, col)
         
         # Keep backward compatibility - also store Lead II as primary
         self.plot_widget = self.plot_widgets['II']

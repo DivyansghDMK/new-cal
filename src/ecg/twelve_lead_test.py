@@ -245,7 +245,7 @@ class LiveLeadWindow(QWidget):
         self.canvas = FigureCanvas(self.fig)
         layout.addWidget(self.canvas)
         
-        self.line, = self.ax.plot([], [], color=color, linewidth=0.7)
+        self.line, = self.ax.plot([], [], color=color, linewidth=1.0)
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(50)  # 20 FPS
@@ -698,7 +698,7 @@ def create_pink_grid_brush():
     minor_step = max(2, int(round(px_per_mm)))
     grid_size = minor_step * 5
     pixmap = QPixmap(grid_size, grid_size)
-    pixmap.fill(QColor('#FFF2F2'))
+    pixmap.fill(QColor('#FFF5F5'))
     
     painter = QPainter(pixmap)
     try:
@@ -711,7 +711,7 @@ def create_pink_grid_brush():
             painter.drawLine(0, pos, grid_size, pos)
             
         # Major lines every 5 mm
-        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        major_pen = QPen(QColor('#FFB3B3'), 1.0, Qt.SolidLine)
         painter.setPen(major_pen)
         painter.drawLine(0, 0, grid_size, 0)
         painter.drawLine(0, 0, 0, grid_size)
@@ -1261,7 +1261,8 @@ class ECGTestPage(QWidget):
         for i in range(len(self.leads)):
             plot_widget = pg.PlotWidget()
             plot_widget.setBackground(create_pink_grid_brush())
-            plot_widget.showGrid(x=False, y=False)
+            plot_widget.setStyleSheet("border: 1px solid black;")
+            plot_widget.showGrid(x=True, y=True, alpha=0.12)
             plot_widget.setClipToView(True)
             plot_widget.setDownsampling(ds=1, auto=False, mode='subsample')
             # Hide Y-axis labels for cleaner display
@@ -1306,7 +1307,7 @@ class ECGTestPage(QWidget):
             row, col = positions[i]
             grid.addWidget(plot_widget, row, col)
             # Enable anti-aliasing for smooth waves (data smoothing is applied separately)
-            data_line = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=0.7, antialias=True))
+            data_line = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.0, antialias=True))
 
             self.plot_widgets.append(plot_widget)
             self.data_lines.append(data_line)
@@ -10205,6 +10206,44 @@ class ECGTestPage(QWidget):
             if hasattr(self, 'elapsed_timer') and self.elapsed_timer:
                 self.elapsed_timer.stop()
                 self.elapsed_timer.deleteLater()
+
+            # Stop live BPM worker before Qt tears down the page.
+            if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                try:
+                    if self._bpm_ctrl.is_running:
+                        self._bpm_ctrl.stop()
+                    if getattr(self._bpm_ctrl, 'display_bar', None) is not None:
+                        self._bpm_ctrl.display_bar.cleanup()
+                except Exception:
+                    pass
+                self._bpm_ctrl = None
+
+            # Stop any active Holter recording / analysis threads.
+            if hasattr(self, '_holter_writer') and self._holter_writer is not None:
+                try:
+                    if self._holter_writer.is_running:
+                        self._holter_writer.stop()
+                except Exception:
+                    pass
+                self._holter_writer = None
+
+            if hasattr(self, '_holter_worker') and self._holter_worker is not None:
+                try:
+                    self._holter_worker.stop(wait=True)
+                except Exception:
+                    pass
+                self._holter_worker = None
+
+            # Wait briefly for any report-generation QThread to finish.
+            if hasattr(self, '_report_thread') and self._report_thread is not None:
+                try:
+                    if self._report_thread.isRunning():
+                        self._report_thread.quit()
+                        self._report_thread.wait(3000)
+                except Exception:
+                    pass
+                self._report_thread = None
+                self._report_worker = None
             
             # Close serial connection
             if hasattr(self, 'serial_reader') and self.serial_reader:
