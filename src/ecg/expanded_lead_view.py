@@ -17,6 +17,7 @@ from PyQt5.QtCore import Qt, QTimer
 from scipy.signal import find_peaks, butter, filtfilt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.ticker import MultipleLocator
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
 try:
@@ -623,9 +624,9 @@ class ExpandedLeadView(QDialog):
         plot_frame = QFrame()
         plot_frame.setStyleSheet("""
             QFrame {
-                background: white;
+                background: #FFF5F5;
                 border-radius: 8px;
-                border: 1px solid #e0e0e0;
+                border: 1px solid #d9b3b3;
             }
         """)
         plot_layout = QVBoxLayout(plot_frame)
@@ -633,7 +634,7 @@ class ExpandedLeadView(QDialog):
         
         # Create matplotlib figure with better sizing
         # Use a moderate DPI, but allow canvas to expand with layout
-        self.fig = Figure(figsize=(10, 6), facecolor='white', dpi=110)
+        self.fig = Figure(figsize=(10, 6), facecolor='#FFF5F5', dpi=110)
         self.ax = self.fig.add_subplot(111)
         self.fig.tight_layout(pad=2.0)
         
@@ -1089,7 +1090,12 @@ class ExpandedLeadView(QDialog):
         self.ax.set_title(f'Lead {self.lead_name} - PQRST Analysis{mode_text}', 
                          fontsize=18, fontweight='bold', color='#2c3e50')
         
-        self.ax.set_facecolor('#FFF2F2')
+        self.ax.set_facecolor('#FFF5F5')
+        self.ax.set_axisbelow(True)
+        self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
+        self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
+        self.ax.yaxis.set_major_locator(MultipleLocator(500))
+        self.ax.yaxis.set_minor_locator(MultipleLocator(100))
         self.ax.minorticks_on()
         self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
         self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')
@@ -1948,7 +1954,7 @@ class ExpandedLeadView(QDialog):
                     # Plot only valid points
                     if np.all(valid_mask):
                         # All data is valid - plot normally with anti-aliasing
-                        self.ax.plot(time, display_adc, color='#000000', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
+                        self.ax.plot(time, display_adc, color='#000000', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
                     else:
                         # Some NaN values - plot segments
                         time_valid = time[valid_mask]
@@ -1957,7 +1963,7 @@ class ExpandedLeadView(QDialog):
                             # Apply smoothing to valid segment without edge
                             # artifacts at the segment tail.
                             scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
-                            self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
+                            self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
                 else:
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
@@ -2004,7 +2010,13 @@ class ExpandedLeadView(QDialog):
             else:
                 self.ax.set_xlim(0, 1)  # Fallback
             
-            self.ax.set_facecolor('#FFF2F2')
+            self.fig.patch.set_facecolor('#FFF5F5')
+            self.ax.set_facecolor('#FFF5F5')
+            self.ax.set_axisbelow(True)
+            self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
+            self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
+            self.ax.yaxis.set_major_locator(MultipleLocator(500))
+            self.ax.yaxis.set_minor_locator(MultipleLocator(100))
             self.ax.minorticks_on()
             self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
             self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')

@@ -8,23 +8,36 @@ from typing import List, Tuple, Callable
 def create_pink_grid_brush():
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
-    
-    grid_size = 50
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    dpi = 96.0
+    try:
+        screen = app.primaryScreen() if app else None
+        if screen is not None:
+            dpi = float(screen.logicalDotsPerInchX() or screen.logicalDotsPerInch() or dpi)
+    except Exception:
+        dpi = 96.0
+
+    px_per_mm = max(1.0, dpi / 25.4)
+    minor_step = max(2, int(round(px_per_mm)))
+    grid_size = minor_step * 5
     pixmap = QPixmap(grid_size, grid_size)
-    pixmap.fill(QColor('#FFF2F2'))
+    pixmap.fill(QColor('#FFF5F5'))
     
     painter = QPainter(pixmap)
     try:
-        # Minor lines every 10px
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        # Minor lines every 1 mm
         minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
         painter.setPen(minor_pen)
         for i in range(1, 5):
-            x = i * 10
+            x = i * minor_step
             painter.drawLine(x, 0, x, grid_size)
             painter.drawLine(0, x, grid_size, x)
             
-        # Major lines every 50px
-        major_pen = QPen(QColor('#FFA6A6'), 1.0, Qt.SolidLine)
+        # Major lines every 5 mm
+        major_pen = QPen(QColor('#FFB3B3'), 1.0, Qt.SolidLine)
         painter.setPen(major_pen)
         painter.drawLine(0, 0, grid_size, 0)
         painter.drawLine(0, 0, 0, grid_size)
@@ -75,7 +88,8 @@ def create_plot_grid(plot_area: QWidget, leads: List[str], click_handler: Callab
     for i in range(len(leads)):
         plot_widget = pg.PlotWidget()
         plot_widget.setBackground(create_pink_grid_brush())
-        plot_widget.showGrid(x=False, y=False)
+        plot_widget.setStyleSheet("border: 1px solid black;")
+        plot_widget.showGrid(x=True, y=True, alpha=0.12)
         
         # Hide Y-axis labels for cleaner display
         plot_widget.getAxis('left').setTicks([])

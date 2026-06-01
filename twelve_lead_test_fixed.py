@@ -43,7 +43,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QGroupBox, QFileDialog,
     QStackedLayout, QGridLayout, QSizePolicy, QMessageBox, QFormLayout, QLineEdit, QFrame, QApplication, QDialog
 )
-from PyQt5.QtGui import QFont, QColor, QPainter, QBrush
+from PyQt5.QtGui import QFont, QColor, QPainter, QBrush, QPen, QPixmap
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QDateTime, QRect 
 
 # Matplotlib imports (still used for detailed/overlay views)
@@ -87,6 +87,47 @@ from .plotting.plot_widgets import create_plot_grid, LEAD_COLORS_PLOT
 
 # Import lead-off detection (CRITICAL FIX #3)
 from .lead_off_detection import detect_lead_off, check_all_leads_quality
+
+
+def create_pink_grid_brush():
+    """Return a tiled light-pink ECG paper brush with 1 mm / 5 mm grid lines."""
+    from PyQt5.QtCore import Qt
+
+    app = QApplication.instance()
+    dpi = 96.0
+    try:
+        screen = app.primaryScreen() if app else None
+        if screen is not None:
+            dpi = float(screen.logicalDotsPerInchX() or screen.logicalDotsPerInch() or dpi)
+    except Exception:
+        dpi = 96.0
+
+    px_per_mm = max(1.0, dpi / 25.4)
+    minor_step = max(2, int(round(px_per_mm)))
+    grid_size = minor_step * 5
+    pixmap = QPixmap(grid_size, grid_size)
+    pixmap.fill(QColor('#FFF5F5'))
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
+        painter.setPen(minor_pen)
+        for i in range(1, 5):
+            pos = i * minor_step
+            painter.drawLine(pos, 0, pos, grid_size)
+            painter.drawLine(0, pos, grid_size, pos)
+
+        major_pen = QPen(QColor('#FFB3B3'), 1.0, Qt.SolidLine)
+        painter.setPen(major_pen)
+        painter.drawLine(0, 0, grid_size, 0)
+        painter.drawLine(0, 0, 0, grid_size)
+        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
+        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
+    finally:
+        painter.end()
+
+    return QBrush(pixmap)
 
 # Import smooth display module for jitter-free wave plotting
 from .smooth_display import SmoothECGDisplay
@@ -241,7 +282,7 @@ class LiveLeadWindow(QWidget):
         self.canvas = FigureCanvas(self.fig)
         layout.addWidget(self.canvas)
         
-        self.line, = self.ax.plot([], [], color=color, linewidth=0.7)
+        self.line, = self.ax.plot([], [], color=color, linewidth=1.0)
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(50)  # 20 FPS
@@ -1157,11 +1198,13 @@ class ECGTestPage(QWidget):
             'V6': '#8B0000'      # Dark Red (very dark, same as I for contrast)
         }
         
+        # Match the report paper: light pink ECG grid with black lead labels/traces.
         positions = [(i, j) for i in range(4) for j in range(3)]
         for i in range(len(self.leads)):
             plot_widget = pg.PlotWidget()
-            plot_widget.setBackground('w')
-            plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            plot_widget.setBackground(create_pink_grid_brush())
+            plot_widget.setStyleSheet("border: 1px solid black;")
+            plot_widget.showGrid(x=True, y=True, alpha=0.12)
             # Hide Y-axis labels for cleaner display
             plot_widget.getAxis('left').setTicks([])
             plot_widget.getAxis('left').setLabel('')
@@ -1171,7 +1214,7 @@ class ECGTestPage(QWidget):
             lead_name = self.leads[i]
             lead_color = lead_colors.get(lead_name, '#000000')
             
-            plot_widget.setTitle(self.leads[i], color=lead_color, size='10pt')
+            plot_widget.setTitle(self.leads[i], color='k', size='10pt')
             # Set fixed Y-range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
             if lead_name == 'aVR':
                 y_min, y_max = -4095, 0
@@ -1199,7 +1242,7 @@ class ECGTestPage(QWidget):
             row, col = positions[i]
             grid.addWidget(plot_widget, row, col)
             # Enable anti-aliasing for smooth waves (data smoothing is applied separately)
-            data_line = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=0.7, antialias=True))
+            data_line = plot_widget.plot(pen=pg.mkPen(color='k', width=1.0, antialias=True))
 
             self.plot_widgets.append(plot_widget)
             self.data_lines.append(data_line)
@@ -6592,7 +6635,7 @@ class ECGTestPage(QWidget):
                             FigureCanvasAgg(fig)
                             ax = fig.add_subplot(111)
                             time_axis = _np.linspace(0, 10, len(arr))
-                            ax.plot(time_axis, arr, color='black', linewidth=0.7)
+                            ax.plot(time_axis, arr, color='black', linewidth=1.0)
                             ax.set_xlim(0, 10)
                             ax.set_xticks([0, 2, 4, 6, 8, 10])
                             ax.set_xticklabels(['0s', '2s', '4s', '6s', '8s', '10s'])
@@ -8926,6 +8969,44 @@ class ECGTestPage(QWidget):
             if hasattr(self, 'elapsed_timer') and self.elapsed_timer:
                 self.elapsed_timer.stop()
                 self.elapsed_timer.deleteLater()
+
+            # Stop live BPM worker before Qt tears down the page.
+            if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                try:
+                    if self._bpm_ctrl.is_running:
+                        self._bpm_ctrl.stop()
+                    if getattr(self._bpm_ctrl, 'display_bar', None) is not None:
+                        self._bpm_ctrl.display_bar.cleanup()
+                except Exception:
+                    pass
+                self._bpm_ctrl = None
+
+            # Stop any active Holter recording / analysis threads.
+            if hasattr(self, '_holter_writer') and self._holter_writer is not None:
+                try:
+                    if self._holter_writer.is_running:
+                        self._holter_writer.stop()
+                except Exception:
+                    pass
+                self._holter_writer = None
+
+            if hasattr(self, '_holter_worker') and self._holter_worker is not None:
+                try:
+                    self._holter_worker.stop(wait=True)
+                except Exception:
+                    pass
+                self._holter_worker = None
+
+            # Wait briefly for any report-generation QThread to finish.
+            if hasattr(self, '_report_thread') and self._report_thread is not None:
+                try:
+                    if self._report_thread.isRunning():
+                        self._report_thread.quit()
+                        self._report_thread.wait(3000)
+                except Exception:
+                    pass
+                self._report_thread = None
+                self._report_worker = None
             
             # Close serial connection
             if hasattr(self, 'serial_reader') and self.serial_reader:
