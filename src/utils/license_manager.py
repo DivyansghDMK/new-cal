@@ -129,6 +129,51 @@ def _append_audit_event(action: str, **details) -> None:
         print(f"[License] Could not write audit event {action}: {e}")
 
 
+def _current_unix_time() -> int:
+    """Return the current local unix timestamp."""
+    return int(time.time())
+
+
+def _version_tuple(version: str) -> Tuple[int, ...]:
+    """Convert a dotted version string into a tuple for safe comparison."""
+    parts: List[int] = []
+    for chunk in str(version or "").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) if parts else (0,)
+
+
+def _is_minimum_version_forced(minimum_version: str) -> bool:
+    """Return True when the running build is below the requested minimum."""
+    if not minimum_version:
+        return False
+    return _version_tuple(SOFTWARE_VERSION) < _version_tuple(minimum_version)
+
+
+def _stable_hardware_fingerprint() -> str:
+    """
+    Return a stable hardware fingerprint derived from motherboard / BIOS / CPU.
+
+    This is used as a compatibility anchor so minor upgrades like SSD, RAM,
+    GPU, or monitor changes do not unnecessarily invalidate an otherwise valid
+    license token.
+    """
+    fields = _collect_wmi_fields()
+    raw = "|".join([
+        fields.get("bios_serial", ""),
+        fields.get("mb_uuid", ""),
+        fields.get("cpu_id", ""),
+    ])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _license_meta_exists() -> bool:
+    """Return True when the mutable sidecar metadata file is present."""
+    return _META_FILE.exists()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PILLAR 1 — Hardware Fingerprint (WMI 5-field SHA-256)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -578,10 +623,16 @@ def load_token_file() -> Optional[Dict]:
                     mapped["last_successful_server_time"] = payload["last_successful_server_time"]
                 if "last_local_time" in payload:
                     mapped["last_local_time"] = payload["last_local_time"]
+                if "stable_fingerprint" in payload:
+                    mapped["stable_fingerprint"] = payload["stable_fingerprint"]
+                if "stable_hardware_fingerprint" in payload:
+                    mapped["stable_fingerprint"] = payload["stable_hardware_fingerprint"]
                 if "offline_grace_days" in payload:
                     mapped["offline_grace_days"] = payload["offline_grace_days"]
                 if "minimum_version" in payload:
                     mapped["minimum_version"] = payload["minimum_version"]
+                if "force_upgrade" in payload:
+                    mapped["force_upgrade"] = payload["force_upgrade"]
                 if "exp" in payload:
                     mapped["expires"] = payload["exp"]
                 # Merge sidecar metadata — overrides stale JWT claims with
@@ -595,10 +646,16 @@ def load_token_file() -> Optional[Dict]:
                     mapped["last_successful_server_time"] = meta["last_successful_server_time"]
                 if "last_local_time" in meta:
                     mapped["last_local_time"] = meta["last_local_time"]
+                if "stable_fingerprint" in meta:
+                    mapped["stable_fingerprint"] = meta["stable_fingerprint"]
+                if "stable_hardware_fingerprint" in meta:
+                    mapped["stable_fingerprint"] = meta["stable_hardware_fingerprint"]
                 if "offline_grace_days" in meta:
                     mapped["offline_grace_days"] = meta["offline_grace_days"]
                 if "minimum_version" in meta:
                     mapped["minimum_version"] = meta["minimum_version"]
+                if "force_upgrade" in meta:
+                    mapped["force_upgrade"] = meta["force_upgrade"]
                 if "fingerprint" in meta:
                     mapped["fingerprint"] = meta["fingerprint"]
                 if "seat_number" in meta:
@@ -762,6 +819,7 @@ def register_device(
     body = {
         "license_key": license_key.strip().upper(),
         "hardware_fingerprint": fingerprint,
+        "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
         "rhythmulta_serial": rhythmulta_serial,
         "rhythmultra_serial": rhythmulta_serial,
         "full_name": full_name,
@@ -806,6 +864,7 @@ def heartbeat(token_data: Dict) -> Dict:
     body = {
         "token": load_raw_token(),
         "hardware_fingerprint": current_fp,
+        "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
         "rhythmulta_serial": current_rhythmulta_serial,
         "rhythmultra_serial": current_rhythmulta_serial,
         "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
@@ -841,15 +900,95 @@ def validate_with_server(license_key: str, fingerprint: str) -> Dict:
 def activate_with_server(license_key: str, fingerprint: str, machine_name: str = "") -> Dict:
     """Legacy: kept for compatibility. Calls /activate on old-schema servers."""
     machine_ctx = get_machine_context()
+    rhythmulta_serial = get_rhythmultra_serial() or ""
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,
+        "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
         "machine_name": machine_name or machine_ctx["machine_name"],
         "machine_os": machine_ctx["machine_os"],
         "machine_host": machine_ctx["machine_name"],
+        "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
+        "pc_name": machine_ctx.get("machine_name", ""),
+        "windows_version": machine_ctx.get("windows_version", ""),
+        "rhythmulta_serial": rhythmulta_serial,
+        "rhythmultra_serial": rhythmulta_serial,
     }
     result = _post_json("activate", body)
     _verify_server_sig(result)
+    return result
+
+
+def restore_license_from_server(license_key: Optional[str] = None) -> Dict:
+    """
+    Attempt to rebuild a missing token or sidecar metadata from the server.
+
+    This is used when the local token files were deleted or the metadata sidecar
+    is missing, but the user still has a known license key and the server is
+    reachable.
+    """
+    now = _current_unix_time()
+    key = (license_key or load_stored_key() or "").strip().upper()
+    if not key:
+        return {
+            "valid": False,
+            "error": "No stored license key available for recovery.",
+        }
+
+    fingerprint = get_hardware_fingerprint()
+    machine_ctx = get_machine_context()
+    rhythmulta_serial = get_rhythmultra_serial() or ""
+    result = activate_with_server(key, fingerprint, machine_ctx.get("machine_name", ""))
+
+    error_code = str(result.get("error", "")).strip().upper()
+    if error_code == "DEVICE_ALREADY_REGISTERED":
+        _append_audit_event(
+            "DUPLICATE_ACTIVATION_ATTEMPT",
+            license_key=key,
+            rhythmulta_serial=rhythmulta_serial,
+            machine_serial_id=machine_ctx.get("machine_serial_id", ""),
+        )
+        return result
+
+    if result.get("valid") or result.get("authorized"):
+        token_payload = result.get("token")
+        if isinstance(token_payload, str) and token_payload.strip():
+            save_token_file(token_payload)
+        elif isinstance(token_payload, dict):
+            save_token_file(token_payload.get("payload", token_payload))
+        else:
+            remember_valid_license(key, fingerprint, result)
+
+        seat_number = result.get("seat_number", 1)
+        last_server_time = int(
+            result.get("last_successful_server_time")
+            or result.get("last_server_check")
+            or now
+        )
+        meta = {
+            "fingerprint": fingerprint,
+            "stable_fingerprint": _stable_hardware_fingerprint(),
+            "last_server_check": last_server_time,
+            "last_successful_server_validation": last_server_time,
+            "last_successful_server_time": last_server_time,
+            "last_local_time": now,
+            "seat_number": seat_number,
+        }
+        _save_license_meta(meta)
+        _append_audit_event(
+            "LICENSE_RECOVERED",
+            license_key=key,
+            seat_number=seat_number,
+            machine_serial_id=machine_ctx.get("machine_serial_id", ""),
+            rhythmulta_serial=rhythmulta_serial,
+        )
+        result = dict(result)
+        result["recovered"] = True
+        return result
+
+    if result.get("offline"):
+        result = dict(result)
+        result["recovered"] = False
     return result
 
 
@@ -892,36 +1031,108 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     .reason describe the first failing check.
     """
     res = StartupCheckResult()
-    now = int(time.time())
+    now = _current_unix_time()
     debug_enabled = os.getenv("CARDIOX_LICENSE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    token_missing = not token_file_exists()
+    meta_missing = not _license_meta_exists()
 
-    # ── Check 1: Token file exists ────────────────────────────────────────────
-    if not token_file_exists():
-        res.step_failed = 1
-        res.reason = "License not found.\nPlease register your device."
-        return res
+    if token_missing or meta_missing:
+        stored_key = load_stored_key()
+        if stored_key:
+            recovery_result = restore_license_from_server(stored_key)
+            if debug_enabled:
+                print(f"[License][DEBUG] recovery={recovery_result}")
+            if str(recovery_result.get("error", "")).strip().upper() == "DEVICE_ALREADY_REGISTERED":
+                res.step_failed = 1
+                res.reason = (
+                    "This RhythmUltra device is already registered to another installation.\n\n"
+                    "Please contact Deckmount Support."
+                )
+                return res
+            if recovery_result.get("valid") or recovery_result.get("authorized"):
+                token_missing = not token_file_exists()
+                meta_missing = not _license_meta_exists()
+        if token_missing:
+            res.step_failed = 1
+            res.reason = "License not found.\nPlease register your device."
+            return res
 
     # ── Check 2: Token HMAC valid (not tampered) ──────────────────────────────
     token = load_token_file()
     if token is None:
-        res.step_failed = 2
-        res.reason = "License data integrity check failed."
+        res.step_failed = 2 if not token_missing else 1
+        res.reason = "License data integrity check failed." if not token_missing else "License not found.\nPlease register your device."
         return res
     res.token = token
 
-    # ── Check 3: Hardware fingerprint matches ─────────────────────────────────
+    meta = _load_license_meta()
     current_fp = get_hardware_fingerprint()
+    current_stable_fp = _stable_hardware_fingerprint()
     stored_fp = token.get("fingerprint", "")
+    stored_stable_fp = token.get("stable_fingerprint", meta.get("stable_fingerprint", ""))
+
     if debug_enabled:
         current_fields = _collect_wmi_fields()
+        present_fields = sum(1 for value in current_fields.values() if value)
         print(
             "[License][DEBUG] check3 "
             f"current_fp={current_fp} stored_fp={stored_fp} "
-            f"fields={current_fields} token_seat={token.get('seat_number', '')}"
+            f"stable_fp={current_stable_fp} stored_stable_fp={stored_stable_fp} "
+            f"fields={current_fields} present_fields={present_fields} "
+            f"token_seat={token.get('seat_number', '')}"
         )
-    if stored_fp and not hmac.compare_digest(current_fp, stored_fp):
-        # Always ask the server first so a revoked license is reported as a
-        # revocation, not masked as a machine mismatch.
+    else:
+        current_fields = _collect_wmi_fields()
+        present_fields = sum(1 for value in current_fields.values() if value)
+
+    last_local_time = int(
+        token.get("last_local_time")
+        or meta.get("last_local_time")
+        or 0
+    )
+    last_server_time = int(
+        token.get("last_successful_server_time")
+        or token.get("last_successful_server_validation")
+        or meta.get("last_successful_server_time")
+        or meta.get("last_successful_server_validation")
+        or token.get("last_server_check", 0)
+        or meta.get("last_server_check", 0)
+        or 0
+    )
+    if last_local_time and now < last_local_time:
+        _append_audit_event(
+            "CLOCK_ROLLBACK_DETECTED",
+            current_local_time=now,
+            last_local_time=last_local_time,
+            last_successful_server_time=last_server_time,
+            license_key=token.get("license_key", ""),
+        )
+        res.step_failed = 5
+        res.reason = (
+            "System clock manipulation detected.\n\n"
+            "Please correct your system date and time."
+        )
+        return res
+
+    if token.get("force_upgrade") or _is_minimum_version_forced(str(token.get("minimum_version", ""))):
+        minimum_version = str(token.get("minimum_version", "")).strip() or SOFTWARE_VERSION
+        _append_audit_event(
+            "FORCE_UPGRADE_ENFORCED",
+            minimum_version=minimum_version,
+            running_version=SOFTWARE_VERSION,
+            license_key=token.get("license_key", ""),
+        )
+        res.step_failed = 5
+        res.reason = "A software update is required before continuing."
+        return res
+
+    # ── Check 3: Hardware fingerprint matches ─────────────────────────────────
+    fingerprint_matches = bool(stored_fp) and hmac.compare_digest(current_fp, stored_fp)
+    stable_matches = bool(stored_stable_fp) and hmac.compare_digest(current_stable_fp, stored_stable_fp)
+
+    if stored_fp and not fingerprint_matches and not stable_matches:
+        # Ask the server first so revocation and token problems do not get
+        # misreported as a local machine mismatch.
         try:
             hb_result = heartbeat(token)
             if debug_enabled:
@@ -957,26 +1168,56 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 )
                 return res
 
-            res.step_failed = 3
-            res.reason = "This license is registered to a different machine."
-            return res
+            if hb_result.get("force_upgrade") or _is_minimum_version_forced(str(hb_result.get("minimum_version", ""))):
+                minimum_version = str(hb_result.get("minimum_version", "")).strip() or SOFTWARE_VERSION
+                _append_audit_event(
+                    "FORCE_UPGRADE_ENFORCED",
+                    minimum_version=minimum_version,
+                    running_version=SOFTWARE_VERSION,
+                    license_key=token.get("license_key", ""),
+                )
+                res.step_failed = 5
+                res.reason = "A software update is required before continuing."
+                return res
 
             if hb_result.get("valid", False) or hb_result.get("authorized", False):
-                # Save metadata to sidecar — do NOT overwrite the server JWT.
-                meta = {"fingerprint": current_fp, "last_server_check": int(hb_result.get("last_server_check", now))}
+                last_server_value = int(
+                    hb_result.get("last_successful_server_time")
+                    or hb_result.get("last_server_check")
+                    or now
+                )
+                meta_update = {
+                    "fingerprint": current_fp,
+                    "stable_fingerprint": current_stable_fp,
+                    "last_server_check": last_server_value,
+                    "last_successful_server_validation": last_server_value,
+                    "last_successful_server_time": last_server_value,
+                    "last_local_time": now,
+                }
                 if "seat_number" in hb_result:
-                    meta["seat_number"] = hb_result["seat_number"]
+                    meta_update["seat_number"] = hb_result["seat_number"]
                     token["seat_number"] = hb_result["seat_number"]
-                _save_license_meta(meta)
+                _save_license_meta(meta_update)
                 token["fingerprint"] = current_fp
-                token["last_server_check"] = meta["last_server_check"]
+                token["stable_fingerprint"] = current_stable_fp
+                token["last_server_check"] = last_server_value
+                token["last_successful_server_validation"] = last_server_value
+                token["last_successful_server_time"] = last_server_value
+                token["last_local_time"] = now
                 res.token = token
             elif present_fields <= 2:
-                # If Windows is no longer exposing the WMI identifiers we
-                # originally used, treat this as a degraded local identity
-                # signal instead of a hard machine change.
-                _save_license_meta({"fingerprint": current_fp})
+                # When WMI is degraded, fall back to the local machine identity
+                # instead of hard-failing the license.
+                _save_license_meta(
+                    {
+                        "fingerprint": current_fp,
+                        "stable_fingerprint": current_stable_fp,
+                        "last_local_time": now,
+                    }
+                )
                 token["fingerprint"] = current_fp
+                token["stable_fingerprint"] = current_stable_fp
+                token["last_local_time"] = now
                 print(
                     "[License] Hardware fingerprint source degraded; "
                     "accepting local machine identity fallback."
@@ -990,8 +1231,16 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 return res
         except Exception:
             if present_fields <= 2:
-                _save_license_meta({"fingerprint": current_fp})
+                _save_license_meta(
+                    {
+                        "fingerprint": current_fp,
+                        "stable_fingerprint": current_stable_fp,
+                        "last_local_time": now,
+                    }
+                )
                 token["fingerprint"] = current_fp
+                token["stable_fingerprint"] = current_stable_fp
+                token["last_local_time"] = now
                 print(
                     "[License] Hardware fingerprint source degraded; "
                     "accepting local machine identity fallback."
@@ -1003,6 +1252,19 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                     "Contact Deckmount support if your hardware has changed."
                 )
                 return res
+    elif stable_matches and not fingerprint_matches:
+        # Exact fingerprint changed, but the core motherboard / BIOS / CPU
+        # identity still matches.  This tolerates minor hardware upgrades.
+        _save_license_meta(
+            {
+                "fingerprint": current_fp,
+                "stable_fingerprint": current_stable_fp,
+                "last_local_time": now,
+            }
+        )
+        token["fingerprint"] = current_fp
+        token["stable_fingerprint"] = current_stable_fp
+        token["last_local_time"] = now
 
     # ── Check 4: RhythmUlta connected and serial matches (NON-NEGOTIABLE) ─────
     usb_serial = get_rhythmulta_serial()
@@ -1013,74 +1275,107 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         return res
 
     stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
-    # If stored_serial is empty the device was never bound — allow first use
+    # If stored_serial is empty the device was never bound — allow first use.
     if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
         res.step_failed = 4
         res.reason = "Unauthorized RhythmUltra device connected."
         return res
 
-    # ── Check 5: Server heartbeat (Dynamic Check) ─────────────────────────────
-    # Always attempt online server validation if connected, falling back to offline grace cache if unreachable.
-    needs_heartbeat = True
-
-    if needs_heartbeat:
-        hb_result = heartbeat(token)
-        if hb_result.get("offline"):
-            # Server unreachable — apply offline grace
-            if token.get("signature_invalid"):
-                res.step_failed = 2
-                res.reason = (
-                    "License token is invalid or has been tampered with.\n"
-                    "An internet connection is required to verify your license."
-                )
-                return res
-
-            last_check = int(
-                token.get("last_successful_server_validation")
-                or token.get("last_server_check", 0)
+    # ── Check 5: Server heartbeat ─────────────────────────────────────────────
+    hb_result = heartbeat(token)
+    if hb_result.get("offline"):
+        if token.get("signature_invalid"):
+            res.step_failed = 2
+            res.reason = (
+                "License token is invalid or has been tampered with.\n"
+                "An internet connection is required to verify your license."
             )
-            elapsed = now - last_check
-            grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
-            if grace_remaining <= 0:
-                res.step_failed = 5
-                res.reason = (
-                    "License verification required.\n"
-                    "Please connect to the internet."
-                )
-                return res
-            # Grace still active — let through, update nothing
-            print(
-                f"[License] Offline — {int(grace_remaining / 86400)} day(s) of grace remaining."
-            )
-            res.ok = True
-            res.offline_mode = True
-            res.reason = f"Offline mode active. {int(grace_remaining / 86400)} day(s) remaining before verification is required."
             return res
-        elif hb_result.get("revoked") or (not hb_result.get("valid", False) and not hb_result.get("authorized", False)):
+
+        last_check = int(
+            token.get("last_successful_server_time")
+            or token.get("last_successful_server_validation")
+            or token.get("last_server_check", 0)
+        )
+        elapsed = now - last_check
+        grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
+        if grace_remaining <= 0:
             res.step_failed = 5
-            res.reason = hb_result.get(
-                "message",
-                "License has been revoked. Please contact Deckmount support.",
+            res.reason = (
+                "License verification required.\n"
+                "Please connect to the internet."
             )
             return res
-        else:
-            # Successful heartbeat — update sidecar metadata ONLY.
-            # CRITICAL: Do NOT call save_token_file(token) here — that would
-            # overwrite the server-issued JWT with a client-signed version,
-            # causing the next server heartbeat to fail with an invalid token error.
-            meta = {
-                "fingerprint": current_fp,
-                "last_server_check": now,
-                "last_successful_server_validation": now,
-            }
-            if "seat_number" in hb_result:
-                meta["seat_number"] = hb_result["seat_number"]
-                token["seat_number"] = hb_result["seat_number"]
-            _save_license_meta(meta)
-            token["fingerprint"] = current_fp
-            token["last_server_check"] = now
-            token["last_successful_server_validation"] = now
-            print(f"[License] Heartbeat OK — metadata updated (JWT preserved).")
+
+        offline_meta = {
+            "fingerprint": token.get("fingerprint", current_fp),
+            "stable_fingerprint": token.get("stable_fingerprint", current_stable_fp),
+            "last_local_time": now,
+            "last_server_check": last_check,
+            "last_successful_server_validation": token.get("last_successful_server_validation", last_check),
+            "last_successful_server_time": token.get("last_successful_server_time", last_check),
+        }
+        if "seat_number" in token:
+            offline_meta["seat_number"] = token["seat_number"]
+        _save_license_meta(offline_meta)
+
+        print(
+            f"[License] Offline — {int(grace_remaining / 86400)} day(s) of grace remaining."
+        )
+        res.ok = True
+        res.offline_mode = True
+        res.reason = (
+            f"Offline mode active. {int(grace_remaining / 86400)} day(s) remaining before verification is required."
+        )
+        return res
+
+    if hb_result.get("revoked") or (not hb_result.get("valid", False) and not hb_result.get("authorized", False)):
+        res.step_failed = 5
+        res.reason = hb_result.get(
+            "message",
+            "License has been revoked. Please contact Deckmount support.",
+        )
+        return res
+
+    if hb_result.get("force_upgrade") or _is_minimum_version_forced(str(hb_result.get("minimum_version", ""))):
+        minimum_version = str(hb_result.get("minimum_version", "")).strip() or SOFTWARE_VERSION
+        _append_audit_event(
+            "FORCE_UPGRADE_ENFORCED",
+            minimum_version=minimum_version,
+            running_version=SOFTWARE_VERSION,
+            license_key=token.get("license_key", ""),
+        )
+        res.step_failed = 5
+        res.reason = "A software update is required before continuing."
+        return res
+
+    # Successful heartbeat — update sidecar metadata ONLY.
+    # CRITICAL: Do NOT call save_token_file(token) here — that would
+    # overwrite the server-issued JWT with a client-signed version.
+    server_time = int(
+        hb_result.get("last_successful_server_time")
+        or hb_result.get("last_server_check")
+        or now
+    )
+    meta = {
+        "fingerprint": current_fp,
+        "stable_fingerprint": current_stable_fp,
+        "last_server_check": server_time,
+        "last_successful_server_validation": server_time,
+        "last_successful_server_time": server_time,
+        "last_local_time": now,
+    }
+    if "seat_number" in hb_result:
+        meta["seat_number"] = hb_result["seat_number"]
+        token["seat_number"] = hb_result["seat_number"]
+    _save_license_meta(meta)
+    token["fingerprint"] = current_fp
+    token["stable_fingerprint"] = current_stable_fp
+    token["last_server_check"] = server_time
+    token["last_successful_server_validation"] = server_time
+    token["last_successful_server_time"] = server_time
+    token["last_local_time"] = now
+    print(f"[License] Heartbeat OK — metadata updated (JWT preserved).")
 
     # ── All checks passed ─────────────────────────────────────────────────────
     res.ok = True
@@ -1246,11 +1541,14 @@ def remember_valid_license(
     token_data = {
         "license_key": license_key.strip().upper(),
         "fingerprint": fingerprint,
+        "stable_fingerprint": _stable_hardware_fingerprint(),
         "rhythmulta_serial": "",   # populated on first real startup check
         "rhythmultra_serial": "",   # populated on first real startup check
         "seat_number": 1,
         "last_server_check": now,
         "last_successful_server_validation": now,
+        "last_successful_server_time": now,
+        "last_local_time": now,
     }
     if isinstance(result, dict):
         for k in ("tier", "expires", "tier_name"):

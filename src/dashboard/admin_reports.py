@@ -102,6 +102,31 @@ class AdminReportsDialog(QDialog):
         """)
 
         layout = QVBoxLayout(self)
+
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        self.restore_license_btn = QPushButton("Restore License")
+        self.restore_license_btn.setToolTip("Attempt to recover a missing license token from the server")
+        self.restore_license_btn.setStyleSheet("""
+            QPushButton {
+                background: #ffffff;
+                color: #e65c00;
+                border: 2px solid #e65c00;
+                border-radius: 10px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: #fff3e8;
+            }
+            QPushButton:pressed {
+                background: #ffe0c7;
+            }
+        """)
+        self.restore_license_btn.clicked.connect(self.restore_license)
+        action_row.addWidget(self.restore_license_btn)
+        layout.addLayout(action_row)
         
         # Create tab widget
         self.tabs = QTabWidget()
@@ -139,6 +164,47 @@ class AdminReportsDialog(QDialog):
         self.tabs.addTab(self.channels_tab, "Channels")
         
         layout.addWidget(self.tabs)
+
+    def restore_license(self):
+        """Attempt to recover a missing or deleted license token from the server."""
+        reply = QMessageBox.question(
+            self,
+            "Restore License",
+            "Attempt to restore the local license from the server?\n\n"
+            "This will try to recover missing license files for the current machine.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            from utils.license_manager import restore_license_from_server
+            result = restore_license_from_server()
+            if result.get("valid") or result.get("authorized") or result.get("recovered"):
+                QMessageBox.information(
+                    self,
+                    "License Restored",
+                    "The license was recovered successfully.",
+                )
+                return
+
+            err = str(result.get("error") or result.get("message") or "Unable to restore license.").strip()
+            if err.upper() == "DEVICE_ALREADY_REGISTERED":
+                QMessageBox.critical(
+                    self,
+                    "Device Already Registered",
+                    "This RhythmUltra device is already registered to another installation.\n\n"
+                    "Please contact Deckmount Support.",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Restore Failed",
+                    err,
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Restore Failed", f"Unable to restore license: {e}")
         
     def create_reports_tab(self):
         """Create the Reports tab widget"""
@@ -1935,5 +2001,4 @@ Are you absolutely sure you want to delete this user?
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to link user to reports: {str(e)}")
-
 

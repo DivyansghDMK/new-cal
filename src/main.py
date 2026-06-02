@@ -1660,6 +1660,10 @@ class LoginRegisterDialog(QDialog):
             result = run_startup_checks(force_heartbeat=False)
             if not result.ok:
                 logger.warning(f"Login blocked due to license failure: {result.reason}")
+                is_explicit_revocation = (
+                    result.step_failed == 5
+                    and "revoked" in result.reason.lower()
+                )
                 QMessageBox.critical(
                     self,
                     {
@@ -1671,43 +1675,10 @@ class LoginRegisterDialog(QDialog):
                     }.get(result.step_failed, "License Blocked"),
                     result.reason,
                 )
-                if result.step_failed in {1, 2} or (
-                    result.step_failed == 5 and "revoked" in result.reason.lower()
-                ):
+                if result.step_failed in {1, 2} or is_explicit_revocation:
                     clear_stored_key()
                     clear_license_cache()
                 return
-                is_explicit_revocation = (
-                    result.step_failed == 5
-                    and "revoked" in result.reason.lower()
-                )
-                if is_explicit_revocation:
-                    QMessageBox.warning(
-                        self,
-                        "License Revoked",
-                        f"License has been revoked: {result.reason}\n\nPlease sign up again in the Sign Up tab.",
-                    )
-                    clear_stored_key()
-                    clear_license_cache()
-                    return
-                elif result.step_failed == 4:
-                    # Device temporarily disconnected — warn but still allow login
-                    reply = QMessageBox.question(
-                        self,
-                        "Device Not Connected",
-                        f"{result.reason}\n\nDo you want to continue without device verification? (Not recommended)",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No,
-                    )
-                    if reply != QMessageBox.Yes:
-                        return
-                else:
-                    # Offline or other non-revocation failure — warn but allow
-                    QMessageBox.warning(
-                        self,
-                        "License Check Warning",
-                        f"{result.reason}\n\nIf this persists, please contact Deckmount support.",
-                    )
         except Exception as le:
             logger.warning(f"Failed to check license during login: {le}")
         # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
@@ -2408,6 +2379,10 @@ def main():
                 result = run_startup_checks(force_heartbeat=False)
                 if not result.ok:
                     logger.warning(f"Startup license checks failed: {result.reason}")
+                    is_explicit_revocation = (
+                        result.step_failed == 5
+                        and "revoked" in result.reason.lower()
+                    )
                     QMessageBox.critical(
                         None,
                         {
@@ -2419,45 +2394,10 @@ def main():
                         }.get(result.step_failed, "License Blocked"),
                         result.reason,
                     )
-                    if result.step_failed in {1, 2} or (
-                        result.step_failed == 5 and "revoked" in result.reason.lower()
-                    ):
+                    if result.step_failed in {1, 2} or is_explicit_revocation:
                         clear_stored_key()
                         clear_license_cache()
                     return
-                    # Only clear license and redirect to signup on EXPLICIT server revocation.
-                    # For device-not-connected (step 4) or offline/expired-grace (step 5 non-revoked),
-                    # show a warning but keep the license so the user can retry.
-                    is_explicit_revocation = (
-                        result.step_failed == 5
-                        and "revoked" in result.reason.lower()
-                    )
-                    is_no_token = result.step_failed == 1
-                    if is_explicit_revocation or is_no_token:
-                        title = "License Revoked" if is_explicit_revocation else "License Not Found"
-                        message_box = QMessageBox.critical if is_explicit_revocation else QMessageBox.warning
-                        message_box(
-                            None,
-                            title,
-                            f"{result.reason}\n\nYou will be redirected to the signup page to register again.",
-                        )
-                        clear_stored_key()
-                        clear_license_cache()
-                        if is_explicit_revocation:
-                            return
-                    elif result.step_failed == 4:
-                        QMessageBox.warning(
-                            None,
-                            "Device Not Connected",
-                            f"{result.reason}\n\nPlease connect your RhythmUltra device and restart the application.",
-                        )
-                    else:
-                        # Offline / grace expired / other — warn but keep license
-                        QMessageBox.warning(
-                            None,
-                            "License Check Warning",
-                            f"{result.reason}\n\nIf this persists, please contact Deckmount support.",
-                        )
             else:
                 logger.info("No license key found. Redirecting directly to signup page.")
         except Exception as e:

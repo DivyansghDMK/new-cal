@@ -782,6 +782,20 @@ class RegistrationDialog(QDialog):
             self._show_key_dialog(key, seat, tier_name(tier))
         else:
             msg = result.get("message") or result.get("error") or "Registration failed."
+            err = str(result.get("error", "")).strip().upper()
+            if err == "DEVICE_ALREADY_REGISTERED":
+                self._set_status(
+                    "This RhythmUltra device is already registered to another installation.\nPlease contact Deckmount Support.",
+                    "#c0392b",
+                )
+                QMessageBox.critical(
+                    self,
+                    "Device Already Registered",
+                    "This RhythmUltra device is already registered to another installation.\n\n"
+                    "Please contact Deckmount Support.",
+                )
+                self._register_btn.setEnabled(True)
+                return
             self._set_status(f"Error: {msg}", "#e74c3c")
             self._register_btn.setEnabled(True)
 
@@ -1224,6 +1238,16 @@ class LicenseDialog(QDialog):
             QTimer.singleShot(1200, self.accept)
         else:
             msg = result.get("message", "Validation failed.")
+            err = str(result.get("error", "")).strip().upper()
+            if err == "DEVICE_ALREADY_REGISTERED":
+                QMessageBox.critical(
+                    self,
+                    "Device Already Registered",
+                    "This RhythmUltra device is already registered to another installation.\n\n"
+                    "Please contact Deckmount Support.",
+                )
+                self.reject()
+                return
             if result.get("revoked") or "revoked" in msg.lower():
                 QMessageBox.critical(self, "License Revoked", f"{msg}\n\nContact support to restore access.")
                 self.reject()
