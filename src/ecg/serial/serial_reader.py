@@ -513,6 +513,12 @@ class SerialStreamReader:
         self.total_packets_expected = 0
         self.total_packets_lost = 0
         self.packet_loss_percent = 0.0
+        self._last_packet_counter = None
+        self._total_sequence_lost = 0
+        self._packet_loss_warnings = 0
+        self._last_silence_warn_time = 0.0
+        self.error_count = 0
+        self.consecutive_errors = 0
 
         port_name = self.ser.port if hasattr(self.ser, "port") else "unknown"
         print(f" [OK] Packet-based ECG device started on port {port_name}")

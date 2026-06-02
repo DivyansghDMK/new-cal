@@ -63,21 +63,16 @@ def _stage_json_placeholder(staging_dir: Path, dst_name: str) -> Path:
     return target
 
 
-_DEFAULT_DIST_LICENSE_SERVER_URL = (
-    "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1"
-)
+_DEFAULT_DIST_LICENSE_SERVER_URL = "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1"
 
 
 def _stage_env_for_distribution(src: Path, staging_dir: Path) -> Path | None:
     """
     Stage a .env file for distribution.
 
-    Why:
-    - The repo's `.env` commonly points LICENSE_SERVER_URL to localhost for dev.
-    - Bundling that into the EXE makes activation fail on other PCs (WinError 10061).
-
     Behavior:
-    - Copy `.env` into staging, but rewrite LICENSE_SERVER_URL if it points to localhost/127.*.
+    - Copy `.env` into staging and normalize LICENSE_SERVER_URL to the remote
+      production gateway used by the distributed app.
     - You can override the distributed URL via BUILD_LICENSE_SERVER_URL at build time.
     """
     if not src.exists():
@@ -94,22 +89,14 @@ def _stage_env_for_distribution(src: Path, staging_dir: Path) -> Path | None:
     dist_url = os.getenv("BUILD_LICENSE_SERVER_URL", "").strip() or _DEFAULT_DIST_LICENSE_SERVER_URL
 
     out_lines: list[str] = []
-    replaced = False
     for line in raw:
         stripped = line.strip()
         if stripped.startswith("LICENSE_SERVER_URL="):
-            value = stripped.split("=", 1)[1].strip()
-            lower = value.lower()
-            if lower.startswith("http://127.0.0.1") or lower.startswith("http://localhost"):
-                out_lines.append(
-                    f"LICENSE_SERVER_URL={dist_url}"
-                )
-                replaced = True
-                continue
+            out_lines.append(f"LICENSE_SERVER_URL={dist_url}")
+            continue
         out_lines.append(line)
 
-    if not replaced:
-        # Ensure the key exists for consistent behavior in frozen apps.
+    if not any(line.strip().startswith("LICENSE_SERVER_URL=") for line in out_lines):
         out_lines.append(f"\nLICENSE_SERVER_URL={dist_url}")
 
     try:

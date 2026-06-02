@@ -450,12 +450,21 @@ class Dashboard(QWidget):
         self.status_timer.start(3000)
 
         # Device Status Label
-        self.device_status_label = QLabel("Device Disconnected")
+        self.device_status_label = QLabel("RhythmUltra Not Connected")
         self.device_status_label.setFont(QFont("Arial", 10, QFont.Bold))
         self.device_status_label.setStyleSheet("color: red; margin-right: 10px;")
         self.device_status_label.setMinimumWidth(160)
         self.device_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.addWidget(self.device_status_label)
+
+        self.license_status_label = QLabel("ONLINE")
+        self.license_status_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.license_status_label.setMinimumWidth(160)
+        self.license_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.license_status_label.setStyleSheet(
+            "color: #1b5e20; background: #dcedc8; border-radius: 10px; padding: 4px 10px; margin-right: 10px;"
+        )
+        header.addWidget(self.license_status_label)
         
         self.medical_btn = QPushButton("Medical Mode")
         self.medical_btn.setCheckable(True)
@@ -2816,16 +2825,16 @@ class Dashboard(QWidget):
             # Do not update metrics for first-time users until acquisition/demo starts
             if not self.is_ecg_active():
                 if 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText("0 BPM")
+                    self.metric_labels['heart_rate'].setText("--")
                 if 'pr_interval' in self.metric_labels:
-                    self.metric_labels['pr_interval'].setText("0 ms")
+                    self.metric_labels['pr_interval'].setText("--")
                 if 'qrs_duration' in self.metric_labels:
-                    self.metric_labels['qrs_duration'].setText("0 ms")
+                    self.metric_labels['qrs_duration'].setText("--")
                 if 'qtc_interval' in self.metric_labels:
-                    self.metric_labels['qtc_interval'].setText("0")
+                    self.metric_labels['qtc_interval'].setText("--")
                 key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
                 if key in self.metric_labels:
-                    self.metric_labels[key].setText("0 ms")
+                    self.metric_labels[key].setText("--")
                 return
             
             # Allow updates in demo mode - display the values set by demo_manager
@@ -3486,7 +3495,7 @@ class Dashboard(QWidget):
                         if cached:
                             self.metric_labels['qtc_interval'].setText(cached)
                         else:
-                            self.metric_labels['qtc_interval'].setText("0")
+                            self.metric_labels['qtc_interval'].setText("--")
                 self._last_metrics_update_ts = _time.time()
                 # Ensure dashboard interpretation updates as soon as live metrics arrive.
                 # Previously this only refreshed after visiting the expanded lead view.
@@ -3504,15 +3513,15 @@ class Dashboard(QWidget):
                 default_metrics = self.calculate_standard_ecg_metrics(75)
                 if default_metrics:
                     if 'heart_rate' in self.metric_labels:
-                        self.metric_labels['heart_rate'].setText(f"{default_metrics.get('heart_rate', 0)} BPM")
+                        self.metric_labels['heart_rate'].setText("--")
                     if 'pr_interval' in self.metric_labels:
-                        self.metric_labels['pr_interval'].setText(f"{default_metrics.get('pr_interval', 0)} ms")
+                        self.metric_labels['pr_interval'].setText("--")
                     if 'qrs_duration' in self.metric_labels:
-                        self.metric_labels['qrs_duration'].setText(f"{default_metrics.get('qrs_duration', 0)} ms")
+                        self.metric_labels['qrs_duration'].setText("--")
                     if 'qtc_interval' in self.metric_labels:
-                        self.metric_labels['qtc_interval'].setText(f"{default_metrics.get('qtc_interval', 0)} ms")
+                        self.metric_labels['qtc_interval'].setText("--")
                     if 'st_interval' in self.metric_labels:
-                        self.metric_labels['st_interval'].setText(f"{default_metrics.get('st_interval', 0)} ms")
+                        self.metric_labels['st_interval'].setText("--")
         except Exception as e:
             print(f" Error updating dashboard metrics from ECG: {e}")
     
@@ -5986,6 +5995,23 @@ class Dashboard(QWidget):
         if not SERIAL_AVAILABLE:
             return
 
+        # Never let the dashboard probe the serial bus while the ECG page is
+        # already streaming live data. Scanning the shared port here can steal
+        # or stall the active reader and make the waveform appear frozen.
+        ecg_page = getattr(self, 'ecg_test_page', None)
+        live_reader = getattr(ecg_page, 'serial_reader', None) if ecg_page else None
+        if live_reader is not None and getattr(live_reader, 'running', False):
+            try:
+                live_port = getattr(getattr(live_reader, 'ser', None), 'port', None)
+                if live_port:
+                    self.device_port = live_port
+                if not self.device_connected:
+                    self.device_connected = True
+                    self.update_device_ui(True)
+            except Exception:
+                pass
+            return
+
         try:
             # Get current available ports
             current_ports = [p.device for p in serial.tools.list_ports.comports()]
@@ -6006,7 +6032,7 @@ class Dashboard(QWidget):
                     hyper_active = hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and self.hyperkalemia_window.isVisible()
                     
                     if is_on_dashboard and not hrv_active and not hyper_active:
-                        QMessageBox.warning(self, "Connection Status", "Connection lost. Please ensure the device is properly connected")
+                        QMessageBox.warning(self, "Connection Status", "RhythmUltra connection lost. Please ensure the device is properly connected")
 
                     # If HRV or Hyperkalemia test window is open, show "Test Failed" and close it
                     if hasattr(self, 'hrv_window') and self.hrv_window and self.hrv_window.isVisible():
@@ -6015,7 +6041,7 @@ class Dashboard(QWidget):
                                 self.hrv_window.stop_capture(device_disconnected=True)
                             except TypeError:
                                 self.hrv_window.stop_capture()
-                        QMessageBox.critical(self.hrv_window, "Test Failed", "Device disconnected. Test failed.")
+                        QMessageBox.critical(self.hrv_window, "Test Failed", "RhythmUltra disconnected. Test failed.")
                         self.hrv_window.close()
                     elif hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and self.hyperkalemia_window.isVisible():
                         if hasattr(self.hyperkalemia_window, 'stop_capture'):
@@ -6023,7 +6049,7 @@ class Dashboard(QWidget):
                                 self.hyperkalemia_window.stop_capture(device_disconnected=True)
                             except TypeError:
                                 self.hyperkalemia_window.stop_capture()
-                        QMessageBox.critical(self.hyperkalemia_window, "Test Failed", "Device disconnected. Test failed.")
+                        QMessageBox.critical(self.hyperkalemia_window, "Test Failed", "RhythmUltra disconnected. Test failed.")
                         self.hyperkalemia_window.close()
                     # If ECG 12 lead test is running (on the stacked widget), show "Test Failed" and go back to dashboard
                     elif self.page_stack.currentWidget() == getattr(self, 'ecg_test_page', None):
@@ -6038,7 +6064,7 @@ class Dashboard(QWidget):
                         except Exception as e:
                             print(f"Error closing expanded views: {e}")
 
-                        QMessageBox.critical(self, "Test Failed", "Device disconnected. Test Failed")
+                        QMessageBox.critical(self, "Test Failed", "RhythmUltra disconnected. Test failed.")
                         self.page_stack.setCurrentWidget(self.dashboard_page)
                 return # Already connected and port exists, or just disconnected
 
@@ -6051,7 +6077,7 @@ class Dashboard(QWidget):
                 if len(current_ports) > 0:
                     # Show searching status while scan is in progress
                     if hasattr(self, 'device_status_label'):
-                        self.device_status_label.setText("Searching for device...")
+                        self.device_status_label.setText("Searching for RhythmUltra...")
                         self.device_status_label.setStyleSheet("color: orange; margin-right: 10px; font-weight: bold;")
 
                     # Only scan if not already in progress
@@ -6078,6 +6104,27 @@ class Dashboard(QWidget):
         if self.page_stack.currentWidget() == getattr(self, 'ecg_test_page', None):
             return
 
+        # If the device is not yet connected, keep retrying even when the port
+        # list hasn't changed. Some macOS USB serial adapters need a few probes
+        # before the device answers the VERSION/MACHINE_SERIAL commands.
+        if not self.device_connected and len(current_ports) > 0:
+            now = time.time()
+            if getattr(self, "_device_scan_in_progress", False):
+                return
+            if (now - getattr(self, "_last_device_scan_time", 0)) < 1.0:
+                return
+
+            self._last_device_scan_time = now
+            if hasattr(self, 'device_status_label'):
+                self.device_status_label.setText("Searching for RhythmUltra...")
+                self.device_status_label.setStyleSheet("color: orange; margin-right: 10px; font-weight: bold;")
+
+            self._device_scan_in_progress = True
+            self.scan_worker = DeviceScanWorker(self.settings_manager)
+            self.scan_worker.scan_finished.connect(self.on_scan_finished)
+            self.scan_worker.start()
+            return
+
     def on_scan_finished(self, success, port, version, serial_num):
         """Callback for background device scan"""
         self._device_scan_in_progress = False
@@ -6094,6 +6141,7 @@ class Dashboard(QWidget):
 
         if success:
             self._had_device_connected = True
+            self._last_device_scan_time = time.time()
             # Inform user if not the initial scan
             if getattr(self, '_initial_scan_completed', False):
                 msg = QMessageBox(self)
@@ -6135,14 +6183,15 @@ class Dashboard(QWidget):
                 if serial_num:
                     self.settings_manager.set_setting("machine_serial_number", serial_num)
                 self.settings_manager.save_settings()
-                print(f"✅ Device found on {port} and saved to settings with version {version} and serial {serial_num or 'N/A'}.")
+                print(f"✅ RhythmUltra found on {port} and saved to settings with version {version} and serial {serial_num or 'N/A'}.")
         else:
+            self._last_device_scan_time = time.time()
             self.update_device_ui(False)
 
     def update_device_ui(self, connected):
         """Update UI elements based on device connection status"""
         if connected:
-            self.device_status_label.setText("Device Connected")
+            self.device_status_label.setText("RhythmUltra Connected")
             self.device_status_label.setStyleSheet("color: green; margin-right: 10px; font-weight: bold;")
             
             # Enable test buttons
@@ -6159,9 +6208,9 @@ class Dashboard(QWidget):
                 self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
         else:
             if getattr(self, "_had_device_connected", False):
-                self.device_status_label.setText("Device Disconnected. Please reconnect your device")
+                self.device_status_label.setText("RhythmUltra Disconnected. Please reconnect your RhythmUltra device")
             else:
-                self.device_status_label.setText("Device Disconnected")
+                self.device_status_label.setText("RhythmUltra Disconnected")
             self.device_status_label.setStyleSheet("color: red; margin-right: 10px; font-weight: bold;")
 
             # Reset hardware version in settings when disconnected
@@ -6187,6 +6236,48 @@ class Dashboard(QWidget):
             if hasattr(self, 'date_btn'):
                 self.date_btn.setEnabled(False)
                 self.date_btn.setStyleSheet(grey_style)
+
+    def set_license_banner(self, status: str, detail: str = "", color: str = "#1b5e20", background: str = "#dcedc8"):
+        """Update the top license banner."""
+        try:
+            status_text = (status or "ONLINE").strip().upper()
+            detail_text = f" {detail.strip()}" if detail and detail.strip() else ""
+            self.license_status_label.setText(f"{status_text}{detail_text}")
+            self.license_status_label.setStyleSheet(
+                f"color: {color}; background: {background}; border-radius: 10px; padding: 4px 10px; margin-right: 10px;"
+            )
+        except Exception:
+            pass
+
+    def set_read_only_license_mode(self, enabled: bool, reason: str = ""):
+        """Disable acquisition controls while keeping history/report access available."""
+        try:
+            self._license_read_only = bool(enabled)
+            if enabled:
+                if hasattr(self, 'date_btn'):
+                    self.date_btn.setEnabled(False)
+                    self.date_btn.setToolTip(reason or "New ECG acquisition is disabled in read-only mode.")
+                if hasattr(self, 'hrv_test_btn'):
+                    self.hrv_test_btn.setEnabled(False)
+                    self.hrv_test_btn.setToolTip(reason or "HRV acquisition is disabled in read-only mode.")
+                if hasattr(self, 'hyperkalemia_test_btn'):
+                    self.hyperkalemia_test_btn.setEnabled(False)
+                    self.hyperkalemia_test_btn.setToolTip(reason or "Hyperkalemia acquisition is disabled in read-only mode.")
+                if hasattr(self, 'analysis_btn'):
+                    self.analysis_btn.setEnabled(True)
+                self.set_license_banner("OFFLINE", reason or "Read-only mode", color="#e65100", background="#ffe0b2")
+            else:
+                if hasattr(self, 'date_btn') and not self.device_connected:
+                    self.date_btn.setEnabled(False)
+                if hasattr(self, 'hrv_test_btn') and not self.device_connected:
+                    self.hrv_test_btn.setEnabled(False)
+                if hasattr(self, 'hyperkalemia_test_btn') and not self.device_connected:
+                    self.hyperkalemia_test_btn.setEnabled(False)
+                if hasattr(self, 'analysis_btn'):
+                    self.analysis_btn.setEnabled(True)
+                self.set_license_banner("ONLINE", "", color="#1b5e20", background="#dcedc8")
+        except Exception as e:
+            print(f"Error setting read-only license mode: {e}")
 
     def update_internet_status(self):
         """Check internet status in background — never freeze UI."""

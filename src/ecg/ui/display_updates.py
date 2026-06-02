@@ -125,7 +125,9 @@ def update_ecg_metrics_display(
                 hr_val = _clamp('heart_rate', raw_hr)
                 if hr_val is not None:
                     _set_if_changed(metric_labels['heart_rate'], f"{hr_val:3d}")
-                # If out of range, leave label exactly as it is
+                elif 'heart_rate' not in _last_valid:
+                    _set_if_changed(metric_labels['heart_rate'], "--")
+                # If out of range and we already have a valid value, keep it
 
         # ── RR Interval ───────────────────────────────────────────────────── FIX-D1
         if 'rr_interval' in metric_labels:
@@ -148,7 +150,7 @@ def update_ecg_metrics_display(
             else:
                 # zero means "no signal" — only clear if we have no previous good value
                 if 'pr_interval' not in _last_valid:
-                    _set_if_changed(metric_labels['pr_interval'], "  0")
+                    _set_if_changed(metric_labels['pr_interval'], "--")
 
         # ── QRS Duration ──────────────────────────────────────────────────────
         if 'qrs_duration' in metric_labels:
@@ -159,7 +161,7 @@ def update_ecg_metrics_display(
                     _set_if_changed(metric_labels['qrs_duration'], f"{qrs_val:3d}")
             else:
                 if 'qrs_duration' not in _last_valid:
-                    _set_if_changed(metric_labels['qrs_duration'], "  0")
+                    _set_if_changed(metric_labels['qrs_duration'], "--")
 
         # ── P Duration ────────────────────────────────────────────────────── FIX-D2
         if 'p_duration' in metric_labels:
@@ -202,7 +204,7 @@ def update_ecg_metrics_display(
                 # Both clamped out — hold the last composite display
                 display_text = f"{_last_valid['qt_interval']}/{_last_valid['qtc_interval']}"
             else:
-                display_text = "0"
+                display_text = "--"
 
             _set_if_changed(metric_labels['qtc_interval'], display_text)
 
@@ -252,11 +254,11 @@ def get_current_metrics_from_labels(
             elif has_real_signal and last_heart_rate and last_heart_rate > 0:
                 metrics['heart_rate'] = str(last_heart_rate)
             else:
-                metrics['heart_rate'] = "0"
+                metrics['heart_rate'] = "--"
         elif has_real_signal and last_heart_rate and last_heart_rate > 0:
             metrics['heart_rate'] = str(last_heart_rate)
         else:
-            metrics['heart_rate'] = "0"
+            metrics['heart_rate'] = "--"
 
         if not metric_labels:
             return metrics
@@ -268,7 +270,7 @@ def get_current_metrics_from_labels(
                 .replace('ms', '').strip()
             )
         else:
-            metrics['rr_interval'] = ""
+            metrics['rr_interval'] = "--"
 
         # ── PR Interval ───────────────────────────────────────────────────────
         if 'pr_interval' in metric_labels:
@@ -276,6 +278,8 @@ def get_current_metrics_from_labels(
                 metric_labels['pr_interval'].text()
                 .replace('ms', '').strip()
             )
+        else:
+            metrics['pr_interval'] = "--"
 
         # ── QRS Duration ──────────────────────────────────────────────────────
         if 'qrs_duration' in metric_labels:
@@ -283,6 +287,8 @@ def get_current_metrics_from_labels(
                 metric_labels['qrs_duration'].text()
                 .replace('ms', '').strip()
             )
+        else:
+            metrics['qrs_duration'] = "--"
 
         # ── P Duration ────────────────────────────────────────────────────────
         if 'p_duration' in metric_labels:
@@ -290,6 +296,8 @@ def get_current_metrics_from_labels(
                 metric_labels['p_duration'].text()
                 .replace('ms', '').strip()
             )
+        else:
+            metrics['p_duration'] = "--"
 
         # ── ST (legacy) ───────────────────────────────────────────────────────
         if 'st_interval' in metric_labels:
@@ -297,18 +305,26 @@ def get_current_metrics_from_labels(
                 metric_labels['st_interval'].text().strip()
                 .replace('ms', '').replace('mV', '').strip()
             )
+        else:
+            metrics['st_interval'] = "--"
 
         # ── QT / QTc ─────────────────────────────────────────────────────────
         if 'qtc_interval' in metric_labels:
             raw = metric_labels['qtc_interval'].text().strip().replace('ms', '')
             metrics['qtc_interval'] = raw
             # FIX-D4: also split into qt_interval / qtc_interval if "QT/QTc" format
-            if '/' in raw:
+            if raw in ('', '--', '--/--'):
+                metrics['qt_interval'] = "--"
+                metrics['qtc_interval'] = "--"
+            elif '/' in raw:
                 parts = raw.split('/')
                 metrics['qt_interval']  = parts[0].strip()
                 metrics['qtc_interval'] = parts[1].strip()
             else:
-                metrics['qt_interval'] = ""
+                metrics['qt_interval'] = "--"
+        else:
+            metrics['qt_interval'] = "--"
+            metrics['qtc_interval'] = "--"
 
         # ── Time elapsed ──────────────────────────────────────────────────────
         if 'time_elapsed' in metric_labels:

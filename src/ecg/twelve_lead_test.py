@@ -4688,6 +4688,11 @@ class ECGTestPage(QWidget):
                 self.lead_status_label.setStyleSheet(
                     "color: #2e7d32; font-size: 12px; font-weight: bold; padding: 2px 6px;"
                 )
+            elif len(off_leads) >= len(self.leads):
+                self.lead_status_label.setText("No ECG signal detected. Check patient leads.")
+                self.lead_status_label.setStyleSheet(
+                    "color: #c62828; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+                )
             elif len(off_leads) == 1:
                 self.lead_status_label.setText(f"Lead Off: {off_leads[0]}")
                 self.lead_status_label.setStyleSheet(
@@ -4725,26 +4730,35 @@ class ECGTestPage(QWidget):
         if getattr(self, '_report_generating', False):
             return
         # HolterBPMController owns the HR label — skip Heart_Rate from old pipeline
+        def _metric_to_int(value):
+            if value in (None, "", "--", "--/--"):
+                return None
+            try:
+                return int(round(float(value)))
+            except Exception:
+                return None
+
         _bpm_active = (self._bpm_ctrl is not None and self._bpm_ctrl.is_running)
         if not _bpm_active:
             if 'Heart_Rate' in intervals and intervals['Heart_Rate'] is not None:
-                hr_val = int(round(intervals['Heart_Rate'])) if isinstance(intervals['Heart_Rate'], (int, float)) else int(intervals['Heart_Rate']) if str(intervals['Heart_Rate']).isdigit() else 0
-                self.metric_labels['heart_rate'].setText(f"{hr_val:3d}")
+                hr_val = _metric_to_int(intervals['Heart_Rate'])
+                self.metric_labels['heart_rate'].setText(f"{hr_val:3d}" if hr_val is not None else "--")
 
         
         if 'PR' in intervals and intervals['PR'] is not None:
             # Fixed-width formatting (3 digits) to prevent text shifting
-            pr_val = int(round(intervals['PR'])) if isinstance(intervals['PR'], (int, float)) else int(intervals['PR']) if str(intervals['PR']).isdigit() else 0
-            self.metric_labels['pr_interval'].setText(f"{pr_val:3d}")
+            pr_val = _metric_to_int(intervals['PR'])
+            self.metric_labels['pr_interval'].setText(f"{pr_val:3d}" if pr_val is not None else "--")
         
         if 'QRS' in intervals and intervals['QRS'] is not None:
             # Fixed-width formatting (2 digits) to prevent text shifting
-            qrs_val = int(round(intervals['QRS'])) if isinstance(intervals['QRS'], (int, float)) else int(intervals['QRS']) if str(intervals['QRS']).isdigit() else 0
-            self.metric_labels['qrs_duration'].setText(f"{qrs_val:2d}")
+            qrs_val = _metric_to_int(intervals['QRS'])
+            self.metric_labels['qrs_duration'].setText(f"{qrs_val:2d}" if qrs_val is not None else "--")
         
         if 'QTc' in intervals and intervals['QTc'] is not None:
+            qtc_val = _metric_to_int(intervals['QTc'])
             self.metric_labels['qtc_interval'].setText(
-                f"{int(round(intervals['QTc']))}" if isinstance(intervals['QTc'], (int, float)) else str(intervals['QTc'])
+                f"{qtc_val}" if qtc_val is not None else "--"
             )
         
         if 'time_elapsed' in self.metric_labels:
@@ -4898,19 +4912,19 @@ class ECGTestPage(QWidget):
         try:
             if hasattr(self, 'metric_labels') and isinstance(self.metric_labels, dict):
                 if 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText("  0")
+                    self.metric_labels['heart_rate'].setText("--")
                 if 'rr_interval' in self.metric_labels:          # FIX-D1
                     self.metric_labels['rr_interval'].setText("--")
                 if 'pr_interval' in self.metric_labels:
-                    self.metric_labels['pr_interval'].setText("  0")
+                    self.metric_labels['pr_interval'].setText("--")
                 if 'qrs_duration' in self.metric_labels:
-                    self.metric_labels['qrs_duration'].setText("  0")
+                    self.metric_labels['qrs_duration'].setText("--")
                 if 'p_duration' in self.metric_labels:            # FIX-D2
                     self.metric_labels['p_duration'].setText("--")
                 if 'st_interval' in self.metric_labels:
-                    self.metric_labels['st_interval'].setText("0")
+                    self.metric_labels['st_interval'].setText("--")
                 if 'qtc_interval' in self.metric_labels:
-                    self.metric_labels['qtc_interval'].setText("0/0")
+                    self.metric_labels['qtc_interval'].setText("--/--")
                 if 'time_elapsed' in self.metric_labels:
                     self.metric_labels['time_elapsed'].setText("00:00")
         except Exception:
@@ -4958,7 +4972,13 @@ class ECGTestPage(QWidget):
             r_peaks = pan_tompkins(data, fs=fs_report)
             
             if len(r_peaks) < 2:
-                return {}
+                return {
+                    'Heart_Rate': '--',
+                    'PR': '--',
+                    'QRS': '--',
+                    'QT': '--',
+                    'QTc': '--',
+                }
             
             # Calculate heart rate
             rr_intervals = np.diff(r_peaks) / fs_report  # Convert to seconds
@@ -4980,10 +5000,10 @@ class ECGTestPage(QWidget):
             # Note: storing milliseconds directly as expected by caller
             return {
                 'Heart_Rate': heart_rate,
-                'PR': pr_val if pr_val is not None else 0,
-                'QRS': qrs_val if qrs_val is not None else 0,
-                'QT': qt_val if qt_val is not None else 0,
-                'QTc': qtc_val if qtc_val is not None else 0
+                'PR': pr_val if pr_val is not None else "--",
+                'QRS': qrs_val if qrs_val is not None else "--",
+                'QT': qt_val if qt_val is not None else "--",
+                'QTc': qtc_val if qtc_val is not None else "--"
             }
                 
         except Exception as e:
@@ -6386,11 +6406,11 @@ class ECGTestPage(QWidget):
                 # Only reset visible metrics to zero on fresh start to avoid losing machine serial data values on restart
                 try:
                     if hasattr(self, 'metric_labels'):
-                        if 'heart_rate' in self.metric_labels: self.metric_labels['heart_rate'].setText("00")
-                        if 'pr_interval' in self.metric_labels: self.metric_labels['pr_interval'].setText("0")
-                        if 'qrs_duration' in self.metric_labels: self.metric_labels['qrs_duration'].setText("0")
-                        if 'st_interval' in self.metric_labels: self.metric_labels['st_interval'].setText("0")
-                        if 'qtc_interval' in self.metric_labels: self.metric_labels['qtc_interval'].setText("0/0")
+                        if 'heart_rate' in self.metric_labels: self.metric_labels['heart_rate'].setText("--")
+                        if 'pr_interval' in self.metric_labels: self.metric_labels['pr_interval'].setText("--")
+                        if 'qrs_duration' in self.metric_labels: self.metric_labels['qrs_duration'].setText("--")
+                        if 'st_interval' in self.metric_labels: self.metric_labels['st_interval'].setText("--")
+                        if 'qtc_interval' in self.metric_labels: self.metric_labels['qtc_interval'].setText("--/--")
                         if 'time_elapsed' in self.metric_labels: self.metric_labels['time_elapsed'].setText("00:00")
                         # if 'sampling_rate' in self.metric_labels: self.metric_labels['sampling_rate'].setText("0 Hz")  # Commented out
                     print(" Fresh start - metrics reset to zero")
@@ -6684,7 +6704,7 @@ class ECGTestPage(QWidget):
                 except Exception:
                     pass
                 if hasattr(self, "metric_labels") and "heart_rate" in self.metric_labels:
-                    self.metric_labels["heart_rate"].setText("  0")
+                    self.metric_labels["heart_rate"].setText("--")
                 return
 
             rr_ms = getattr(self, 'last_rr_interval', 0)

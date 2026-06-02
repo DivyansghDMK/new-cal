@@ -174,6 +174,20 @@ def _license_meta_exists() -> bool:
     return _META_FILE.exists()
 
 
+def _enforce_rhythmultra_lock() -> bool:
+    """
+    Decide whether the RhythmUltra device must be present at startup.
+
+    Windows production builds keep the hard lock enabled. For local Mac/Linux
+    development runs, the device requirement can be bypassed unless explicitly
+    forced back on via `CARDIOX_REQUIRE_RHYTHMULTRA=1`.
+    """
+    forced = os.getenv("CARDIOX_REQUIRE_RHYTHMULTRA", "").strip().lower() in {"1", "true", "yes", "on"}
+    if forced:
+        return True
+    return sys.platform == "win32"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PILLAR 1 — Hardware Fingerprint (WMI 5-field SHA-256)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -873,7 +887,7 @@ def heartbeat(token_data: Dict) -> Dict:
         "seat_number": token_data.get("seat_number", 1),
         "version": SOFTWARE_VERSION,
     }
-    result = _post_json("heartbeat", body)
+    result = _post_json("heartbeat", body, timeout=3)
     _verify_server_sig(result)
     return result
 
@@ -1006,6 +1020,7 @@ class StartupCheckResult:
         self.token: Optional[Dict] = None
         self.rhythmulta_serial: Optional[str] = None
         self.offline_mode: bool = False
+        self.days_remaining: Optional[int] = None
 
     def __bool__(self):
         return self.ok
@@ -1266,20 +1281,32 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         token["stable_fingerprint"] = current_stable_fp
         token["last_local_time"] = now
 
-    # ── Check 4: RhythmUlta connected and serial matches (NON-NEGOTIABLE) ─────
-    usb_serial = get_rhythmulta_serial()
+    # ── Check 4: RhythmUlta connected and serial matches (platform-dependent) ─
+    usb_serial = get_rhythmultra_serial()
     res.rhythmulta_serial = usb_serial
-    if usb_serial is None:
-        res.step_failed = 4
-        res.reason = "Unauthorized RhythmUltra device connected."
-        return res
+    enforce_device_lock = _enforce_rhythmultra_lock()
+    if enforce_device_lock:
+        if usb_serial is None:
+            res.step_failed = 4
+            res.reason = "Unauthorized RhythmUltra device connected."
+            return res
 
-    stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
-    # If stored_serial is empty the device was never bound — allow first use.
-    if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
-        res.step_failed = 4
-        res.reason = "Unauthorized RhythmUltra device connected."
-        return res
+        stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
+        # If stored_serial is empty the device was never bound — allow first use.
+        if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
+            res.step_failed = 4
+            res.reason = "Unauthorized RhythmUltra device connected."
+            return res
+    else:
+        # Development / non-Windows runs can proceed without the hardware lock.
+        stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
+        if usb_serial and stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
+            _append_audit_event(
+                "DUPLICATE_ACTIVATION_ATTEMPT",
+                license_key=token.get("license_key", ""),
+                rhythmulta_serial=usb_serial,
+                machine_serial_id=token.get("machine_serial_id", ""),
+            )
 
     # ── Check 5: Server heartbeat ─────────────────────────────────────────────
     hb_result = heartbeat(token)

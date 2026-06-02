@@ -537,7 +537,7 @@ class RegistrationDialog(QDialog):
 
     def _set_device_status_connected(self, serial: str):
         self._device_status.setText(
-            f"[OK]  RhythmUlta connected  |  Serial: {serial}"
+            f"[OK]  RhythmUltra connected  |  Serial: {serial}"
         )
         self._device_status.setStyleSheet(
             "font-size: 12px; border-radius: 6px; padding: 6px 12px; "
@@ -552,12 +552,12 @@ class RegistrationDialog(QDialog):
         else:
             if getattr(self, "_had_device_connected", False):
                 msg = (
-                    "RhythmUlta disconnected. Please reconnect your device"
+                    "RhythmUltra disconnected. Please reconnect your RhythmUltra device"
                 )
             else:
                 msg = (
-                    f"🟠  RhythmUlta not detected  (VID={vid_str} PID={pid_str})  —  "
-                    "please connect the device to enable Sign Up"
+                    f"🟠  RhythmUltra not detected  (VID={vid_str} PID={pid_str})  —  "
+                    "please connect the RhythmUltra device to enable Sign Up"
                 )
         self._device_status.setText(msg)
         if getattr(self, "_had_device_connected", False):
