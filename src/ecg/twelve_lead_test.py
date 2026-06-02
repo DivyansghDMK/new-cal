@@ -6459,7 +6459,6 @@ class ECGTestPage(QWidget):
                 port=port,
                 baud_int=baud_int,
                 reader=self.serial_reader,
-                parent=self,
             )
             self._start_worker.version_ready.connect(self._on_device_version)
             self._start_worker.serial_ready.connect(self._on_device_serial_number)
@@ -6719,10 +6718,71 @@ class ECGTestPage(QWidget):
         except Exception as _e:
             print(f"[ECGTestPage] _refresh_holter_bpm_label error: {_e}")
 
+    def _cleanup_report_generation_thread(self, wait_ms: int = 5000, force_terminate: bool = True):
+        """Stop the active report-generation thread safely before teardown."""
+        thread = getattr(self, "_report_thread", None)
+        if thread is None:
+            return
+        try:
+            if thread.isRunning():
+                try:
+                    thread.quit()
+                except Exception:
+                    pass
+                try:
+                    thread.wait(wait_ms)
+                except Exception:
+                    pass
+            if force_terminate and thread.isRunning():
+                try:
+                    thread.terminate()
+                    thread.wait(1000)
+                except Exception:
+                    pass
+        finally:
+            try:
+                self._report_thread = None
+                self._report_worker = None
+            except Exception:
+                pass
+
+    def _cleanup_start_worker(self, wait_ms: int = 5000, force_terminate: bool = True):
+        """Stop the connection worker safely before teardown."""
+        worker = getattr(self, "_start_worker", None)
+        if worker is None:
+            return
+        try:
+            if worker.isRunning():
+                try:
+                    worker.requestInterruption()
+                except Exception:
+                    pass
+                try:
+                    worker.quit()
+                except Exception:
+                    pass
+                try:
+                    worker.wait(wait_ms)
+                except Exception:
+                    pass
+            if force_terminate and worker.isRunning():
+                try:
+                    worker.terminate()
+                    worker.wait(1000)
+                except Exception:
+                    pass
+        finally:
+            try:
+                self._start_worker = None
+            except Exception:
+                pass
+
     def stop_acquisition(self):
         # UPDATE STATE: Test stopped
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
             self.dashboard_instance.update_test_state("12_lead_test", False)
+
+        self._cleanup_start_worker(wait_ms=3000, force_terminate=True)
 
         # --- STOP HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -7354,7 +7414,7 @@ class ECGTestPage(QWidget):
                     import traceback as _tb
                     self.error.emit(f"{_e}\n{_tb.format_exc()}")
 
-        thread = QThread(self)
+        thread = QThread()
         worker = _Worker()
         worker.moveToThread(thread)
         self._report_thread  = thread
@@ -7692,7 +7752,7 @@ class ECGTestPage(QWidget):
         self.graph_mode_btn = QPushButton("Graph Mode")
         
         # Store current mode for highlighting
-        self._current_overlay_mode = "dark"  # Default mode
+        self._current_overlay_mode = "graph"  # Default mode
         
         button_style = """
             QPushButton {
@@ -7752,8 +7812,8 @@ class ECGTestPage(QWidget):
         self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
         self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
         
-        # Apply default dark mode and highlight it
-        self._apply_overlay_mode("dark")
+        # Apply default graph mode and highlight it
+        self._apply_overlay_mode("graph")
 
     # def _calculate_adaptive_figsize(self, layout="12x1", num_leads=12):
     #     """
@@ -8620,7 +8680,7 @@ class ECGTestPage(QWidget):
         self.graph_mode_btn = QPushButton("Graph Mode")
         
         # Store current mode for highlighting
-        self._current_overlay_mode = "dark"  # Default mode
+        self._current_overlay_mode = "graph"  # Default mode
         
         button_style = """
             QPushButton {
@@ -8680,8 +8740,8 @@ class ECGTestPage(QWidget):
         self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
         self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
         
-        # Apply default dark mode and highlight it
-        self._apply_overlay_mode("dark")
+        # Apply default graph mode and highlight it
+        self._apply_overlay_mode("graph")
 
     def _create_two_column_figure(self, overlay_layout):
         from matplotlib.figure import Figure
@@ -10254,16 +10314,9 @@ class ECGTestPage(QWidget):
                     pass
                 self._holter_worker = None
 
-            # Wait briefly for any report-generation QThread to finish.
-            if hasattr(self, '_report_thread') and self._report_thread is not None:
-                try:
-                    if self._report_thread.isRunning():
-                        self._report_thread.quit()
-                        self._report_thread.wait(3000)
-                except Exception:
-                    pass
-                self._report_thread = None
-                self._report_worker = None
+            # Wait for any worker threads to finish.
+            self._cleanup_start_worker(wait_ms=5000, force_terminate=True)
+            self._cleanup_report_generation_thread(wait_ms=5000, force_terminate=True)
             
             # Close serial connection
             if hasattr(self, 'serial_reader') and self.serial_reader:

@@ -845,6 +845,50 @@ class HyperkalemiaTestWindow(QWidget):
                 self.status_label.setText("Status: Capture Stopped (No data)")
         
         self.status_label.setStyleSheet("color: #666; padding: 5px;")
+
+    def _reset_after_report_open(self):
+        """Clear the completed hyperkalemia session so the next test starts fresh."""
+        self.is_capturing = False
+        self.lead_ii_data = []
+        self.analysis_results = None
+        self.active_samples = 0
+        self._last_metric_update_ts = 0.0
+        try:
+            for curve in getattr(self, "plot_curves", {}).values():
+                curve.setData([], [])
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "plot_widgets"):
+                for widget in self.plot_widgets.values():
+                    widget.setXRange(0.0, 1.0, padding=0)
+                    widget.setYRange(0, 4096, padding=0)
+        except Exception:
+            pass
+        try:
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("00 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
+        except Exception:
+            pass
+        try:
+            self.status_label.setText("Status: Ready")
+            self.status_label.setStyleSheet("color: #667085; padding: 5px;")
+        except Exception:
+            pass
+        try:
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.analyze_btn.setEnabled(False)
+            self.report_btn.setEnabled(False)
+            self.report_btn.setText("Generate Report")
+        except Exception:
+            pass
         self.timer_label.setText("Time: 00:00")
 
     def _refresh_holter_bpm_label(self):
@@ -1083,21 +1127,31 @@ class HyperkalemiaTestWindow(QWidget):
                             apply_dft_filter,
                             apply_baseline_wander_median_mean,
                         )
-                        if len(values) > 100:  # Ensure enough data
+                        if len(values) > 20:  # Start display filtering as soon as the buffer is usable
                             values_array = np.array(values, dtype=float)
+                            pad_len = min(50, max(0, len(values_array) - 1))
+                            if pad_len > 0:
+                                padded_values = np.pad(values_array, (pad_len, pad_len), mode='edge')
+                            else:
+                                padded_values = values_array
+
                             if ac_val not in ["Off", "off"]:
-                                values_array = apply_ac_filter(values_array, fs, ac_val)
+                                padded_values = apply_ac_filter(padded_values, fs, ac_val)
                             if emg_val not in ["Off", "off"]:
-                                values_array = apply_emg_filter(values_array, fs, emg_val)
+                                padded_values = apply_emg_filter(padded_values, fs, emg_val)
                             if dft_val not in ["Off", "off", "", None]:
                                 dft_text = str(dft_val).strip()
                                 if dft_text == "0.5":
-                                    values_array = apply_baseline_wander_median_mean(values_array, fs)
+                                    padded_values = apply_baseline_wander_median_mean(padded_values, fs)
                                 else:
-                                    values_array = apply_dft_filter(values_array, fs, dft_text)
+                                    padded_values = apply_dft_filter(padded_values, fs, dft_text)
 
-                                values_array = values_array + float(self._adc_center)
-                            values = values_array.tolist()
+                                padded_values = padded_values + float(self._adc_center)
+
+                            if pad_len > 0:
+                                values = padded_values[pad_len:-pad_len].tolist()
+                            else:
+                                values = padded_values.tolist()
                     except ImportError:
                         pass
                     
@@ -1787,6 +1841,10 @@ class HyperkalemiaTestWindow(QWidget):
             btn_row.addWidget(open_btn)
             btn_row.addWidget(ok_btn)
             vbox.addLayout(btn_row)
+            dlg.finished.connect(lambda _result: self._reset_after_report_open())
+            if hasattr(self, 'report_btn'):
+                self.report_btn.setEnabled(False)
+                self.report_btn.setText("Generate Report")
             dlg.exec_()
             
         except Exception as e:

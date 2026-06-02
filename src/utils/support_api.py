@@ -3,7 +3,6 @@ Support Complaint API integration (CardioX Support API).
 
 Provides:
 - submit_complaint(): POST complaint with x-api-key header
-  - offline-first via OfflineQueue
   - local rate limit enforcement (10 requests/min per machine_id)
 """
 
@@ -17,8 +16,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import requests
-
-from .offline_queue import get_offline_queue
 
 try:
     from dotenv import load_dotenv
@@ -64,7 +61,6 @@ class SupportAPI:
             api_key=os.getenv("SUPPORT_API_KEY", "CX-SW-2026-Deckmount-Key").strip(),
             timeout_s=int(os.getenv("SUPPORT_API_TIMEOUT", "12").strip() or "12"),
         )
-        self.offline_queue = get_offline_queue()
         self._rate_lock = threading.Lock()
         self._rate_file = os.path.join("logs", "support_rate_limit.json")
 
@@ -173,7 +169,7 @@ class SupportAPI:
         machine_id: str,
         complaint: str,
         source: str = "software",
-        queue_if_offline: bool = True,
+        queue_if_offline: bool = False,
     ) -> Dict[str, Any]:
         payload = {
             "name": str(name or "").strip(),
@@ -195,10 +191,6 @@ class SupportAPI:
                 "message": "Rate limit exceeded (10 requests/minute for this machine_id). Please wait and try again.",
             }
 
-        if queue_if_offline and not self.offline_queue.is_online():
-            queued_id = self.offline_queue.queue_data("support_complaint", payload, priority=2)
-            return {"success": True, "status": "queued", "queued_id": queued_id}
-
         try:
             data = self._post_complaint(payload)
             if isinstance(data, dict) and data.get("success") is True:
@@ -214,15 +206,17 @@ class SupportAPI:
                 }
             return {"success": False, "status": "error", **(data if isinstance(data, dict) else {"raw": data})}
         except requests.exceptions.Timeout:
-            if queue_if_offline:
-                queued_id = self.offline_queue.queue_data("support_complaint", payload, priority=2)
-                return {"success": True, "status": "queued", "queued_id": queued_id, "message": "Request timed out; queued"}
-            return {"success": False, "status": "error", "message": "Request timed out"}
+            return {
+                "success": False,
+                "status": "error",
+                "message": "You are offline, please connect to internet to submit the complaint.",
+            }
         except requests.exceptions.ConnectionError:
-            if queue_if_offline:
-                queued_id = self.offline_queue.queue_data("support_complaint", payload, priority=2)
-                return {"success": True, "status": "queued", "queued_id": queued_id, "message": "Offline; queued"}
-            return {"success": False, "status": "error", "message": "Connection error"}
+            return {
+                "success": False,
+                "status": "error",
+                "message": "You are offline, please connect to internet to submit the complaint.",
+            }
         except Exception as e:
             return {"success": False, "status": "error", "message": str(e)}
 

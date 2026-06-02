@@ -2619,6 +2619,7 @@ def main():
                         _license_timer.timeout.connect(_launch_license_check)
                         _license_timer.start()
                         dashboard._license_timer = _license_timer
+                        dashboard._license_threads = _lic_threads
                         # First check after 5 s (avoids contention right at app launch)
                         QTimer.singleShot(5000, _launch_license_check)
                     except Exception as e:
