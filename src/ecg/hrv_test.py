@@ -729,6 +729,47 @@ class HRVTestWindow(QWidget):
         self.status_label.setStyleSheet("color: #666; padding: 5px;")
         self.timer_label.setText("Time: 00:00")
 
+    def _reset_after_report_open(self):
+        """Clear the completed HRV session so the next test starts fresh."""
+        self.is_capturing = False
+        self.captured_data = []
+        self._hrv_plot_buffer = np.array([], dtype=np.float32)
+        try:
+            self.plot_curve.setData([], [])
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "plot_widget"):
+                self.plot_widget.setXRange(0.0, 1.0, padding=0)
+                self.plot_widget.setYRange(0, 4096, padding=0)
+        except Exception:
+            pass
+        try:
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("00 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
+        except Exception:
+            pass
+        try:
+            self.status_label.setText("Status: Ready")
+            self.status_label.setStyleSheet("color: #667085; padding: 5px;")
+        except Exception:
+            pass
+        try:
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.lead_combo.setEnabled(True)
+            self.report_btn.setEnabled(False)
+            self.report_btn.setText("Generate HRV Report")
+        except Exception:
+            pass
+        self._refresh_holter_bpm_label()
+
     def confirm_stop(self):
         reply = QMessageBox.question(
             self,
@@ -921,21 +962,19 @@ class HRVTestWindow(QWidget):
 
             buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-            if len(buffer_data) > 100:
+            if len(buffer_data) > 20:
                 # Get filter settings from SettingsManager
                 ac_val = self.settings_manager.get_setting("filter_ac", "50")
                 emg_val = self.settings_manager.get_setting("filter_emg", "150")
                 dft_val = self.settings_manager.get_setting("filter_dft", "off")
 
-                # Pad data to reduce transient response at the edges.
-                pad_len = 50
-                if len(buffer_data) > pad_len:
-                    start_pad = np.full(pad_len, buffer_data[0])
-                    end_pad = np.full(pad_len, buffer_data[-1])
-                    padded_data = np.concatenate((start_pad, buffer_data, end_pad))
+                # Pad with edge values so startup filtering begins cleanly instead of
+                # showing a raw transient while the display buffer is still warming up.
+                pad_len = min(50, max(0, len(buffer_data) - 1))
+                if pad_len > 0:
+                    padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='edge')
                 else:
                     padded_data = buffer_data
-                    pad_len = 0
 
                 if emg_val != "Off" and emg_val != "off":
                     padded_data = apply_emg_filter(padded_data, fs, emg_val)
@@ -1317,8 +1356,10 @@ class HRVTestWindow(QWidget):
             btn_row.addWidget(ok_btn)
             vbox.addLayout(btn_row)
 
+            dlg.finished.connect(lambda _result: self._reset_after_report_open())
+
             if hasattr(self, 'report_btn'):
-                self.report_btn.setEnabled(True)
+                self.report_btn.setEnabled(False)
                 self.report_btn.setText("Generate HRV Report")
             # Close loader
             try:

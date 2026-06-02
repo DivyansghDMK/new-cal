@@ -64,7 +64,19 @@ class SettingsManager:
         if key == "filter_emg":
             match = re.search(r"(\d+(?:\.\d+)?)", text)
             if match:
-                hz = match.group(1).rstrip("0").rstrip(".")
+                try:
+                    hz_value = float(match.group(1))
+                except ValueError:
+                    hz_value = None
+
+                if hz_value is not None:
+                    if abs(hz_value - round(hz_value)) < 1e-6:
+                        hz = str(int(round(hz_value)))
+                    else:
+                        hz = format(hz_value, "g")
+                else:
+                    hz = match.group(1).strip()
+
                 if hz in {"25", "35", "40", "75", "100", "150"}:
                     return hz
             return self.default_settings.get("filter_emg", "25") if hasattr(self, "default_settings") else "25"

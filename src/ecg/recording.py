@@ -862,7 +862,7 @@ class ECGMenu(QGroupBox):
 
         age_entry = QLineEdit()
         age_entry.setPlaceholderText(self.tr("Enter Age"))
-        age_entry.setValidator(QIntValidator(0, 120, age_entry))
+        age_entry.setValidator(QIntValidator(0, 100, age_entry))
         age_entry.setStyleSheet(input_style)
         age_entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         age_row.addWidget(age_lbl)
