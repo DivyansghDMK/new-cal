@@ -286,6 +286,16 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             heart_rate = 60000.0 / median_rr
             heart_rate = max(10.0, min(300.0, heart_rate))
 
+            # Hard sanity guard for implausible simulator spikes. When the
+            # signal briefly collapses into double-detections, prefer the last
+            # stable displayed value instead of letting the UI jump to extreme
+            # BPMs that can cascade into false rhythm labels.
+            if heart_rate > 240.0:
+                last_displayed = _bpm_displayed_value.get(buffer_key)
+                if last_displayed is not None and last_displayed > 0:
+                    return int(last_displayed)
+                heart_rate = 240.0
+
             # FIX #4: Anti-aliasing guard uses the peaks from the selected
             # strategy (stored in `peaks` above), not a stale variable.
             try:

@@ -496,6 +496,87 @@ def _recover_license_in_place(app, window=None, reason: str = "", title: str = "
 
     return False
 
+
+def _ecg_session_active(window) -> bool:
+    """Return True when the live ECG page is actively acquiring or recording data."""
+    try:
+        ecg_page = getattr(window, "ecg_test_page", None)
+        if ecg_page is None:
+            return False
+
+        if bool(getattr(ecg_page, "is_recording", False)):
+            return True
+
+        timer = getattr(ecg_page, "timer", None)
+        if timer is not None and hasattr(timer, "isActive") and timer.isActive():
+            return True
+
+        recorder = getattr(ecg_page, "recording_timer", None)
+        if recorder is not None and hasattr(recorder, "isActive") and recorder.isActive():
+            return True
+
+        serial_reader = getattr(ecg_page, "serial_reader", None)
+        if serial_reader is not None and bool(getattr(serial_reader, "running", False)):
+            return True
+
+        holter_writer = getattr(ecg_page, "_holter_writer", None)
+        if holter_writer is not None and bool(getattr(holter_writer, "is_running", False)):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+def _defer_license_block_until_safe(app, window, reason: str, title: str) -> bool:
+    """
+    Keep the app open until the current ECG session finishes, then perform the
+    normal license shutdown flow.
+    """
+    if window is None:
+        return _recover_license_in_place(app, window, reason, title)
+
+    try:
+        if getattr(window, "_pending_license_block", False):
+            return False
+        window._pending_license_block = True
+        window._pending_license_block_reason = reason
+        window._pending_license_block_title = title
+    except Exception:
+        pass
+
+    try:
+        QMessageBox.critical(
+            window,
+            title,
+            f"{reason}\n\n"
+            "ECG acquisition is currently active.\n"
+            "The application will close after the current recording is finished.",
+        )
+    except Exception:
+        pass
+
+    try:
+        timer = getattr(window, "_license_block_timer", None)
+        if timer is None:
+            timer = QTimer(window)
+            timer.setInterval(1000)
+
+            def _poll_license_block():
+                if not _ecg_session_active(window):
+                    timer.stop()
+                    _recover_license_in_place(app, window, reason, title)
+
+            timer.timeout.connect(_poll_license_block)
+            window._license_block_timer = timer
+        if not timer.isActive():
+            timer.start()
+    except Exception as e:
+        logger.warning(f"Could not start deferred license block timer: {e}")
+        return _recover_license_in_place(app, window, reason, title)
+
+    return False
+
 # Import ECG modules with fallback
 def get_ecg_modules():
     try:
@@ -1579,6 +1660,23 @@ class LoginRegisterDialog(QDialog):
             result = run_startup_checks(force_heartbeat=False)
             if not result.ok:
                 logger.warning(f"Login blocked due to license failure: {result.reason}")
+                QMessageBox.critical(
+                    self,
+                    {
+                        1: "License Missing",
+                        2: "License Integrity Failed",
+                        3: "Fingerprint Mismatch",
+                        4: "RhythmUltra Device Required",
+                        5: "License Verification Required",
+                    }.get(result.step_failed, "License Blocked"),
+                    result.reason,
+                )
+                if result.step_failed in {1, 2} or (
+                    result.step_failed == 5 and "revoked" in result.reason.lower()
+                ):
+                    clear_stored_key()
+                    clear_license_cache()
+                return
                 is_explicit_revocation = (
                     result.step_failed == 5
                     and "revoked" in result.reason.lower()
@@ -1908,7 +2006,15 @@ class LoginRegisterDialog(QDialog):
         # Check internet connection first
         try:
             if not get_offline_queue().is_online():
-                QMessageBox.warning(self, "No Internet Connection", "An active internet connection is required to send and verify OTP. Please check your network and try again.")
+                from utils.ui_feedback import show_critical, offline_action_message
+                show_critical(
+                    self,
+                    "No Internet Connection",
+                    offline_action_message(
+                        "Sending and verifying OTP",
+                        "Phone login is only available when the network is up.",
+                    ),
+                )
                 return
         except Exception as e:
             logger.warning(f"Failed to check connectivity: {e}")
@@ -1946,7 +2052,15 @@ class LoginRegisterDialog(QDialog):
         # Check internet connection first
         try:
             if not get_offline_queue().is_online():
-                QMessageBox.warning(self, "No Internet Connection", "An active internet connection is required to verify OTP. Please check your network and try again.")
+                from utils.ui_feedback import show_critical, offline_action_message
+                show_critical(
+                    self,
+                    "No Internet Connection",
+                    offline_action_message(
+                        "Verifying OTP",
+                        "Please connect to the internet and try again.",
+                    ),
+                )
                 return
         except Exception as e:
             logger.warning(f"Failed to check connectivity: {e}")
@@ -2068,7 +2182,23 @@ class LoginRegisterDialog(QDialog):
         success = res.get("valid") or res.get("success") or res.get("authorized")
         if not success:
             msg = res.get("message") or res.get("error") or "License registration failed."
-            QMessageBox.critical(self, "License Error", f"Registration failed: {msg}")
+            from utils.ui_feedback import is_network_error, offline_action_message, show_critical
+            if is_network_error(msg):
+                show_critical(
+                    self,
+                    "No Internet Connection",
+                    offline_action_message(
+                        "First-time activation",
+                        "Connect to the internet, then retry signup.",
+                    ),
+                    details=str(msg),
+                )
+            else:
+                show_critical(
+                    self,
+                    "License Error",
+                    f"Registration failed: {msg}",
+                )
             return
 
         # Success! Process the returned token/key
@@ -2188,13 +2318,24 @@ class LoginRegisterDialog(QDialog):
         if hasattr(self, 'loading_overlay') and self.loading_overlay:
             self.loading_overlay.accept()
             self.loading_overlay = None
-
-        QMessageBox.critical(
-            self,
-            "Registration Error",
-            f"Failed to connect to registration server:\n{err_msg}\n\n"
-            f"Please check your internet connection and try again."
-        )
+        from utils.ui_feedback import is_network_error, offline_action_message, show_critical
+        if is_network_error(err_msg):
+            show_critical(
+                self,
+                "No Internet Connection",
+                offline_action_message(
+                    "First-time activation",
+                    "The software needs internet for the initial license allocation.",
+                ),
+                details=str(err_msg),
+            )
+        else:
+            show_critical(
+                self,
+                "Registration Error",
+                f"Failed to connect to the registration server.\n\n{err_msg}",
+                details=str(err_msg),
+            )
     
     def toggle_password_visibility(self, password_field, eye_button):
         """Toggle password visibility between hidden and visible"""
@@ -2224,35 +2365,6 @@ def main():
         crash_logger.log_info("Application starting", "APP_START")
         
         logger.info("Starting ECG Monitor Application")
-
-        # =========================================================
-        # START BACKGROUND UPLOAD SERVICE (GLOBAL)
-        # =========================================================
-        # Start this immediately so uploads happen even at login screen
-        # and regardless of which user logs in.
-        try:
-            from utils.auto_sync_service import start_auto_sync
-            # Start auto-sync service (runs every 15s)
-            # This will:
-            # 1. Scan for new/modified reports
-            # 2. Initialize CloudUploader
-            # 3. Initialize OfflineQueue (which handles connectivity changes)
-            start_auto_sync(interval_seconds=15)
-            logger.info("✅ Global background upload service started")
-            
-            # Also force an immediate check of the offline queue
-            try:
-                from utils.offline_queue import get_offline_queue
-                offline_queue = get_offline_queue()
-                if offline_queue:
-                    stats = offline_queue.get_stats()
-                    if stats.get('pending_count', 0) > 0:
-                        logger.info(f"Found {stats.get('pending_count')} pending uploads - starting sync")
-            except Exception as e:
-                logger.warning(f"Could not check offline queue: {e}")
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to start background services: {e}")
 
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")
@@ -2296,6 +2408,23 @@ def main():
                 result = run_startup_checks(force_heartbeat=False)
                 if not result.ok:
                     logger.warning(f"Startup license checks failed: {result.reason}")
+                    QMessageBox.critical(
+                        None,
+                        {
+                            1: "License Missing",
+                            2: "License Integrity Failed",
+                            3: "Fingerprint Mismatch",
+                            4: "RhythmUltra Device Required",
+                            5: "License Verification Required",
+                        }.get(result.step_failed, "License Blocked"),
+                        result.reason,
+                    )
+                    if result.step_failed in {1, 2} or (
+                        result.step_failed == 5 and "revoked" in result.reason.lower()
+                    ):
+                        clear_stored_key()
+                        clear_license_cache()
+                    return
                     # Only clear license and redirect to signup on EXPLICIT server revocation.
                     # For device-not-connected (step 4) or offline/expired-grace (step 5 non-revoked),
                     # show a warning but keep the license so the user can retry.
@@ -2306,13 +2435,16 @@ def main():
                     is_no_token = result.step_failed == 1
                     if is_explicit_revocation or is_no_token:
                         title = "License Revoked" if is_explicit_revocation else "License Not Found"
-                        QMessageBox.warning(
+                        message_box = QMessageBox.critical if is_explicit_revocation else QMessageBox.warning
+                        message_box(
                             None,
                             title,
                             f"{result.reason}\n\nYou will be redirected to the signup page to register again.",
                         )
                         clear_stored_key()
                         clear_license_cache()
+                        if is_explicit_revocation:
+                            return
                     elif result.step_failed == 4:
                         QMessageBox.warning(
                             None,
@@ -2470,24 +2602,52 @@ def main():
 
                         def _on_license_result(res):
                             """Called on main thread after background check completes."""
-                            if res.get("revoked"):
+                            pending_title = "License Blocked"
+                            pending_reason = res.get("message", "License verification required.")
+                            if not res.get("valid", False):
                                 _license_timer.stop()
-                                if _recover_license_in_place(
-                                    app,
-                                    dashboard,
-                                    res.get("message", "License key is revoked. Contact support."),
-                                    "License Revoked",
-                                ):
-                                    try:
-                                        dashboard.closed_by_sign_out = True
-                                    except Exception:
-                                        pass
-                                    app.quit()
-                            elif not res.get("valid"):
-                                logger.warning(
-                                    "License validation returned non-valid but not revoked; "
-                                    "keeping current session active."
-                                )
+                                if _ecg_session_active(dashboard):
+                                    _defer_license_block_until_safe(
+                                        app,
+                                        dashboard,
+                                        pending_reason,
+                                        pending_title,
+                                    )
+                                else:
+                                    if _recover_license_in_place(
+                                        app,
+                                        dashboard,
+                                        pending_reason,
+                                        pending_title,
+                                    ):
+                                        try:
+                                            dashboard.closed_by_sign_out = True
+                                        except Exception:
+                                            pass
+                                        app.quit()
+                            elif res.get("revoked"):
+                                _license_timer.stop()
+                                pending_title = "License Revoked"
+                                pending_reason = res.get("message", "License key is revoked. Contact support.")
+                                if _ecg_session_active(dashboard):
+                                    _defer_license_block_until_safe(
+                                        app,
+                                        dashboard,
+                                        pending_reason,
+                                        pending_title,
+                                    )
+                                else:
+                                    if _recover_license_in_place(
+                                        app,
+                                        dashboard,
+                                        pending_reason,
+                                        pending_title,
+                                    ):
+                                        try:
+                                            dashboard.closed_by_sign_out = True
+                                        except Exception:
+                                            pass
+                                        app.quit()
 
                         def _on_key_missing():
                             """Called on main thread when license key file is gone."""

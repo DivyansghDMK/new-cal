@@ -20,6 +20,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
+from .pan_tompkins import pan_tompkins
 try:
     from .ecg_filters import (
         extract_respiration,
@@ -236,6 +237,31 @@ class PQRSTAnalyzer:
                     t_idx = start + np.argmax(segment)
                     t_peaks.append(t_idx)
         return t_peaks
+
+    def find_pqrst(self, signal):
+        """Compatibility wrapper used by the expanded lead analysis code."""
+        try:
+            r_peaks = self._detect_r_peaks(signal)
+            q_peaks = self._detect_q_waves(signal, r_peaks)
+            s_peaks = self._detect_s_waves(signal, r_peaks)
+            t_peaks = self._detect_t_waves(signal, r_peaks)
+            # Do not guess P waves here; the old heuristic was the source of
+            # false PR / Mobitz-style conclusions in the expanded window.
+            p_peaks = []
+            return p_peaks, q_peaks, r_peaks, s_peaks, t_peaks
+        except Exception as e:
+            print(f"Error in find_pqrst: {e}")
+            return [], [], [], [], []
+
+    def calculate_pr_interval(self, p_peaks, r_peaks):
+        """Deprecated compatibility wrapper.
+
+        The expanded view now relies on clinical_measurements.measure_pr_from_median_beat
+        elsewhere for PR reporting. We return an empty list here so the old
+        peak-to-peak fallback does not manufacture PR intervals from guessed P waves.
+        """
+        _ = (p_peaks, r_peaks)
+        return []
 
 class MetricsCard(QFrame):
     """Individual metric card with color coding and animations"""

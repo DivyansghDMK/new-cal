@@ -24,7 +24,7 @@ Startup validation sequence (5 checks):
     2. Token HMAC signature is valid (tamper detection).
     3. Hardware fingerprint in token matches this machine.
     4. RhythmUlta connected and serial matches token.
-    5. Server heartbeat (POST /heartbeat) — only once every 7 days.
+    5. Server heartbeat (POST /heartbeat) — attempted on startup, with offline grace.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ SOFTWARE_VERSION: str = "2.0.0"
 PRODUCT_CODE: str = "CARDIOX"
 
 # Offline grace window (days) — app runs without internet for this many days.
-OFFLINE_GRACE_DAYS: int = 1
+OFFLINE_GRACE_DAYS: int = 14
 # How many seconds between mandatory server heartbeats.
 HEARTBEAT_INTERVAL_SECONDS: int = OFFLINE_GRACE_DAYS * 86400
 
@@ -100,6 +100,7 @@ _TOKEN_FILE: Path = _TOKEN_DIR / "cardiox.lic"
 # Sidecar: mutable metadata (last_server_check, fingerprint) stored separately
 # so the server-issued JWT in cardiox.lic is NEVER overwritten by the client.
 _META_FILE: Path = _TOKEN_DIR / "cardiox_meta.json"
+_AUDIT_LOG_FILE: Path = _TOKEN_DIR / "audit_log.jsonl"
 
 # Legacy cache dir (kept for backward compat — old key file)
 _LEGACY_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
@@ -109,6 +110,23 @@ _DEVICE_ID_FILE: Path = _LEGACY_CACHE_DIR / "device.id"  # no longer used; kept 
 
 # Base-32 alphabet — no ambiguous chars (0, O, 1, I)
 _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _append_audit_event(action: str, **details) -> None:
+    """Append a lightweight local audit event for support and recovery tracing."""
+    try:
+        _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "action": action,
+            "timestamp": int(time.time()),
+            "local_time": int(time.time()),
+        }
+        if details:
+            payload.update(details)
+        with _AUDIT_LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, sort_keys=True) + "\n")
+    except Exception as e:
+        print(f"[License] Could not write audit event {action}: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -554,6 +572,16 @@ def load_token_file() -> Optional[Dict]:
                     mapped["fingerprint"] = payload["hardware_fingerprint"]
                 if "issued_at" in payload:
                     mapped["last_server_check"] = payload["issued_at"]
+                if "last_successful_server_validation" in payload:
+                    mapped["last_successful_server_validation"] = payload["last_successful_server_validation"]
+                if "last_successful_server_time" in payload:
+                    mapped["last_successful_server_time"] = payload["last_successful_server_time"]
+                if "last_local_time" in payload:
+                    mapped["last_local_time"] = payload["last_local_time"]
+                if "offline_grace_days" in payload:
+                    mapped["offline_grace_days"] = payload["offline_grace_days"]
+                if "minimum_version" in payload:
+                    mapped["minimum_version"] = payload["minimum_version"]
                 if "exp" in payload:
                     mapped["expires"] = payload["exp"]
                 # Merge sidecar metadata — overrides stale JWT claims with
@@ -561,6 +589,16 @@ def load_token_file() -> Optional[Dict]:
                 meta = _load_license_meta()
                 if "last_server_check" in meta:
                     mapped["last_server_check"] = meta["last_server_check"]
+                if "last_successful_server_validation" in meta:
+                    mapped["last_successful_server_validation"] = meta["last_successful_server_validation"]
+                if "last_successful_server_time" in meta:
+                    mapped["last_successful_server_time"] = meta["last_successful_server_time"]
+                if "last_local_time" in meta:
+                    mapped["last_local_time"] = meta["last_local_time"]
+                if "offline_grace_days" in meta:
+                    mapped["offline_grace_days"] = meta["offline_grace_days"]
+                if "minimum_version" in meta:
+                    mapped["minimum_version"] = meta["minimum_version"]
                 if "fingerprint" in meta:
                     mapped["fingerprint"] = meta["fingerprint"]
                 if "seat_number" in meta:
@@ -680,9 +718,12 @@ def _post_json(endpoint: str, body: Dict, timeout: int = 12) -> Dict:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:  # type: ignore
         try:
-            return json.loads(e.read().decode())
+            payload = json.loads(e.read().decode())
         except Exception:
-            return {"valid": False, "error": f"HTTP {e.code}: {e.reason}"}
+            payload = {"valid": False, "error": f"HTTP {e.code}: {e.reason}"}
+        if e.code in (408, 500, 502, 503, 504):
+            payload["offline"] = True
+        return payload
     except Exception as e:
         return {"valid": False, "error": str(e), "offline": True}
 
@@ -722,18 +763,19 @@ def register_device(
         "license_key": license_key.strip().upper(),
         "hardware_fingerprint": fingerprint,
         "rhythmulta_serial": rhythmulta_serial,
-        "rhythmultra_serial": rhythmulta_serial,                  # new specification spelling
+        "rhythmultra_serial": rhythmulta_serial,
         "full_name": full_name,
         "doctor_name": doctor_name,
         "org_name": org_name,
         "org_address": org_address,
         "phone": phone,
-        "password": password_hash,       # specification expects password
-        "password_hash": password_hash,  # legacy server expects password_hash
-        "bios_serial": machine_serial,                            # specification expects bios_serial
-        "machine_serial_id": machine_serial,                      # legacy server expects machine_serial_id
+        "password": password_hash,
+        "password_hash": password_hash,
+        "bios_serial": machine_serial,
+        "machine_serial_id": machine_serial,
         "pc_name": machine_ctx["machine_name"],
         "windows_version": machine_ctx["windows_version"],
+        "app_version": SOFTWARE_VERSION,
     }
     result = _post_json("register", body)
     _verify_server_sig(result)
@@ -752,7 +794,7 @@ def load_raw_token() -> str:
 
 def heartbeat(token_data: Dict) -> Dict:
     """
-    POST /heartbeat — 7-day check-in.
+    POST /heartbeat — startup/server check-in.
     Sends current token claims; server confirms license not revoked.
     Returns server response dict (includes `valid`, `revoked`, etc.).
     """
@@ -762,15 +804,15 @@ def heartbeat(token_data: Dict) -> Dict:
         "rhythmultra_serial", token_data.get("rhythmulta_serial", "")
     )
     body = {
-        "token": load_raw_token(),  # specification expects raw token from cardiox.lic
+        "token": load_raw_token(),
         "hardware_fingerprint": current_fp,
         "rhythmulta_serial": current_rhythmulta_serial,
-        "rhythmultra_serial": current_rhythmulta_serial, # new specification spelling
+        "rhythmultra_serial": current_rhythmulta_serial,
         "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
         "pc_name": machine_ctx.get("machine_name", ""),
-        # legacy compatibility fields
         "license_key": token_data.get("license_key", ""),
         "seat_number": token_data.get("seat_number", 1),
+        "version": SOFTWARE_VERSION,
     }
     result = _post_json("heartbeat", body)
     _verify_server_sig(result)
@@ -824,6 +866,7 @@ class StartupCheckResult:
         self.reason: str = ""
         self.token: Optional[Dict] = None
         self.rhythmulta_serial: Optional[str] = None
+        self.offline_mode: bool = False
 
     def __bool__(self):
         return self.ok
@@ -843,7 +886,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     Check 2: Token HMAC signature valid (tamper detection).
     Check 3: Hardware fingerprint in token matches this machine.
     Check 4: RhythmUlta connected and serial matches token.
-    Check 5: Server heartbeat (only if > 7 days since last check-in).
+    Check 5: Server heartbeat (attempted on startup; offline grace applies if unreachable).
 
     Returns a StartupCheckResult.  If .ok is False, .step_failed and
     .reason describe the first failing check.
@@ -855,17 +898,14 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     # ── Check 1: Token file exists ────────────────────────────────────────────
     if not token_file_exists():
         res.step_failed = 1
-        res.reason = "No activation token found. Please register your device."
+        res.reason = "License not found.\nPlease register your device."
         return res
 
     # ── Check 2: Token HMAC valid (not tampered) ──────────────────────────────
     token = load_token_file()
     if token is None:
         res.step_failed = 2
-        res.reason = (
-            "License token is invalid or has been tampered with.\n"
-            "Please contact Deckmount support."
-        )
+        res.reason = "License data integrity check failed."
         return res
     res.token = token
 
@@ -880,8 +920,6 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             f"fields={current_fields} token_seat={token.get('seat_number', '')}"
         )
     if stored_fp and not hmac.compare_digest(current_fp, stored_fp):
-        current_fields = _collect_wmi_fields()
-        present_fields = sum(1 for value in current_fields.values() if str(value).strip())
         # Always ask the server first so a revoked license is reported as a
         # revocation, not masked as a machine mismatch.
         try:
@@ -909,15 +947,19 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 return res
 
             if server_token_failure:
-                res.step_failed = 5
+                res.step_failed = 2
                 res.reason = hb_result.get(
                     "error",
                     hb_result.get(
                         "message",
-                        "License token is invalid or expired. Please contact Deckmount support.",
+                        "License data integrity check failed.",
                     ),
                 )
                 return res
+
+            res.step_failed = 3
+            res.reason = "This license is registered to a different machine."
+            return res
 
             if hb_result.get("valid", False) or hb_result.get("authorized", False):
                 # Save metadata to sidecar — do NOT overwrite the server JWT.
@@ -967,23 +1009,18 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     res.rhythmulta_serial = usb_serial
     if usb_serial is None:
         res.step_failed = 4
-        res.reason = (
-            "Please connect your authorized RhythmUlta device to continue."
-        )
+        res.reason = "Unauthorized RhythmUltra device connected."
         return res
 
     stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
     # If stored_serial is empty the device was never bound — allow first use
     if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
         res.step_failed = 4
-        res.reason = (
-            f"Unauthorized RhythmUlta device connected.\n"
-            "Please connect the device registered with this license."
-        )
+        res.reason = "Unauthorized RhythmUltra device connected."
         return res
 
     # ── Check 5: Server heartbeat (Dynamic Check) ─────────────────────────────
-    # Always attempt online server validation if connected, falling back to 1-day offline grace cache if unreachable
+    # Always attempt online server validation if connected, falling back to offline grace cache if unreachable.
     needs_heartbeat = True
 
     if needs_heartbeat:
@@ -998,20 +1035,27 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 )
                 return res
 
-            last_check = int(token.get("last_server_check", 0))
+            last_check = int(
+                token.get("last_successful_server_validation")
+                or token.get("last_server_check", 0)
+            )
             elapsed = now - last_check
             grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
             if grace_remaining <= 0:
                 res.step_failed = 5
                 res.reason = (
-                    "License server could not be reached and the offline grace period has expired.\n"
-                    "Please connect to the internet to continue."
+                    "License verification required.\n"
+                    "Please connect to the internet."
                 )
                 return res
             # Grace still active — let through, update nothing
             print(
                 f"[License] Offline — {int(grace_remaining / 86400)} day(s) of grace remaining."
             )
+            res.ok = True
+            res.offline_mode = True
+            res.reason = f"Offline mode active. {int(grace_remaining / 86400)} day(s) remaining before verification is required."
+            return res
         elif hb_result.get("revoked") or (not hb_result.get("valid", False) and not hb_result.get("authorized", False)):
             res.step_failed = 5
             res.reason = hb_result.get(
@@ -1024,13 +1068,18 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             # CRITICAL: Do NOT call save_token_file(token) here — that would
             # overwrite the server-issued JWT with a client-signed version,
             # causing the next server heartbeat to fail with an invalid token error.
-            meta = {"fingerprint": current_fp, "last_server_check": now}
+            meta = {
+                "fingerprint": current_fp,
+                "last_server_check": now,
+                "last_successful_server_validation": now,
+            }
             if "seat_number" in hb_result:
                 meta["seat_number"] = hb_result["seat_number"]
                 token["seat_number"] = hb_result["seat_number"]
             _save_license_meta(meta)
             token["fingerprint"] = current_fp
             token["last_server_check"] = now
+            token["last_successful_server_validation"] = now
             print(f"[License] Heartbeat OK — metadata updated (JWT preserved).")
 
     # ── All checks passed ─────────────────────────────────────────────────────
@@ -1201,6 +1250,7 @@ def remember_valid_license(
         "rhythmultra_serial": "",   # populated on first real startup check
         "seat_number": 1,
         "last_server_check": now,
+        "last_successful_server_validation": now,
     }
     if isinstance(result, dict):
         for k in ("tier", "expires", "tier_name"):
@@ -1236,6 +1286,7 @@ def check_license(license_key: str, force_server: bool = False) -> Dict:
             "tier": token.get("tier", 0),
             "expires": token.get("expires", 0),
             "revoked": False,
+            "offline": bool(getattr(result, "offline_mode", False)),
         }
 
     revoked = result.step_failed == 5 and "revoked" in result.reason.lower()
@@ -1247,6 +1298,7 @@ def check_license(license_key: str, force_server: bool = False) -> Dict:
         "tier": 0,
         "expires": 0,
         "step_failed": result.step_failed,
+        "offline": bool(getattr(result, "offline_mode", False)),
     }
 
 

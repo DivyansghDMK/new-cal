@@ -643,7 +643,7 @@ class CloudUploader:
         Uses a cache to avoid redundant API calls.
         """
         import time
-        default_doctors = ['Dr_Rohit', 'Dr_Neha', 'Dr_Arjun', 'Dr_Simran', 'Dr_Kabir']
+        default_doctors = []
         
         # Return cache if available and not forced refresh (cache for 1 hour)
         now = time.time()
@@ -651,7 +651,7 @@ class CloudUploader:
             return self._doctor_list_cache
 
         if not self.doctor_review_api_url:
-            return default_doctors
+            return self._doctor_list_cache or default_doctors
         
         try:
             url = self.doctor_review_api_url.rstrip('/')
@@ -709,7 +709,7 @@ class CloudUploader:
         if self._doctor_list_cache:
             return self._doctor_list_cache
             
-        return default_doctors
+        return self._doctor_list_cache or default_doctors
     
     def _upload_to_s3(self, file_path, metadata):
         """Upload to AWS S3"""

@@ -1005,7 +1005,11 @@ class HistoryWindow(QDialog):
                 from PyQt5.QtCore import QTimer
                 QTimer.singleShot(0, functools.partial(
                     self.rev_status_lbl.setText,
-                    f"Could not load doctors: {e}"
+                    "Offline mode: doctor list could not be refreshed from the cloud."
+                ))
+                QTimer.singleShot(0, functools.partial(
+                    self.rev_status_lbl.setStyleSheet,
+                    "color:#b91c1c;font-size:11px;font-weight:600;"
                 ))
                 return
 
@@ -1028,11 +1032,13 @@ class HistoryWindow(QDialog):
         self.rev_doctor_combo.setCurrentIndex(max(0, idx))
         self.rev_doctor_combo.blockSignals(False)
         if doctors:
+            self.rev_status_lbl.setStyleSheet("color:#166534;font-size:11px;font-weight:500;")
             self.rev_status_lbl.setText(
                 f"{len(doctors)} doctor(s) loaded. Select one to fetch reports."
             )
         else:
-            self.rev_status_lbl.setText("No doctors found in cloud.")
+            self.rev_status_lbl.setStyleSheet("color:#b91c1c;font-size:11px;font-weight:600;")
+            self.rev_status_lbl.setText("Offline mode or empty cloud response: no doctors available right now.")
 
     def _build_reviewed_tab(self) -> QWidget:
         """Reviewed-by-doctor reports fetched from the public API."""
@@ -1329,8 +1335,16 @@ class HistoryWindow(QDialog):
                 timeout=12,
             )
             if resp.status_code != 200:
+                self.rev_status_lbl.setStyleSheet("color:#b91c1c;font-size:11px;font-weight:600;")
                 self.rev_status_lbl.setText(
-                    f"Cloud API Error: {resp.status_code} - {resp.reason}. Doctor: {doc_name}"
+                    f"Cloud unavailable ({resp.status_code}). Reviewed reports could not be loaded."
+                )
+                from utils.ui_feedback import show_critical
+                show_critical(
+                    self,
+                    "Cloud Unavailable",
+                    f"Reviewed reports could not be loaded for {doc_name}.",
+                    details=f"HTTP {resp.status_code}: {resp.reason}",
                 )
                 return
             
@@ -1338,7 +1352,8 @@ class HistoryWindow(QDialog):
             try:
                 data = resp.json() if "application/json" in ct or resp.text.strip().startswith("[") else []
             except Exception as json_err:
-                self.rev_status_lbl.setText(f"Cloud Data Error: Failed to parse JSON response. {json_err}")
+                self.rev_status_lbl.setStyleSheet("color:#b91c1c;font-size:11px;font-weight:600;")
+                self.rev_status_lbl.setText("Cloud data could not be read right now.")
                 return
             if not isinstance(data, list):
                 data = []
@@ -1387,8 +1402,31 @@ class HistoryWindow(QDialog):
                     f"No reviewed reports found for '{doc_name}'. "
                     "Check the doctor name spelling and try again."
                 )
+        except requests.exceptions.RequestException as e:
+            self.rev_status_lbl.setStyleSheet("color:#b91c1c;font-size:11px;font-weight:600;")
+            self.rev_status_lbl.setText(
+                "Offline mode: reviewed reports cannot be loaded until the internet is restored."
+            )
+            from utils.ui_feedback import show_critical, is_network_error, offline_action_message
+            show_critical(
+                self,
+                "No Internet Connection",
+                offline_action_message(
+                    "Loading reviewed reports",
+                    "You can still browse local reports and queued items while offline.",
+                ),
+                details=str(e),
+            )
         except Exception as e:
-            self.rev_status_lbl.setText(f"Error fetching cloud data: {e}")
+            self.rev_status_lbl.setStyleSheet("color:#b91c1c;font-size:11px;font-weight:600;")
+            self.rev_status_lbl.setText("Could not load reviewed reports.")
+            from utils.ui_feedback import show_critical
+            show_critical(
+                self,
+                "Reviewed Reports Error",
+                "Could not load reviewed reports from the cloud.",
+                details=str(e),
+            )
 
     def _open_reviewed_selected(self):
         row = self.rev_table.currentRow()
@@ -2484,7 +2522,7 @@ class ReviewedReportsDialog(QDialog):
         try:
             doctors = get_cloud_uploader().get_available_doctors()
         except Exception:
-            doctors = ["Dr_Rohit", "Dr_Neha", "Dr_Arjun"]
+            doctors = []
         self.doctor_combo.addItems(doctors or [])
         self.refresh_btn.clicked.connect(self.refresh_list)
         self.open_btn.clicked.connect(self.open_selected)

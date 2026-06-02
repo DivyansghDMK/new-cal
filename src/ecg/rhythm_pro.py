@@ -80,8 +80,8 @@ def detect_rhythm_fda(
         findings.append("2nd Degree AV Block (Mobitz I)")
         confidence = min(confidence, 0.86)
 
-    if detect_dropped_beats(beats):
-        findings.append("2nd Degree AV Block (Mobitz II)")
+    # Keep the dropped-beat heuristic available as a feature, but do not
+    # promote it to Mobitz II without stronger P-wave / PR validation.
         confidence = min(confidence, 0.85)
 
     if detect_av_dissociation(beats):

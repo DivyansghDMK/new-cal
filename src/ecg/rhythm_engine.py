@@ -23,7 +23,7 @@ Architecture (3-layer separation):
 
 Priority order (STEP 1 must be checked before STEP 2, etc.):
     STEP 1  — CRITICAL RHYTHMS   (Asystole → VF → VT)
-    STEP 2  — AV BLOCKS          (3rd → Mobitz II → Mobitz I → 1st-degree)
+    STEP 2  — AV BLOCKS          (3rd → Mobitz I → 1st-degree)
     STEP 3  — ATRIAL FIBRILLATION
     STEP 4  — SINUS RHYTHMS      (Bradycardia → NSR → Tachycardia)
     STEP 5  — FALLBACK
@@ -204,7 +204,11 @@ def is_sinus_rhythm(p_present: bool, pr_intervals: List[float],
 
 def classify_av_block(pr_intervals: List[float], p_count: int, qrs_count: int) -> Optional[str]:
     """
-    AV Block detection trend logic exactly as requested.
+    AV block detection.
+
+    Mobitz II promotion is intentionally disabled here because the older
+    dropped-beat and PR-scatter heuristics were too permissive. Mobitz I and
+    third-degree AV block remain available when the evidence is stronger.
     """
     if p_count <= qrs_count:
         return None
@@ -217,10 +221,9 @@ def classify_av_block(pr_intervals: List[float], p_count: int, qrs_count: int) -
 
     if increasing:
         return "Second-degree AV Block (Mobitz I)"
-    elif pr_std < 10:
-        return "Second-degree AV Block (Mobitz II)"
-    else:
+    if p_count > qrs_count and pr_std >= 10:
         return "Third-degree AV Block"
+    return None
 
 
 def detect_arrhythmia(signal: np.ndarray, metrics: Dict,
