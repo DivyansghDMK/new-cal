@@ -2062,6 +2062,15 @@ class ECGAnalysisWindow(QDialog):
             QMessageBox.warning(self, "Mobile", "Enter a valid 10-digit mobile number.")
             return
 
+        from utils.offline_queue import get_offline_queue
+        from utils.ui_feedback import is_network_error, offline_action_message, show_critical
+
+        offline_queue = None
+        try:
+            offline_queue = get_offline_queue()
+        except Exception:
+            offline_queue = None
+
         def _get_public_session():
             import requests
             if self._public_api_session is None:
@@ -2100,6 +2109,17 @@ class ECGAnalysisWindow(QDialog):
             cached = self._public_reports_cache.get(mobile_no)
             if isinstance(cached, list) and cached:
                 reports = cached
+            elif offline_queue is not None and not offline_queue.is_online():
+                self._hide_loader()
+                show_critical(
+                    self,
+                    "No Internet Connection",
+                    offline_action_message(
+                        "Loading public reports",
+                        "Reconnect to fetch cloud reports, or use locally saved JSON reports instead.",
+                    ),
+                )
+                return
             else:
                 QApplication.setOverrideCursor(Qt.WaitCursor)
                 cursor_overridden = True
@@ -2191,7 +2211,18 @@ class ECGAnalysisWindow(QDialog):
             self.load_selected_report(idx)
             self._hide_loader()
         except Exception as e:
-            QMessageBox.critical(self, "API Error", f"Failed to load reports: {str(e)}")
+            if is_network_error(e):
+                show_critical(
+                    self,
+                    "No Internet Connection",
+                    offline_action_message(
+                        "Loading public reports",
+                        "Reconnect to fetch cloud reports, or use locally saved JSON reports instead.",
+                    ),
+                    details=str(e),
+                )
+            else:
+                show_critical(self, "API Error", "Failed to load reports.", details=str(e))
         finally:
             try:
                 self._hide_loader()
@@ -2461,7 +2492,8 @@ class ECGAnalysisWindow(QDialog):
                 except Exception as e:
                     print(f"Error loading report {filename}: {e}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load reports: {e}")
+            from utils.ui_feedback import show_critical
+            show_critical(self, "Error", "Failed to load reports.")
         finally:
             self.report_combo.blockSignals(False)
         if self.reports:
@@ -2884,9 +2916,22 @@ class ECGAnalysisWindow(QDialog):
             self.report_combo.addItem(f"[API] {name} | ID:{id_text}", "")
             self.report_combo.setCurrentIndex(idx)
             self.api_fetch_btn.setText("Fetch")
+        except requests.exceptions.RequestException as e:
+            from utils.ui_feedback import offline_action_message, show_critical
+            self.api_fetch_btn.setText("Fetch")
+            show_critical(
+                self,
+                "No Internet Connection",
+                offline_action_message(
+                    "Fetching an API report",
+                    "This feature needs an active connection to the public API.",
+                ),
+                details=str(e),
+            )
         except Exception as e:
             self.api_fetch_btn.setText("Fetch")
-            QMessageBox.critical(self, "API Error", f"Failed: {str(e)}")
+            from utils.ui_feedback import show_critical
+            show_critical(self, "API Error", "Failed to load the report.", details=str(e))
 
     # ─────────────────────────────────────────────────────────────────────────
     #  EXPORT / PDF  (identical to original)

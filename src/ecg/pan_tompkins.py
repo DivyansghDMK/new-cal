@@ -52,7 +52,7 @@ def pan_tompkins(ecg, fs=500):
     # missed every other peak → false 150 BPM.
     # Now 0.16*fs (160ms at 500Hz = 80 samples) → supports up to ~375 BPM.
     # Pass-2 below still adapts refractory for low HR to kill T-wave ghosts.
-    min_distance = max(1, int(round(0.16 * fs)))
+    min_distance = max(1, int(round(0.22 * fs)))
     mean_mwa = float(np.mean(mwa)) if mwa.size else 0.0
     std_mwa = float(np.std(mwa)) if mwa.size else 0.0
 
@@ -72,7 +72,7 @@ def pan_tompkins(ecg, fs=500):
         ipi = np.diff(peaks) / fs * 1000.0  # inter-peak intervals in ms
         median_ipi = float(np.median(ipi))
         if median_ipi > 600:  # HR < 100 BPM
-            adaptive_refrac = max(int(round(0.20 * fs)),
+            adaptive_refrac = max(int(round(0.22 * fs)),
                                   int(round(0.33 * median_ipi / 1000.0 * fs)))
             if adaptive_refrac > min_distance:
                 min_distance = adaptive_refrac

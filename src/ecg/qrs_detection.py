@@ -291,7 +291,7 @@ def detect_peaks_in_average_signal(avg_signal: np.ndarray,
     rectified     = np.abs(avg_signal)
     amp_threshold = np.mean(rectified) + 1.5 * np.std(rectified)
     amp_threshold = max(amp_threshold, signal_range * 0.30)
-    min_distance  = max(int(rr_estimate_ms * 0.4 / 1000.0 * fs), int(0.2 * fs))
+    min_distance  = max(int(rr_estimate_ms * 0.4 / 1000.0 * fs), int(0.22 * fs))
 
     pos_peaks, _ = find_peaks( avg_signal, height=amp_threshold, distance=min_distance)
     neg_peaks, _ = find_peaks(-avg_signal, height=amp_threshold, distance=min_distance)

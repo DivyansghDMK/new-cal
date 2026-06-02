@@ -980,8 +980,6 @@ def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict
 
     p_beats = [b for b in beats_list if b.get("p_present")]
     qrs_count = len(reference_beats)
-    if not skip_av_block and qrs_count < len(p_beats):
-        arrhythmias.append("2nd-degree AV block (Mobitz II)")
 
     pp_regular = False
     av_dissociation = False
@@ -1749,7 +1747,6 @@ class ArrhythmiaDetector:
             # last 5 detections to win — vs. the normal majority (≥3).
             _SIGNIFICANT_PRIMARY = {
                 "Second-degree AV Block (Mobitz I)",
-                "Second-degree AV Block (Mobitz II)",
                 "Third-degree AV Block",
                 "First-degree AV Block (Prolonged PR)",
                 "Atrial Fibrillation",
