@@ -45,6 +45,7 @@ from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
 from utils.app_paths import data_file
+from utils.platform_compat import is_low_spec_mode
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 from ecg.lead_off_detection import detect_lead_off
@@ -771,7 +772,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.duration_timer.start(1000)  # Check duration every second
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
-            self.metrics_timer.start(200)
+            self.metrics_timer.start(500 if is_low_spec_mode() else 200)
             
             # No success message needed - status label already shows the state
             
@@ -1829,11 +1830,8 @@ class HyperkalemiaTestWindow(QWidget):
             open_btn.setObjectName("open_btn")
             _fp = filepath
             def _open_pdf():
-                import subprocess, sys
-                if sys.platform == 'win32':
-                    subprocess.Popen(['start', '', _fp], shell=True)
-                else:
-                    subprocess.Popen(['xdg-open', _fp])
+                from utils.platform_compat import open_file
+                open_file(_fp)
             open_btn.clicked.connect(_open_pdf)
             ok_btn = QPushButton("OK")
             ok_btn.clicked.connect(dlg.accept)

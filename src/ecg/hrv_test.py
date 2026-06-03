@@ -49,6 +49,7 @@ from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
 from utils.app_paths import data_file
+from utils.platform_compat import is_low_spec_mode
 from ecg.ecg_filters import (
     apply_ac_filter,
     apply_emg_filter,
@@ -649,7 +650,7 @@ class HRVTestWindow(QWidget):
             self.duration_timer.start(1000)
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
-            self.metrics_timer.start(200)
+            self.metrics_timer.start(500 if is_low_spec_mode() else 200)
             
             QMessageBox.information(self, "Capture Started",
                                   f"{self.selected_lead} capture started. It will automatically stop after {int(self.duration_minutes)} {self._minutes_word()}.")
@@ -1111,7 +1112,7 @@ class HRVTestWindow(QWidget):
             spinner_lbl.setText(_frames[_idx[0]])
 
         _anim_timer.timeout.connect(_tick)
-        _anim_timer.start(500)
+        _anim_timer.start(900 if is_low_spec_mode() else 500)
         dlg._anim_timer = _anim_timer   # keep alive
 
         dlg.show()
@@ -1342,11 +1343,8 @@ class HRVTestWindow(QWidget):
             open_btn.setObjectName("open_btn")
 
             def _open_pdf():
-                import subprocess, sys
-                if sys.platform == 'win32':
-                    subprocess.Popen(['start', '', fname], shell=True)
-                else:
-                    subprocess.Popen(['xdg-open', fname])
+                from utils.platform_compat import open_file
+                open_file(fname)
 
             open_btn.clicked.connect(_open_pdf)
             ok_btn = QPushButton("OK")

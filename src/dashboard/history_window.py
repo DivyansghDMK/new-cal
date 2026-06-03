@@ -2192,12 +2192,8 @@ class HistoryWindow(QDialog):
 
     def _open_pdf_file(self, path):
         try:
-            if os.name == "nt":
-                os.startfile(path)
-            elif sys.platform == "darwin":
-                os.system(f'open "{path}"')
-            else:
-                os.system(f'xdg-open "{path}"')
+            from utils.platform_compat import open_file
+            open_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Open Report", f"Failed: {e}")
 

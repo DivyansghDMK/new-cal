@@ -524,6 +524,30 @@ class SerialStreamReader:
         print(f" [OK] Packet-based ECG device started on port {port_name}")
         print(" 📡 Ready to receive data packets...")
 
+    def _stop_due_to_serial_disconnect(self, error: Exception) -> None:
+        """Stop acquisition quietly when the serial port disappears."""
+        error_str = str(error)
+        if not error_str:
+            return
+        disconnect_markers = (
+            "Device not configured",
+            "[Errno 6]",
+            "ClearCommError",
+            "Access is denied",
+            "PermissionError",
+            "device disconnected",
+            "port is closed",
+        )
+        if any(marker.lower() in error_str.lower() for marker in disconnect_markers):
+            print(f" Serial device disconnected: {error_str}")
+            self.running = False
+            try:
+                if self.ser and getattr(self.ser, "is_open", False):
+                    self.ser.close()
+                    print(" Serial port closed after disconnect")
+            except Exception:
+                pass
+
     def stop(self):
         """Stop data acquisition and send hardware STOP command."""
         print(" Stopping packet-based ECG data acquisition...")
@@ -578,8 +602,9 @@ class SerialStreamReader:
             if hasattr(self.ser, 'in_waiting'):
                 try:
                     bytes_to_read = self.ser.in_waiting
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._stop_due_to_serial_disconnect(e)
+                    return []
             
             # If no data is available, return immediately to keep UI responsive
             if bytes_to_read == 0:
@@ -735,6 +760,7 @@ class SerialStreamReader:
                self.consecutive_errors > 20:
                 print(f" Critical serial error ({error_str}) - stopping acquisition")
                 self.running = False
+                self._stop_due_to_serial_disconnect(e)
                 
                 try:
                     # Explicitly close the port on critical error to allow fresh start
@@ -791,7 +817,10 @@ class SerialECGReader:
 
     def stop(self):
         print(" Stopping ECG data acquisition...")
-        self.ser.write(b'0\r\n')
+        try:
+            self.ser.write(b'0\r\n')
+        except Exception:
+            pass
         self.running = False
         print(f" Total data packets received: {self.data_count}")
 
@@ -842,7 +871,10 @@ class SerialECGReader:
 
     def close(self):
         print(" Closing serial connection...")
-        self.ser.close()
+        try:
+            self.ser.close()
+        except Exception:
+            pass
         print(" Serial connection closed")
 
     def _handle_serial_error(self, error):
