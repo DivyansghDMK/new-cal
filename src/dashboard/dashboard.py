@@ -38,6 +38,7 @@ from utils.patient_profile import resolve_patient_profile
 from dashboard.admin_reports import AdminLoginDialog, AdminReportsDialog
 from ecg.signal.signal_processing import extract_low_frequency_baseline
 from ecg.utils.helpers import get_display_gain
+from utils.platform_compat import is_low_spec_mode
 
 # Try to import configuration, fallback to defaults if not available
 try:
@@ -570,7 +571,7 @@ class Dashboard(QWidget):
         self.device_check_timer = QTimer(self)
         self.device_check_timer.timeout.connect(self.check_device_connection)
         # self.device_check_timer.start(100) # Check every 0.1 second
-        self.device_check_timer.start(500) # Reduced frequency to 0.5 seconds per user request
+        self.device_check_timer.start(1500 if is_low_spec_mode() else 500) # Reduced frequency on weak machines
 
         self._device_scan_in_progress = False
         self._last_device_scan_time = 0
@@ -584,7 +585,7 @@ class Dashboard(QWidget):
         self._cloud_sync_in_progress = False
         self.cloud_auto_timer = QTimer(self)
         self.cloud_auto_timer.timeout.connect(self.auto_sync_to_cloud)
-        self.cloud_auto_timer.start(15000)  # every 15s (reduced from 5s for performance)
+        self.cloud_auto_timer.start(30000 if is_low_spec_mode() else 15000)  # slower on low-spec systems
         
         # --- Greeting and Date Row ---
         greet_row = QHBoxLayout()
@@ -1336,7 +1337,7 @@ class Dashboard(QWidget):
         self.anim = FuncAnimation(
             self.ecg_canvas.figure,
             self.update_ecg,
-            interval=85,              # ~12 FPS for smoothness without lag
+            interval=140 if is_low_spec_mode() else 85,  # lighter refresh on weaker machines
             blit=True,
             cache_frame_data=False,   # prevent unbounded cache growth
             save_count=100
@@ -1345,7 +1346,7 @@ class Dashboard(QWidget):
         # --- Dashboard Metrics Update Timer ---
         self.metrics_timer = QTimer(self)
         self.metrics_timer.timeout.connect(self.update_dashboard_metrics_from_ecg)
-        self.metrics_timer.start(1000)  # Update every 1 second for accurate values within 10 seconds
+        self.metrics_timer.start(2000 if is_low_spec_mode() else 1000)  # Lighter polling on low-spec systems
         print("⏰ Dashboard metrics timer started - updates every 1 second")
         
         # Force initial metrics update immediately to ensure values appear within 10 seconds
@@ -1932,7 +1933,7 @@ class Dashboard(QWidget):
         self.reports_list_layout.addWidget(spacer)
 
     def open_report_file(self, path):
-        import os, sys, subprocess
+        from utils.platform_compat import open_file
         # Prevent automatic opening when triggered by calendar
         if getattr(self, '_calendar_triggered', False):
             print(" Blocked automatic report opening from calendar click")
@@ -1940,12 +1941,7 @@ class Dashboard(QWidget):
         if not os.path.exists(path):
             return
         print(f" Opening report: {path}")
-        if sys.platform == 'darwin':
-            subprocess.call(['open', path])
-        elif sys.platform.startswith('linux'):
-            subprocess.call(['xdg-open', path])
-        elif sys.platform.startswith('win'):
-            os.startfile(path)
+        open_file(path)
 
     def _select_report_row(self, widget, path):
         """Select a Recent Reports row and keep it highlighted until another is clicked."""
@@ -3726,11 +3722,8 @@ class Dashboard(QWidget):
             )
             if reply == QMessageBox.Yes:
                 try:
-                    import subprocess, sys
-                    if sys.platform == 'win32':
-                        subprocess.Popen(['start', '', fname], shell=True)
-                    else:
-                        subprocess.Popen(['xdg-open', fname])
+                    from utils.platform_compat import open_file
+                    open_file(fname)
                 except Exception as open_err:
                     QMessageBox.warning(self, "Error Opening PDF", f"Could not open PDF file:\n{open_err}")
 

@@ -14,7 +14,8 @@ for _stream in (sys.stdout, sys.stderr):
 # MUST be set BEFORE any Qt/PyQtGraph import.
 # This fixes blank waves on laptops with Intel HD, AMD integrated, or no GPU.
 os.environ['QT_OPENGL'] = 'software'
-os.environ['PYOPENGL_PLATFORM'] = 'win32'
+if sys.platform.startswith("win"):
+    os.environ['PYOPENGL_PLATFORM'] = 'win32'
 os.environ['QT_SCALE_FACTOR'] = '1'
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,6 +23,7 @@ os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
 import json
 from dotenv import load_dotenv
 from utils.app_paths import data_file
+from utils.platform_compat import is_low_spec_mode
 
 def _prepare_runtime_workspace() -> str:
     """
@@ -773,16 +775,17 @@ class LoadingOverlayDialog(QDialog):
         self._dot_count  = 0
         self._progress   = 0
         self.movie = None
+        self._low_spec_mode = is_low_spec_mode()
 
         self._build_ui()
 
         self._anim_timer = QTimer(self)
         self._anim_timer.timeout.connect(self._tick_anim)
-        self._anim_timer.start(60)
+        self._anim_timer.start(140 if self._low_spec_mode else 60)
 
         self._step_timer = QTimer(self)
         self._step_timer.timeout.connect(self._advance_step)
-        self._step_timer.start(2200)
+        self._step_timer.start(3200 if self._low_spec_mode else 2200)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -988,7 +991,7 @@ class LoginRegisterDialog(QDialog):
         self._device_scan_in_progress = False
         self.device_check_timer = QTimer(self)
         self.device_check_timer.timeout.connect(self.check_device_connection)
-        self.device_check_timer.start(1000) # Check every 1 second
+        self.device_check_timer.start(5000 if is_low_spec_mode() else 1000) # Slower polling on weak machines
         
         # Resize according to current screen size (~90% of available geometry)
         try:
@@ -1030,7 +1033,9 @@ class LoginRegisterDialog(QDialog):
                 print(f" Found v.gif at: {gif_path}")
                 break
         
-        if gif_path and os.path.exists(gif_path):
+        if self._low_spec_mode:
+            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
+        elif gif_path and os.path.exists(gif_path):
             try:
                 from PyQt5.QtGui import QMovie
                 movie = QMovie(gif_path)
@@ -2012,7 +2017,7 @@ class LoginRegisterDialog(QDialog):
             QMessageBox.information(self, "OTP Sent", f"OTP sent successfully to +91 {normalized_phone}.")
             import time
             self._otp_resend_available_at = time.time() + getattr(self, "_otp_cooldown_seconds", 60)
-            self._otp_timer.start(1000)
+            self._otp_timer.start(2000 if is_low_spec_mode() else 1000)
             self._refresh_otp_controls()
         except Exception as e:
             logger.error(f"OTP send failed for {normalized_phone}: {e}")
@@ -2086,7 +2091,7 @@ class LoginRegisterDialog(QDialog):
                     import time
                     self._otp_lockout_until = time.time() + getattr(self, "_otp_lockout_seconds", 300)
                     self._otp_failed_attempts = 0
-                    self._otp_timer.start(1000)
+                    self._otp_timer.start(2000 if is_low_spec_mode() else 1000)
                     self._refresh_otp_controls()
                 QMessageBox.warning(
                     self,
@@ -2355,19 +2360,21 @@ def main():
             logger.warning(f"Update check failed: {e}")
 
         # ── Pre-warm heavy imports in background ──────────────────────
-        # matplotlib, scipy, pyqtgraph take 2-5s on first import
-        # Start loading now so by the time user types password → cached
-        def _prewarm():
-            try:
-                import matplotlib; matplotlib.use('Agg')
-                import matplotlib.pyplot
-                import scipy.signal
-                import scipy.ndimage
-                import pyqtgraph
-            except Exception:
-                pass
-        import threading
-        threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
+        # Skip this on low-spec machines to avoid an early CPU/RAM spike.
+        if not is_low_spec_mode():
+            # matplotlib, scipy, pyqtgraph take 2-5s on first import
+            # Start loading now so by the time user types password → cached
+            def _prewarm():
+                try:
+                    import matplotlib; matplotlib.use('Agg')
+                    import matplotlib.pyplot
+                    import scipy.signal
+                    import scipy.ndimage
+                    import pyqtgraph
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
         # ──────────────────────────────────────────────────────────────
 
         # ── Startup License Verification Enforcer ──

@@ -9313,7 +9313,11 @@ class ECGTestPage(QWidget):
             
             # Open the report
             if os.path.exists(report_path):
-                os.startfile(report_path)
+                try:
+                    from utils.platform_compat import open_file
+                    open_file(report_path)
+                except Exception as open_err:
+                    print(f" Failed to open Holter report automatically: {open_err}")
             
             QMessageBox.information(self, "Holter Session Complete", 
                                     f"Holter recording saved and report generated:\n{report_path}")

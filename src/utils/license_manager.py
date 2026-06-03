@@ -649,8 +649,10 @@ def load_token_file() -> Optional[Dict]:
                     mapped["force_upgrade"] = payload["force_upgrade"]
                 if "exp" in payload:
                     mapped["expires"] = payload["exp"]
-                # Merge sidecar metadata — overrides stale JWT claims with
-                # up-to-date last_server_check and fingerprint from successful heartbeats.
+                # Merge sidecar metadata for mutable fields only.
+                # The token's fingerprint claims remain the source of truth so
+                # a stale sidecar from a previous install/machine cannot create
+                # a false "fingerprint mismatch" on startup.
                 meta = _load_license_meta()
                 if "last_server_check" in meta:
                     mapped["last_server_check"] = meta["last_server_check"]
@@ -660,9 +662,9 @@ def load_token_file() -> Optional[Dict]:
                     mapped["last_successful_server_time"] = meta["last_successful_server_time"]
                 if "last_local_time" in meta:
                     mapped["last_local_time"] = meta["last_local_time"]
-                if "stable_fingerprint" in meta:
+                if "stable_fingerprint" in meta and "stable_fingerprint" not in mapped:
                     mapped["stable_fingerprint"] = meta["stable_fingerprint"]
-                if "stable_hardware_fingerprint" in meta:
+                if "stable_hardware_fingerprint" in meta and "stable_fingerprint" not in mapped:
                     mapped["stable_fingerprint"] = meta["stable_hardware_fingerprint"]
                 if "offline_grace_days" in meta:
                     mapped["offline_grace_days"] = meta["offline_grace_days"]
@@ -670,7 +672,7 @@ def load_token_file() -> Optional[Dict]:
                     mapped["minimum_version"] = meta["minimum_version"]
                 if "force_upgrade" in meta:
                     mapped["force_upgrade"] = meta["force_upgrade"]
-                if "fingerprint" in meta:
+                if "fingerprint" in meta and "fingerprint" not in mapped:
                     mapped["fingerprint"] = meta["fingerprint"]
                 if "seat_number" in meta:
                     mapped["seat_number"] = meta["seat_number"]
