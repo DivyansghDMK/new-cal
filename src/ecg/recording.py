@@ -415,6 +415,27 @@ class ECGMenu(QGroupBox):
         for text, handler in self.menu_button_defs:
             btn = QPushButton(self.tr(text))
             btn.setFixedHeight(36)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    font: bold 12pt Arial;
+                    color: #2c3e50;
+                    background: white;
+                    border: 1.5px solid #d9d9d9;
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    text-align: left;
+                }
+                QPushButton:hover {
+                    color: #ff6600;
+                    background: #fff7ef;
+                    border: 1.5px solid #ff6600;
+                }
+                QPushButton:pressed {
+                    background: #ffe7d2;
+                    border: 1.5px solid #ff6600;
+                }
+            """)
             btn.clicked.connect(handler)
             layout.addWidget(btn)
             self.buttons[text] = btn
@@ -465,6 +486,133 @@ class ECGMenu(QGroupBox):
 
     def tr(self, text):
         return translate_text(text, getattr(self, "current_language", "en"))
+
+    def _panel_header_style(self, font_size):
+        return f"""
+            QLabel {{
+                font: bold {font_size}pt Arial;
+                color: white;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7a00, stop:1 #ff9a3d);
+                border: 2px solid #ff7a00;
+                border-radius: 14px;
+                padding: 10px 14px;
+            }}
+        """
+
+    def _panel_card_style(self, radius=14):
+        return f"""
+            QFrame {{
+                background: white;
+                border: 2px solid #dcdcdc;
+                border-radius: {radius}px;
+            }}
+        """
+
+    def _panel_group_style(self, title_font_size, is_small_screen=False):
+        group_padding = 8 if not is_small_screen else 6
+        group_margin = 5 if not is_small_screen else 3
+        group_margin_top = 18 if not is_small_screen else 14
+        title_left = 12 if not is_small_screen else 9
+        title_padding = 8 if not is_small_screen else 6
+        border_radius = 10 if not is_small_screen else 8
+        return f"""
+            QGroupBox {{
+                font: bold {max(10, title_font_size)}pt Arial;
+                color: #2c3e50;
+                background: white;
+                border: 2px solid #ff7a00;
+                border-radius: {border_radius}px;
+                padding: {group_padding}px;
+                margin: {group_margin}px;
+                margin-top: {group_margin_top}px;
+            }}
+            QGroupBox:title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: {title_left}px;
+                top: 0px;
+                padding: 0 {title_padding}px;
+                color: #ff7a00;
+                font-weight: bold;
+                background: white;
+            }}
+        """
+
+    def _panel_option_style(self, button_width, button_height, font_size):
+        return f"""
+            QRadioButton {{
+                font: bold {font_size}pt Arial;
+                color: #2c3e50;
+                background: white;
+                border: 1.5px solid #cfcfcf;
+                border-radius: 8px;
+                padding: 8px 10px;
+                min-width: {button_width}px;
+                min-height: {button_height}px;
+            }}
+            QRadioButton:hover {{
+                border: 1.5px solid #ff7a00;
+                background: #fff8f1;
+            }}
+            QRadioButton:checked {{
+                color: #d95f00;
+                background: #fff3e8;
+                border: 1.5px solid #ff7a00;
+            }}
+            QRadioButton::indicator {{
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                border: 1.5px solid #c7c7c7;
+                background: white;
+                margin-left: 6px;
+                margin-right: 8px;
+            }}
+            QRadioButton::indicator:checked {{
+                border: 1.5px solid #ff7a00;
+                background: #ff7a00;
+            }}
+        """
+
+    def _panel_action_style(self, style, font_size):
+        if style == "danger":
+            text = "#d32f2f"
+            bg = "white"
+            border = "#f44336"
+            hover_bg = "#fff2f1"
+            hover_border = "#ff7a72"
+        elif style == "neutral":
+            text = "#2c3e50"
+            bg = "white"
+            border = "#d7d7d7"
+            hover_bg = "#fff7ef"
+            hover_border = "#ff8f2f"
+        else:
+            text = "white"
+            bg = "#ff7a00"
+            border = "#ff6a00"
+            hover_bg = "#ff8f2f"
+            hover_border = "#ff9f4d"
+        return f"""
+            QPushButton {{
+                font: bold {font_size}pt Arial;
+                color: {text};
+                background: {bg};
+                border: 2px solid {border};
+                border-radius: 10px;
+                padding: 8px 12px;
+                min-height: 38px;
+            }}
+            QPushButton:hover {{
+                background: {hover_bg};
+                border: 2px solid {hover_border};
+            }}
+            QPushButton:pressed {{
+                background: {hover_border};
+                border: 2px solid {border};
+            }}
+        """
 
     def refresh_button_texts(self):
         if hasattr(self, "menu_button_defs"):
@@ -1108,36 +1256,13 @@ class ECGMenu(QGroupBox):
         # Professional title
         title = QLabel(self.tr("Open ECG File"))
         title_font_size = max(16, min(22, int(margin_size * 0.8)))
-        title.setStyleSheet(f"""
-            QLabel {{
-                font: bold {title_font_size}pt Arial;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff6600, stop:1 #ff8c42);
-                border: 2px solid #ff6600;
-                border-radius: 12px;
-                padding: {max(12, int(margin_size * 0.6))}px;
-                margin: {max(8, int(margin_size * 0.4))}px;
-                min-height: {max(30, int(margin_size * 1.5))}px;
-            }}
-        """)
+        title.setStyleSheet(self._panel_header_style(title_font_size))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
         # File selection container with responsive styling
         file_frame = QFrame()
-        # Responsive padding and margins for small screens
-        file_padding = max(10, min(20, int(margin_size * 0.5)))
-        file_margin = max(5, min(10, int(margin_size * 0.25)))
-        file_frame.setStyleSheet(f"""
-            QFrame {{
-                background: white;
-                border: 2px solid #e0e0e0;
-                border-radius: 10px;
-                padding: {file_padding}px;
-                margin: {file_margin}px;
-            }}
-        """)
+        file_frame.setStyleSheet(self._panel_card_style(14))
         file_layout = QVBoxLayout(file_frame)
         file_layout.setSpacing(max(8, min(15, spacing_size)))
         file_layout.setContentsMargins(max(8, min(15, int(margin_size * 0.3))), 
@@ -1152,7 +1277,7 @@ class ECGMenu(QGroupBox):
                 font: bold {max(11, int(margin_size * 0.55))}pt Arial;
                 color: #2c3e50;
                 background: transparent;
-                padding: 5px;
+                padding: 4px 2px;
             }}
         """)
         file_layout.addWidget(path_label)
@@ -1164,8 +1289,8 @@ class ECGMenu(QGroupBox):
                 color: #666;
                 background: #f8f9fa;
                 padding: {max(6, min(12, int(margin_size * 0.3)))}px;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
+                border: 1.5px solid #d6d6d6;
+                border-radius: 8px;
                 min-height: {max(25, min(40, int(margin_size * 1.2)))}px;
             }}
         """)
@@ -1180,7 +1305,7 @@ class ECGMenu(QGroupBox):
                 font: bold {max(11, int(margin_size * 0.55))}pt Arial;
                 color: #2c3e50;
                 background: transparent;
-                padding: 5px;
+                padding: 4px 2px;
             }}
         """)
         file_layout.addWidget(format_label)
@@ -1194,16 +1319,16 @@ class ECGMenu(QGroupBox):
                 font: {max(10, int(margin_size * 0.5))}pt Arial;
                 color: #2c3e50;
                 background: white;
-                border: 2px solid #e0e0e0;
-                border-radius: 6px;
+                border: 2px solid #ff7a00;
+                border-radius: 8px;
                 padding: {combo_padding}px;
                 min-height: {combo_height}px;
             }}
             QComboBox:hover {{
-                border: 2px solid #ffb347;
+                border: 2px solid #ff8f2f;
             }}
             QComboBox:focus {{
-                border: 2px solid #ff6600;
+                border: 2px solid #ff7a00;
             }}
             QComboBox::drop-down {{
                 border: none;
@@ -1231,13 +1356,7 @@ class ECGMenu(QGroupBox):
 
         # Buttons with responsive sizing
         btn_frame = QFrame()
-        btn_margin = max(5, min(10, int(margin_size * 0.25)))
-        btn_frame.setStyleSheet(f"""
-            QFrame {{
-                background: transparent;
-                margin: {btn_margin}px;
-            }}
-        """)
+        btn_frame.setStyleSheet("QFrame { background: transparent; }")
         btn_layout = QHBoxLayout(btn_frame)
         btn_layout.setSpacing(max(6, min(12, int(margin_size * 0.4))))
 
@@ -1247,27 +1366,10 @@ class ECGMenu(QGroupBox):
 
         # Browse button with responsive sizing
         browse_btn = QPushButton("Browse")
-        btn_padding = max(6, min(10, int(margin_size * 0.3)))
         btn_font_size = max(10, min(13, int(margin_size * 0.5)))
         browse_btn.setMinimumSize(button_width, button_height)
         browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        browse_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: bold {btn_font_size}pt Arial;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #17a2b8, stop:0.5 #138496, stop:1 #17a2b8);
-                color: white;
-                border: 2px solid #17a2b8;
-                border-radius: 8px;
-                padding: {btn_padding}px;
-                min-height: {button_height}px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #138496, stop:0.5 #17a2b8, stop:1 #138496);
-                border: 2px solid #138496;
-            }}
-        """)
+        browse_btn.setStyleSheet(self._panel_action_style("neutral", btn_font_size))
         browse_btn.clicked.connect(self.browse_ecg_file)
         btn_layout.addWidget(browse_btn)
 
@@ -1275,23 +1377,7 @@ class ECGMenu(QGroupBox):
         open_btn = QPushButton("Open")
         open_btn.setMinimumSize(button_width, button_height)
         open_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        open_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: bold {btn_font_size}pt Arial;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #4CAF50, stop:0.5 #45a049, stop:1 #4CAF50);
-                color: white;
-                border: 2px solid #4CAF50;
-                border-radius: 8px;
-                padding: {btn_padding}px;
-                min-height: {button_height}px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #45a049, stop:0.5 #4CAF50, stop:1 #45a049);
-                border: 2px solid #45a049;
-            }}
-        """)
+        open_btn.setStyleSheet(self._panel_action_style("primary", btn_font_size))
         open_btn.clicked.connect(self.open_ecg_file)
         btn_layout.addWidget(open_btn)
 
@@ -1299,23 +1385,7 @@ class ECGMenu(QGroupBox):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setMinimumSize(button_width, button_height)
         cancel_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: bold {btn_font_size}pt Arial;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f44336, stop:0.5 #d32f2f, stop:1 #f44336);
-                color: white;
-                border: 2px solid #f44336;
-                border-radius: 8px;
-                padding: {btn_padding}px;
-                min-height: {button_height}px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #d32f2f, stop:0.5 #f44336, stop:1 #d32f2f);
-                border: 2px solid #d32f2f;
-            }}
-        """)
+        cancel_btn.setStyleSheet(self._panel_action_style("danger", btn_font_size))
         cancel_btn.clicked.connect(self.hide_sliding_panel)
         btn_layout.addWidget(cancel_btn)
 
@@ -1639,30 +1709,12 @@ class ECGMenu(QGroupBox):
         # Top load_default header bar
         load_default_header = QLabel(self.tr("Load Default Settings") if hasattr(self, 'tr') else "Load Default Settings")
         load_default_header.setAlignment(Qt.AlignCenter)
-        load_default_header.setStyleSheet(f"""
-            QLabel {{
-                font: bold {max(14, title_font_size-2)}pt 'Arial';
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff6600, stop:1 #ff8c42);
-                border: 2px solid #343434;
-                border-radius: 12px;
-                padding: {max(12, margin_size-12)}px;
-                margin: {max(4, margin_size-18)}px;
-            }}
-        """)
+        load_default_header.setStyleSheet(self._panel_header_style(max(14, title_font_size-2)))
         layout.addWidget(load_default_header)
 
         # Message area replicating hardware UI copy
         message_frame = QFrame()
-        message_frame.setStyleSheet("""
-            QFrame {
-                background: #f5f5f5;
-                border: 2px solid #d0d0d0;
-                border-radius: 12px;
-                padding: 15px 20px;
-            }
-        """)
+        message_frame.setStyleSheet(self._panel_card_style(14))
         message_layout = QVBoxLayout(message_frame)
         message_layout.setSpacing(8)
 
@@ -1695,35 +1747,13 @@ class ECGMenu(QGroupBox):
 
         no_btn = QPushButton(self.tr("No"))
         no_btn.setFixedSize(100, 36)
-        no_btn.setStyleSheet("""
-            QPushButton {
-                background: #e74c3c;
-                color: white;
-                border: 2px solid #c0392b;
-                border-radius: 6px;
-                font: bold 11pt 'Arial';
-            }
-            QPushButton:hover {
-                background: #ff5c4b;
-            }
-        """)
+        no_btn.setStyleSheet(self._panel_action_style("neutral", 11))
         no_btn.clicked.connect(self.hide_sliding_panel)
         btn_row.addWidget(no_btn)
 
         yes_btn = QPushButton(self.tr("Yes"))
         yes_btn.setFixedSize(100, 36)
-        yes_btn.setStyleSheet("""
-            QPushButton {
-                background: #2ecc71;
-                color: #fff;
-                border: 2px solid #27ae60;
-                border-radius: 6px;
-                font: bold 11pt 'Arial';
-            }
-            QPushButton:hover {
-                background: #3ddc80;
-            }
-        """)
+        yes_btn.setStyleSheet(self._panel_action_style("primary", 11))
         yes_btn.clicked.connect(self.apply_factory_defaults)
         btn_row.addWidget(yes_btn)
         btn_row.addStretch(1)
@@ -1960,33 +1990,13 @@ class ECGMenu(QGroupBox):
         # Professional title
         title = QLabel(self.tr("Exit Application"))
         title_font_size = max(16, min(22, int(margin_size * 0.8)))
-        title.setStyleSheet(f"""
-            QLabel {{
-                font: bold {title_font_size}pt Arial;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff6600, stop:1 #ff8c42);
-                border: 2px solid #ff6600;
-                border-radius: 12px;
-                padding: {max(12, int(margin_size * 0.6))}px;
-                margin: {max(8, int(margin_size * 0.4))}px;
-                min-height: {max(30, int(margin_size * 1.5))}px;
-            }}
-        """)
+        title.setStyleSheet(self._panel_header_style(title_font_size))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
         # Confirmation message
         msg_frame = QFrame()
-        msg_frame.setStyleSheet("""
-            QFrame {
-                background: white;
-                border: 2px solid #e0e0e0;
-                border-radius: 10px;
-                padding: 20px;
-                margin: 10px;
-            }
-        """)
+        msg_frame.setStyleSheet(self._panel_card_style(14))
         msg_layout = QVBoxLayout(msg_frame)
         
         confirm_msg = QLabel(self.tr("Do you want to quit?"))
@@ -2021,12 +2031,7 @@ class ECGMenu(QGroupBox):
 
         # Buttons
         btn_frame = QFrame()
-        btn_frame.setStyleSheet("""
-            QFrame {
-                background: transparent;
-                margin: 10px;
-            }
-        """)
+        btn_frame.setStyleSheet("QFrame { background: transparent; }")
         btn_layout = QHBoxLayout(btn_frame)
         btn_layout.setSpacing(max(10, int(margin_size * 0.5)))
 
@@ -2037,44 +2042,14 @@ class ECGMenu(QGroupBox):
         # Cancel button
         cancel_btn = QPushButton(self.tr("Cancel"))
         cancel_btn.setFixedSize(button_width, button_height)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: bold {max(11, int(margin_size * 0.55))}pt Arial;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #6c757d, stop:0.5 #495057, stop:1 #6c757d);
-                color: white;
-                border: 2px solid #6c757d;
-                border-radius: 8px;
-                padding: 8px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #495057, stop:0.5 #6c757d, stop:1 #495057);
-                border: 2px solid #495057;
-            }}
-        """)
+        cancel_btn.setStyleSheet(self._panel_action_style("neutral", max(11, int(margin_size * 0.55))))
         cancel_btn.clicked.connect(self.hide_sliding_panel)
         btn_layout.addWidget(cancel_btn)
 
         # Exit button
         exit_btn = QPushButton(self.tr("Exit"))
         exit_btn.setFixedSize(button_width, button_height)
-        exit_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: bold {max(11, int(margin_size * 0.55))}pt Arial;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f44336, stop:0.5 #d32f2f, stop:1 #f44336);
-                color: white;
-                border: 2px solid #f44336;
-                border-radius: 8px;
-                padding: 8px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #d32f2f, stop:0.5 #f44336, stop:1 #d32f2f);
-                border: 2px solid #d32f2f;
-            }}
-        """)
+        exit_btn.setStyleSheet(self._panel_action_style("danger", max(11, int(margin_size * 0.55))))
         exit_btn.clicked.connect(self.confirm_exit)
         btn_layout.addWidget(exit_btn)
 
@@ -2172,19 +2147,7 @@ class ECGMenu(QGroupBox):
         # Professional title
         title_label = QLabel(translated_title)
         title_font_size = max(16, min(22, int(margin_size * 0.8)))
-        title_label.setStyleSheet(f"""
-            QLabel {{
-                font: bold {title_font_size}pt Arial;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #ff6600, stop:1 #ff8c42);
-                border: 2px solid #ff6600;
-                border-radius: 12px;
-                padding: {max(12, int(margin_size * 0.6))}px;
-                margin: {max(8, int(margin_size * 0.4))}px;
-                min-height: {max(30, int(margin_size * 1.5))}px;
-            }}
-        """)
+        title_label.setStyleSheet(self._panel_header_style(title_font_size))
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
 
@@ -2233,46 +2196,10 @@ class ECGMenu(QGroupBox):
             is_small_screen = panel_width < 500
             
             group_box = QGroupBox(self.tr(section_data['title']))
-            if is_small_screen:
-                group_padding = max(5, min(8, int(margin_size * 0.3)))
-                group_margin = max(3, min(5, int(margin_size * 0.15)))
-                group_margin_top = max(12, min(15, int(margin_size * 0.7)))
-                group_font_size = max(10, min(12, int(margin_size * 0.5)))
-                title_font_size = max(9, min(11, int(margin_size * 0.45)))
-                title_padding = max(4, min(6, int(margin_size * 0.2)))
-                title_left = max(8, min(10, int(margin_size * 0.4)))
-            else:
-                group_padding = max(8, int(margin_size * 0.4))
-                group_margin = max(5, int(margin_size * 0.25))
-                group_margin_top = max(18, int(margin_size * 1.0))
-                group_font_size = max(12, int(margin_size * 0.6))
-                title_font_size = max(11, int(margin_size * 0.55))
-                title_padding = 8
-                title_left = 12
-            
-            group_box.setStyleSheet(f"""
-                QGroupBox {{
-                    font: bold {group_font_size}pt Arial;
-                    color: #2c3e50;
-                    background: white;
-                    border: 2px solid #ff6600;
-                    border-radius: {max(6, min(10, int(margin_size * 0.5)))}px;
-                    padding: {group_padding}px;
-                    margin: {group_margin}px;
-                    margin-top: {group_margin_top}px;
-                }}
-                QGroupBox:title {{
-                    subcontrol-origin: margin;
-                    subcontrol-position: top left;
-                    left: {title_left}px;
-                    top: 0px;
-                    padding: 0 {title_padding}px 0 {title_padding}px;
-                    color: #ff6600;
-                    font-weight: bold;
-                    background: white;
-                    font-size: {title_font_size}pt;
-                }}
-            """)
+            group_box.setStyleSheet(self._panel_group_style(
+                max(10, min(12, int(margin_size * 0.5))) if is_small_screen else max(11, int(margin_size * 0.55)),
+                is_small_screen
+            ))
             
             # Use grid layout for better organization
             grid_layout = QGridLayout(group_box)
@@ -2309,44 +2236,9 @@ class ECGMenu(QGroupBox):
                 )
                 display_text = text if is_language_section else self.tr(text)
                 btn = QRadioButton(display_text)
-                btn.setStyleSheet(f"""
-                    QRadioButton {{
-                        font: bold {radio_font_size}pt Arial;
-                        color: #2c3e50;
-                        background: white;
-                        padding: {radio_padding}px;
-                        border: 1px solid #e0e0e0;
-                        border-radius: {max(4, min(6, int(margin_size * 0.3)))}px;
-                        min-width: {button_width}px;
-                        max-width: {button_width + 5}px;
-                        min-height: {button_height}px;
-                    }}
-                    QRadioButton:hover {{
-                        border: 2px solid #ffb347;
-                        background: #fff8f0;
-                    }}
-                    QRadioButton:checked {{
-                        border: 2px solid #ff6600;
-                        background: #fff0e0;
-                        color: #ff6600;
-                        font-weight: bold;
-                    }}
-                    QRadioButton::indicator {{
-                        width: {indicator_size}px;
-                        height: {indicator_size}px;
-                        border: 2px solid #e0e0e0;
-                        border-radius: {max(4, min(5, int(margin_size * 0.25)))}px;
-                        background: white;
-                        margin-left: {indicator_margin_left}px;
-                        margin-right: {indicator_margin_right}px;
-                    }}
-                    QRadioButton::indicator:checked {{
-                        border: 1px solid #ff6600;
-                        background: #ff6600;
-                    }}
-                """)
+                btn.setStyleSheet(self._panel_option_style(button_width, button_height, radio_font_size))
                 # Set size policy for better responsive behavior
-                btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 
                 # Set checked state if variable exists
                 if 'variable' in section_data and section_data['variable']:
@@ -2380,12 +2272,7 @@ class ECGMenu(QGroupBox):
         # Add buttons if provided
         if buttons:
             btn_frame = QFrame()
-            btn_frame.setStyleSheet("""
-                QFrame {
-                    background: transparent;
-                    margin: 10px;
-                }
-            """)
+            btn_frame.setStyleSheet("QFrame { background: transparent; }")
             btn_layout = QHBoxLayout(btn_frame)
             btn_layout.setSpacing(max(10, int(margin_size * 0.5)))
 
@@ -2396,60 +2283,15 @@ class ECGMenu(QGroupBox):
             for btn_data in buttons:
                 btn = QPushButton(self.tr(btn_data['text']))
                 btn.setFixedSize(button_width, button_height)
-                
+                btn.setCursor(Qt.PointingHandCursor)
                 # Default style if not specified
                 style = btn_data.get('style', 'primary')
                 if style == 'primary':
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            font: bold {max(11, int(margin_size * 0.55))}pt Arial;
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #4CAF50, stop:0.5 #45a049, stop:1 #4CAF50);
-                            color: white;
-                            border: 2px solid #4CAF50;
-                            border-radius: 8px;
-                            padding: 8px;
-                        }}
-                        QPushButton:hover {{
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #45a049, stop:0.5 #4CAF50, stop:1 #45a049);
-                            border: 2px solid #45a049;
-                        }}
-                    """)
+                    btn.setStyleSheet(self._panel_action_style("primary", max(11, int(margin_size * 0.55))))
                 elif style == 'danger':
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            font: bold {max(11, int(margin_size * 0.55))}pt Arial;
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #f44336, stop:0.5 #d32f2f, stop:1 #f44336);
-                            color: white;
-                            border: 2px solid #f44336;
-                            border-radius: 8px;
-                            padding: 8px;
-                        }}
-                        QPushButton:hover {{
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #d32f2f, stop:0.5 #f44336, stop:1 #d32f2f);
-                            border: 2px solid #d32f2f;
-                        }}
-                    """)
+                    btn.setStyleSheet(self._panel_action_style("danger", max(11, int(margin_size * 0.55))))
                 elif style == 'info':
-                    btn.setStyleSheet(f"""
-                        QPushButton {{
-                            font: bold {max(11, int(margin_size * 0.55))}pt Arial;
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #17a2b8, stop:0.5 #138496, stop:1 #17a2b8);
-                            color: white;
-                            border: 2px solid #17a2b8;
-                            border-radius: 8px;
-                            padding: 8px;
-                        }}
-                        QPushButton:hover {{
-                            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                                stop:0 #138496, stop:0.5 #17a2b8, stop:1 #138496);
-                            border: 2px solid #138496;
-                        }}
-                    """)
+                    btn.setStyleSheet(self._panel_action_style("neutral", max(11, int(margin_size * 0.55))))
                 
                 def _make_handler(action=btn_data['action'], style=style):
                     def _handler():
