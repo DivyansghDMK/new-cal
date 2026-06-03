@@ -1034,9 +1034,9 @@ class LoginRegisterDialog(QDialog):
                 print(f" Found v.gif at: {gif_path}")
                 break
         
-        if self._low_spec_mode:
-            self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
-        elif gif_path and os.path.exists(gif_path):
+        # Try loading the GIF first (as requested by user)
+        loaded_gif = False
+        if gif_path and os.path.exists(gif_path):
             try:
                 from PyQt5.QtGui import QMovie
                 movie = QMovie(gif_path)
@@ -1044,18 +1044,14 @@ class LoginRegisterDialog(QDialog):
                     self.bg_label.setMovie(movie)
                     movie.start()
                     print(" v.gif background started successfully")
+                    loaded_gif = True
                 else:
                     print(" Invalid GIF file")
-                    # Set fallback background
-                    self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
             except Exception as e:
                 print(f" Error loading v.gif: {e}")
-                # Set fallback background
-                self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
-        else:
-            print(" v.gif not found in any expected location")
-            print(f"Tried paths: {possible_gif_paths}")
-            # Set fallback background
+
+        if not loaded_gif:
+            # Fallback to gradient if GIF loading was unsuccessful or not found
             self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e);")
         
         self.bg_label.setScaledContents(True)
