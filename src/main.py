@@ -973,6 +973,7 @@ class LoadingOverlayDialog(QDialog):
 class LoginRegisterDialog(QDialog):
     def __init__(self):
         super().__init__()
+        self._low_spec_mode = is_low_spec_mode()
         
         # Set responsive size policy
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
