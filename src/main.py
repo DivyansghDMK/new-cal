@@ -989,9 +989,10 @@ class LoginRegisterDialog(QDialog):
         # Connection monitoring for auto-populating serial ID
         self.settings_manager = SettingsManager()
         self._device_scan_in_progress = False
+        self._low_spec_mode = is_low_spec_mode()
         self.device_check_timer = QTimer(self)
         self.device_check_timer.timeout.connect(self.check_device_connection)
-        self.device_check_timer.start(5000 if is_low_spec_mode() else 1000) # Slower polling on weak machines
+        self.device_check_timer.start(5000 if self._low_spec_mode else 1000) # Slower polling on weak machines
         
         # Resize according to current screen size (~90% of available geometry)
         try:
