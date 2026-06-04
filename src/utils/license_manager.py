@@ -1019,6 +1019,7 @@ class StartupCheckResult:
         self.ok: bool = False
         self.step_failed: int = 0        # 1-5, 0 = all passed
         self.reason: str = ""
+        self.error_code: str = ""
         self.token: Optional[Dict] = None
         self.rhythmulta_serial: Optional[str] = None
         self.offline_mode: bool = False
@@ -1030,8 +1031,20 @@ class StartupCheckResult:
     def __repr__(self):
         return (
             f"StartupCheckResult(ok={self.ok}, step={self.step_failed}, "
-            f"reason={self.reason!r})"
+            f"error_code={self.error_code!r}, reason={self.reason!r})"
         )
+
+
+def _is_explicit_revocation(payload: Dict) -> bool:
+    """Return True only when the server explicitly says the license is revoked."""
+    if not isinstance(payload, dict):
+        return False
+    error_code = str(payload.get("error_code", "")).strip().upper()
+    if error_code == "LICENSE_REVOKED" or bool(payload.get("revoked")):
+        return True
+    message = str(payload.get("message", "")).strip().lower()
+    error = str(payload.get("error", "")).strip().lower()
+    return "license revoked" in message or "license revoked" in error
 
 
 def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
@@ -1061,6 +1074,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 print(f"[License][DEBUG] recovery={recovery_result}")
             if str(recovery_result.get("error", "")).strip().upper() == "DEVICE_ALREADY_REGISTERED":
                 res.step_failed = 1
+                res.error_code = "DEVICE_ALREADY_REGISTERED"
                 res.reason = (
                     "This RhythmUltra device is already registered to another installation.\n\n"
                     "Please contact Deckmount Support."
@@ -1071,6 +1085,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 meta_missing = not _license_meta_exists()
         if token_missing:
             res.step_failed = 1
+            res.error_code = "LICENSE_NOT_FOUND"
             res.reason = "License not found.\nPlease register your device."
             return res
 
@@ -1078,6 +1093,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     token = load_token_file()
     if token is None:
         res.step_failed = 2 if not token_missing else 1
+        res.error_code = "TOKEN_INTEGRITY_FAILED" if not token_missing else "LICENSE_NOT_FOUND"
         res.reason = "License data integrity check failed." if not token_missing else "License not found.\nPlease register your device."
         return res
     res.token = token
@@ -1125,6 +1141,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             license_key=token.get("license_key", ""),
         )
         res.step_failed = 5
+        res.error_code = "CLOCK_ROLLBACK_DETECTED"
         res.reason = (
             "System clock manipulation detected.\n\n"
             "Please correct your system date and time."
@@ -1140,6 +1157,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             license_key=token.get("license_key", ""),
         )
         res.step_failed = 5
+        res.error_code = "SOFTWARE_UPDATE_REQUIRED"
         res.reason = "A software update is required before continuing."
         return res
 
@@ -1166,8 +1184,9 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                     "token invalid",
                 )
             )
-            if hb_result.get("revoked") or "revoked" in hb_message or "revoked" in hb_error:
+            if _is_explicit_revocation(hb_result):
                 res.step_failed = 5
+                res.error_code = "LICENSE_REVOKED"
                 res.reason = hb_result.get(
                     "message",
                     "License has been revoked. Please contact Deckmount support.",
@@ -1176,6 +1195,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
 
             if server_token_failure:
                 res.step_failed = 2
+                res.error_code = str(hb_result.get("error_code", "")).strip().upper() or "TOKEN_INVALID"
                 res.reason = hb_result.get(
                     "error",
                     hb_result.get(
@@ -1194,6 +1214,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                     license_key=token.get("license_key", ""),
                 )
                 res.step_failed = 5
+                res.error_code = "SOFTWARE_UPDATE_REQUIRED"
                 res.reason = "A software update is required before continuing."
                 return res
 
@@ -1241,6 +1262,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 )
             else:
                 res.step_failed = 3
+                res.error_code = "MACHINE_MISMATCH"
                 res.reason = (
                     "This license is registered to a different machine.\n"
                     "Contact Deckmount support if your hardware has changed."
@@ -1264,6 +1286,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 )
             else:
                 res.step_failed = 3
+                res.error_code = "MACHINE_MISMATCH"
                 res.reason = (
                     "This license is registered to a different machine.\n"
                     "Contact Deckmount support if your hardware has changed."
@@ -1290,6 +1313,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     if enforce_device_lock:
         if usb_serial is None:
             res.step_failed = 4
+            res.error_code = "RHYTHMULTRA_REQUIRED"
             res.reason = "Unauthorized RhythmUltra device connected."
             return res
 
@@ -1297,6 +1321,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         # If stored_serial is empty the device was never bound — allow first use.
         if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
             res.step_failed = 4
+            res.error_code = "RHYTHMULTRA_MISMATCH"
             res.reason = "Unauthorized RhythmUltra device connected."
             return res
     else:
@@ -1315,6 +1340,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     if hb_result.get("offline"):
         if token.get("signature_invalid"):
             res.step_failed = 2
+            res.error_code = "TOKEN_INVALID"
             res.reason = (
                 "License token is invalid or has been tampered with.\n"
                 "An internet connection is required to verify your license."
@@ -1330,6 +1356,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         grace_remaining = HEARTBEAT_INTERVAL_SECONDS - elapsed
         if grace_remaining <= 0:
             res.step_failed = 5
+            res.error_code = "LICENSE_VERIFICATION_REQUIRED"
             res.reason = (
                 "License verification required.\n"
                 "Please connect to the internet."
@@ -1358,11 +1385,24 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         )
         return res
 
-    if hb_result.get("revoked") or (not hb_result.get("valid", False) and not hb_result.get("authorized", False)):
+    if _is_explicit_revocation(hb_result):
         res.step_failed = 5
+        res.error_code = "LICENSE_REVOKED"
         res.reason = hb_result.get(
             "message",
             "License has been revoked. Please contact Deckmount support.",
+        )
+        return res
+
+    if not hb_result.get("valid", False) and not hb_result.get("authorized", False):
+        res.step_failed = 5
+        res.error_code = str(hb_result.get("error_code", "")).strip().upper() or "LICENSE_BLOCKED"
+        res.reason = hb_result.get(
+            "message",
+            hb_result.get(
+                "error",
+                "License verification failed. Please contact Deckmount support.",
+            ),
         )
         return res
 
@@ -1375,6 +1415,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             license_key=token.get("license_key", ""),
         )
         res.step_failed = 5
+        res.error_code = "SOFTWARE_UPDATE_REQUIRED"
         res.reason = "A software update is required before continuing."
         return res
 
@@ -1613,15 +1654,17 @@ def check_license(license_key: str, force_server: bool = False) -> Dict:
             "tier": token.get("tier", 0),
             "expires": token.get("expires", 0),
             "revoked": False,
+            "error_code": "",
             "offline": bool(getattr(result, "offline_mode", False)),
         }
 
-    revoked = result.step_failed == 5 and "revoked" in result.reason.lower()
+    revoked = result.step_failed == 5 and result.error_code == "LICENSE_REVOKED"
     return {
         "valid": False,
         "revoked": revoked,
         "source": "token",
         "message": result.reason,
+        "error_code": result.error_code,
         "tier": 0,
         "expires": 0,
         "step_failed": result.step_failed,

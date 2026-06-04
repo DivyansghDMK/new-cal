@@ -950,7 +950,9 @@ def measure_pr_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii,
         win_end   = r_safe + win
 
         seg = np.abs(filt[win_start:win_end])
-        th  = 0.25 * np.max(seg)
+        # Use a lower onset threshold so the detector locks to the first
+        # clinically relevant QRS deflection instead of a later mid-QRS point.
+        th  = 0.08 * np.max(seg)
 
         qrs_region = np.where(seg > th)[0]
         if len(qrs_region) < 10:

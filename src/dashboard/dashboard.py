@@ -2719,14 +2719,10 @@ class Dashboard(QWidget):
                         if pr_val is None or pr_val <= 0:
                             pr_val = 0
                         
-                        # Apply EMA smoothing for PR interval stability
-                        if not hasattr(self, '_dashboard_pr_ema'):
-                            self._dashboard_pr_ema = pr_val
-                            self._dashboard_pr_alpha = 0.2
-                        else:
-                            self._dashboard_pr_ema = self._dashboard_pr_alpha * pr_val + (1 - self._dashboard_pr_alpha) * self._dashboard_pr_ema
-                        
-                        metrics['pr_interval'] = int(round(self._dashboard_pr_ema))
+                        # PR already arrives stabilized from the ECG pipeline.
+                        # Keep the live dashboard aligned with the measured value
+                        # instead of introducing another lagging smoothing layer.
+                        metrics['pr_interval'] = int(round(pr_val))
                         
                         # Calculate QRS Duration from median beat (real formula)
                         qrs_val = measure_qrs_duration_from_median_beat(median_beat, time_axis, fs, tp_baseline)

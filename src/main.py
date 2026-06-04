@@ -1665,7 +1665,7 @@ class LoginRegisterDialog(QDialog):
                 logger.warning(f"Login blocked due to license failure: {result.reason}")
                 is_explicit_revocation = (
                     result.step_failed == 5
-                    and "revoked" in result.reason.lower()
+                    and getattr(result, "error_code", "") == "LICENSE_REVOKED"
                 )
                 QMessageBox.critical(
                     self,
@@ -2386,7 +2386,7 @@ def main():
                     logger.warning(f"Startup license checks failed: {result.reason}")
                     is_explicit_revocation = (
                         result.step_failed == 5
-                        and "revoked" in result.reason.lower()
+                        and getattr(result, "error_code", "") == "LICENSE_REVOKED"
                     )
                     QMessageBox.critical(
                         None,
@@ -2549,8 +2549,10 @@ def main():
                             """Called on main thread after background check completes."""
                             pending_title = "License Blocked"
                             pending_reason = res.get("message", "License verification required.")
-                            if not res.get("valid", False):
+                            if str(res.get("error_code", "")).strip().upper() == "LICENSE_REVOKED" or res.get("revoked"):
                                 _license_timer.stop()
+                                pending_title = "License Revoked"
+                                pending_reason = res.get("message", "License key is revoked. Contact support.")
                                 if _ecg_session_active(dashboard):
                                     _defer_license_block_until_safe(
                                         app,
@@ -2570,10 +2572,8 @@ def main():
                                         except Exception:
                                             pass
                                         app.quit()
-                            elif res.get("revoked"):
+                            elif not res.get("valid", False):
                                 _license_timer.stop()
-                                pending_title = "License Revoked"
-                                pending_reason = res.get("message", "License key is revoked. Contact support.")
                                 if _ecg_session_active(dashboard):
                                     _defer_license_block_until_safe(
                                         app,
