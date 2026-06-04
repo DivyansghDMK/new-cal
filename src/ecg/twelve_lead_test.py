@@ -2601,29 +2601,14 @@ class ECGTestPage(QWidget):
             pr_interval_raw = getattr(self, 'pr_interval', 0)
             # If still 0 at startup, leave as 0 — display will show "--" until real signal arrives.
         
-        # FIX-TL4: PR single smoothing layer.
-        # user_metrics["pr_interval"] already went through apply_interval_smoothing()
-        # in ecg_calculations.py.  Adding a second EMA here causes double lag and
-        # different behavior depending on which path was taken.
-        # Use a simple median buffer (7 samples) + hold-and-jump — same as QRS/QT.
-        if not hasattr(self, '_pr_smooth_buffer_tl'):
-            self._pr_smooth_buffer_tl = []
+        # FIX-TL4: `calculate_all_ecg_metrics()` already stabilizes PR.  A second
+        # smoothing layer here makes the displayed value lag the actual measured
+        # interval and can disagree with the graph / console output.
         if pr_interval_raw > 0:
-            self._pr_smooth_buffer_tl.append(pr_interval_raw)
-            if len(self._pr_smooth_buffer_tl) > 7:
-                self._pr_smooth_buffer_tl.pop(0)
-
-        if len(self._pr_smooth_buffer_tl) > 0:
-            smoothed_pr_value = int(round(np.median(self._pr_smooth_buffer_tl)))
-        else:
-            smoothed_pr_value = pr_interval_raw if pr_interval_raw > 0 else getattr(self, 'pr_interval', 0)
-
-        # Dead zone: only update if change ≥ 5 ms (prevents 1-2 ms flicker)
-        prev_pr = getattr(self, 'pr_interval', 0)
-        if smoothed_pr_value > 0 and (prev_pr == 0 or abs(smoothed_pr_value - prev_pr) >= 5):
-            self.pr_interval = smoothed_pr_value
-        elif smoothed_pr_value == 0:
-            pass  # keep prev_pr — do not zero out a good reading
+            self.pr_interval = int(round(pr_interval_raw))
+        elif not hasattr(self, 'pr_interval'):
+            # Keep a defined value for startup / low-signal states.
+            self.pr_interval = 0
         
         # FIX-TL3: QRS Blended Approach for LBBB Support
         # Reference devices use slope-based onset. Threshold-based onset misses slow LBBB initial deflections.

@@ -1248,7 +1248,7 @@ class LicenseDialog(QDialog):
                 )
                 self.reject()
                 return
-            if result.get("revoked") or "revoked" in msg.lower():
+            if result.get("revoked") or str(result.get("error_code", "")).strip().upper() == "LICENSE_REVOKED":
                 QMessageBox.critical(self, "License Revoked", f"{msg}\n\nContact support to restore access.")
                 self.reject()
                 return

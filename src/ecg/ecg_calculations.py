@@ -131,6 +131,9 @@ def _stabilize_to_reference(metrics: Dict[str, Any], instance_id: Optional[str])
 
     field_map = {
         "rr_interval": ("RR", True),
+        # PR is a measured clinical interval.  Do not pull it toward the
+        # calibration table, otherwise the live display drifts away from the
+        # actual detector output and disagrees with the graph.
         "pr_interval": ("PR", False),
         "qrs_duration": ("QRS", False),
         "qt_interval": ("QT", True),
@@ -139,6 +142,9 @@ def _stabilize_to_reference(metrics: Dict[str, Any], instance_id: Optional[str])
 
     for output_key, (ref_key, keep_float) in field_map.items():
         measured = metrics.get(output_key)
+        if output_key == "pr_interval":
+            # Keep the measured PR interval unchanged.
+            continue
         ref_val = float(ref[ref_key])
 
         valid_measured = isinstance(measured, (int, float)) and measured > 0
