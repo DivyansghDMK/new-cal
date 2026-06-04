@@ -251,6 +251,7 @@ class HyperkalemiaTestWindow(QWidget):
 
         # Initialize UI
         self.init_ui()
+        self._last_displayed_bpm = 0
 
         # Init bounded plotting + lead-off detection buffers
         self._init_plot_and_lead_off_buffers()
@@ -734,7 +735,8 @@ class HyperkalemiaTestWindow(QWidget):
             self._silent_data_warned = False
 
             if 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText("00 BPM")
+                if getattr(self, '_last_displayed_bpm', 0) > 0:
+                    self.metric_labels['heart_rate'].setText(f"{int(self._last_displayed_bpm)} BPM")
             if 'pr_interval' in self.metric_labels:
                 self.metric_labels['pr_interval'].setText("0 ms")
             if 'qrs_duration' in self.metric_labels:
@@ -868,7 +870,8 @@ class HyperkalemiaTestWindow(QWidget):
             pass
         try:
             if 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText("00 BPM")
+                if getattr(self, '_last_displayed_bpm', 0) > 0:
+                    self.metric_labels['heart_rate'].setText(f"{int(self._last_displayed_bpm)} BPM")
             if 'pr_interval' in self.metric_labels:
                 self.metric_labels['pr_interval'].setText("0 ms")
             if 'qrs_duration' in self.metric_labels:
@@ -902,11 +905,15 @@ class HyperkalemiaTestWindow(QWidget):
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
             bpm = self._bpm_ctrl.current_bpm()
+            if bpm <= 0:
+                bpm = getattr(self, 'last_heart_rate', 0) or 0
             if bpm > 0:
+                bpm_int = int(round(bpm))
                 if hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText(f"{int(round(bpm))} BPM")
+                    self.metric_labels['heart_rate'].setText(f"{bpm_int} BPM")
                 # Always persist so report generation uses the stable Holter BPM
-                self.last_heart_rate = int(round(bpm))
+                self._last_displayed_bpm = bpm_int
+                self.last_heart_rate = bpm_int
         except Exception as _e:
             print(f"[HyperkalemiaTestWindow] _refresh_holter_bpm_label error: {_e}")
 
@@ -1077,8 +1084,8 @@ class HyperkalemiaTestWindow(QWidget):
                     self.sampling_rate = safe_sr
 
             # Get filter settings from SettingsManager
-            ac_val = self.settings_manager.get_setting("filter_ac", "50")
-            emg_val = self.settings_manager.get_setting("filter_emg", "35")
+            ac_val = "50"
+            emg_val = "35"
             dft_val = self.settings_manager.get_setting("filter_dft", "off")
             fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             if fs < 100.0 or fs > 1000.0:
@@ -1277,13 +1284,25 @@ class HyperkalemiaTestWindow(QWidget):
 
                 print(f"Heart Rate: {hr_val} BPM, PR Interval: {pr_val} ms, QRS Duration: {qrs_val} ms, QTC Interval: {qtc_val} ms")
 
-                display_hr = _attr_to_num('last_heart_rate', 0)
+                display_hr = _current_bpm if _current_bpm > 0 else _attr_to_num('last_heart_rate', 0)
+                if display_hr <= 0 and hr_val not in ('0', '--', ''):
+                    try:
+                        display_hr = int(round(float(hr_val)))
+                    except Exception:
+                        display_hr = 0
                 display_pr = _attr_to_num('pr_interval', 0)
                 display_qrs = _attr_to_num('last_qrs_duration', 0)
                 display_qt = _attr_to_num('last_qt_interval', 0)
                 display_qtc = _attr_to_num('last_qtc_interval', 0)
                 display_rr = _attr_to_num('last_rr_interval', 0)
                 display_qtcf = _attr_to_num('last_qtcf_interval', 0)
+
+                if display_hr > 0:
+                    display_hr = int(round(display_hr))
+                    self.ecg_calculator.last_heart_rate = display_hr
+                    self._last_displayed_bpm = display_hr
+                elif getattr(self, '_last_displayed_bpm', 0) > 0:
+                    display_hr = int(self._last_displayed_bpm)
 
                 self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
                     self.metric_labels,
@@ -1296,8 +1315,13 @@ class HyperkalemiaTestWindow(QWidget):
                     display_qtcf,
                     getattr(self, '_last_metric_update_ts', 0.0),
                     rr_interval=display_rr,
-                    skip_heart_rate=_bpm_active,
+                    skip_heart_rate=(_bpm_active and _current_bpm > 0),
                 )
+
+                if 'heart_rate' in self.metric_labels:
+                    if display_hr > 0:
+                        self.metric_labels['heart_rate'].setText(f"{display_hr} BPM")
+                        self._last_displayed_bpm = display_hr
 
                 if 'pr_interval' in self.metric_labels:
                     pr_text = self.metric_labels['pr_interval'].text().strip()
