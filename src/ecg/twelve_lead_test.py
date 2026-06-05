@@ -818,6 +818,8 @@ class ECGTestPage(QWidget):
         self._plot_render_stride = 2
         self._display_mode = "live"
         self._grid_frozen = False
+        self._frozen_metric_texts = {}   # populated by _freeze_current_view, cleared by _resume_live_view
+        self._frozen_report_metrics = None  # populated by _freeze_current_view, cleared by _resume_live_view
         self._replay_cursor = 0
         self._replay_window_sec = 10.0
         self._replay_snapshot = None
@@ -1467,7 +1469,10 @@ class ECGTestPage(QWidget):
             
             # Get the ECG data for this lead
             if plot_index < len(self.data) and len(self.data[plot_index]) > 0:
-                ecg_data = self.data[plot_index]
+                if getattr(self, '_grid_frozen', False) and getattr(self, '_replay_snapshot', None) is not None:
+                    ecg_data = self._replay_snapshot[plot_index]
+                else:
+                    ecg_data = self.data[plot_index]
                 
                 # Import and show expanded lead view
                 try:
@@ -1773,10 +1778,66 @@ class ECGTestPage(QWidget):
             self._display_mode = "frozen"
             self._grid_frozen = True
             self._replay_cursor = 0
+
+            # ── FREEZE METRIC LABELS ───────────────────────────────────────
+            # Snapshot every visible metric label text right now so the top
+            # bar shows the values at the exact moment of freeze and stops
+            # updating while the display is paused.
+            self._frozen_metric_texts = {}
+            try:
+                for key, lbl in getattr(self, 'metric_labels', {}).items():
+                    self._frozen_metric_texts[key] = lbl.text()
+            except Exception:
+                pass
+            # ──────────────────────────────────────────────────────────────
+
+            # ── FREEZE METRICS FOR REPORT ──────────────────────────────────
+            # Snapshot all numeric/text metrics at the moment of freeze so
+            # that any report generated while frozen has the exact values that
+            # were present on screen at that moment.
+            self._frozen_report_metrics = {}
+            try:
+                is_demo = bool(hasattr(self, 'demo_toggle') and self.demo_toggle and self.demo_toggle.isChecked())
+                if is_demo:
+                    self._frozen_report_metrics = {
+                        'HR':       60,
+                        'RR':       1000,
+                        'PR':       167,
+                        'QRS':      86,
+                        'QT':       357,
+                        'QTc':      357,
+                        'QTcF':     357,
+                        'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
+                        'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
+                        'p_axis':   getattr(self, 'last_p_axis',   '--'),
+                        'QRS_axis': getattr(self, 'last_qrs_axis', '--'),
+                        't_axis':   getattr(self, 'last_t_axis',   '--'),
+                    }
+                else:
+                    self._frozen_report_metrics = {
+                        'HR':       int(getattr(self, 'last_heart_rate',    0) or 0),
+                        'RR':       int(getattr(self, 'last_rr_interval',   0) or 0),
+                        'PR':       int(getattr(self, 'pr_interval',        0) or 0),
+                        'QRS':      int(getattr(self, 'last_qrs_duration',  0) or 0),
+                        'QT':       int(getattr(self, 'last_qt_interval',   0) or 0),
+                        'QTc':      int(getattr(self, 'last_qtc_interval',  0) or 0),
+                        'QTcF':     int(getattr(self, 'last_qtcf_interval', 0) or 0),
+                        'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
+                        'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
+                        'p_axis':   getattr(self, 'last_p_axis',   '--'),
+                        'QRS_axis': getattr(self, 'last_qrs_axis', '--'),
+                        't_axis':   getattr(self, 'last_t_axis',   '--'),
+                    }
+            except Exception as _fme:
+                print(f"Error snapshotting frozen metrics: {_fme}")
+            # ──────────────────────────────────────────────────────────────
+
             self._style_freeze_button("Resume", enabled=True)
             if hasattr(self, "stop_btn") and self.stop_btn:
                 self.stop_btn.setToolTip("Resume live ECG plotting from the current hardware buffer")
-            self._frozen_report_snapshot = self._capture_report_snapshot(window_sec=7.0)
+
+            # Always capture 10 s of waveform data for the frozen report
+            self._frozen_report_snapshot = self._capture_report_snapshot(window_sec=10.0)
             self._replay_snapshot = self._capture_replay_snapshot()
             self._replay_render_snapshot = self._build_replay_render_snapshot(self._replay_snapshot)
             # Keep the exact live frame on screen so Freeze does not change
@@ -1830,6 +1891,17 @@ class ECGTestPage(QWidget):
         self._display_mode = "live"
         self._grid_frozen = False
         self._replay_cursor = 0
+
+        # ── UNFREEZE METRIC LABELS ─────────────────────────────────────────
+        # Clear the frozen snapshot so calculate_ecg_metrics() resumes
+        # writing live values to the label widgets.
+        self._frozen_metric_texts = {}
+        self._frozen_report_metrics = None
+        # Clear frozen waveform snapshot so Generate Report always uses
+        # fresh live data after Resume, not the old frozen 180 BPM capture.
+        self._frozen_report_snapshot = None
+        # ──────────────────────────────────────────────────────────────────
+
         self._style_freeze_button("Freeze", enabled=True)
         if hasattr(self, "stop_btn") and self.stop_btn:
             self.stop_btn.setToolTip("Freeze the live ECG screen, then click Resume to continue live plotting")
@@ -4714,6 +4786,9 @@ class ECGTestPage(QWidget):
         # BPM FREEZE: Don't update heart rate display during report generation
         if getattr(self, '_report_generating', False):
             return
+        # FREEZE GUARD: do not overwrite any metric label while display is frozen
+        if getattr(self, '_grid_frozen', False):
+            return
         # HolterBPMController owns the HR label — skip Heart_Rate from old pipeline
         def _metric_to_int(value):
             if value in (None, "", "--", "--/--"):
@@ -4887,7 +4962,10 @@ class ECGTestPage(QWidget):
                 # Update every second (rounded down to prevent flicker)
                 current_elapsed_int = int(elapsed)
                 if current_elapsed_int != self._last_displayed_elapsed:
-                    self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+                    # FREEZE GUARD: keep counting internally but do not repaint
+                    # the Time label while the display is frozen.
+                    if not getattr(self, '_grid_frozen', False):
+                        self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
                     self._last_displayed_elapsed = current_elapsed_int
         except Exception as e:
             print(f" Error updating elapsed time: {e}")
@@ -6297,6 +6375,7 @@ class ECGTestPage(QWidget):
         self._grid_frozen = False
         self._replay_cursor = 0
         self._frozen_report_snapshot = None
+        self._frozen_report_metrics = None
         self._replay_snapshot = None
         self._replay_render_snapshot = None
 
@@ -6344,6 +6423,7 @@ class ECGTestPage(QWidget):
         self._lead_off_latch_off_count = 0
         self._set_lead_status_idle()
         self._frozen_report_snapshot = None
+        self._frozen_report_metrics = None
 
         # --- START HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -6673,6 +6753,19 @@ class ECGTestPage(QWidget):
         metrics pipeline (single source of truth).
         """
         try:
+            # ── FREEZE GUARD: do not overwrite BPM label while display is frozen ──
+            if getattr(self, '_grid_frozen', False):
+                # Re-paint the frozen BPM text in case another path cleared it
+                _ft = getattr(self, '_frozen_metric_texts', {})
+                if _ft and 'heart_rate' in _ft:
+                    try:
+                        lbl = self.metric_labels.get('heart_rate')
+                        if lbl and lbl.text() != _ft['heart_rate']:
+                            lbl.setText(_ft['heart_rate'])
+                    except Exception:
+                        pass
+                return
+            # ──────────────────────────────────────────────────────────────
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
 
@@ -7220,7 +7313,17 @@ class ECGTestPage(QWidget):
         _sm = self.settings_manager if hasattr(self, 'settings_manager') and self.settings_manager else None
         # Check if demo mode is active and use hardcoded demo values
         is_demo_mode = bool(hasattr(self, 'demo_toggle') and self.demo_toggle and self.demo_toggle.isChecked())
-        if is_demo_mode:
+        
+        display_mode = getattr(self, "_display_mode", "live")
+        frozen_report_metrics = getattr(self, "_frozen_report_metrics", None)
+
+        if display_mode == "frozen" and frozen_report_metrics:
+            frozen = frozen_report_metrics.copy()
+            frozen['lead_seq'] = (_sm.get_setting('lead_sequence', 'Standard') if _sm else 'Standard')
+            frozen['logo_path'] = os.path.join(
+                os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
+                'assets', 'DeckmountLogo.png')
+        elif is_demo_mode:
             
             frozen = {
                 'HR':       60,      # Demo BPM
@@ -7949,7 +8052,9 @@ class ECGTestPage(QWidget):
         return max(1, samples_to_show)
 
     def _update_overlay_plots(self):
-        if getattr(self, "_grid_frozen", False):
+        # If frozen, we only proceed if we have a valid snapshot to draw.
+        # Otherwise, if frozen and no snapshot, return.
+        if getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is None:
             return
         if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
             return
@@ -7959,9 +8064,14 @@ class ECGTestPage(QWidget):
         
         target_buffer_len = self._get_overlay_target_buffer_len(is_demo_mode)
         
+        # Select data source based on frozen state
+        use_snapshot = getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is not None
+
         for idx, lead in enumerate(self.leads):
             if idx < len(self._overlay_lines):
-                if idx < len(self.data):
+                if use_snapshot:
+                    data = self._replay_snapshot[idx] if idx < len(self._replay_snapshot) else np.array([])
+                elif idx < len(self.data):
                     data = self.data[idx]
                 else:
                     data = np.array([])
@@ -8800,7 +8910,9 @@ class ECGTestPage(QWidget):
         self._overlay_timer.start(100)
 
     def _update_two_column_plots(self):
-        if getattr(self, "_grid_frozen", False):
+        # If frozen, we only proceed if we have a valid snapshot to draw.
+        # Otherwise, if frozen and no snapshot, return.
+        if getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is None:
             return
         if not hasattr(self, '_overlay_lines') or not self._overlay_lines:
             return
@@ -8815,11 +8927,16 @@ class ECGTestPage(QWidget):
         right_leads = ["V1", "V2", "V3", "V4", "V5", "V6"]
         all_leads = left_leads + right_leads
         
+        # Select data source based on frozen state
+        use_snapshot = getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is not None
+
         for idx, lead in enumerate(all_leads):
             if idx < len(self._overlay_lines):
                 if lead in self.leads:
                     lead_index = self.leads.index(lead)
-                    if lead_index < len(self.data):
+                    if use_snapshot:
+                        data = self._replay_snapshot[lead_index] if lead_index < len(self._replay_snapshot) else np.array([])
+                    elif lead_index < len(self.data):
                         data = self.data[lead_index]
                     else:
                         data = np.array([])
@@ -10162,10 +10279,26 @@ class ECGTestPage(QWidget):
                 
                 if should_calculate:
                     try:
-                        self.calculate_ecg_metrics()
-                        # Store current BPM for change detection
-                        if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
-                            self._last_calculated_bpm = self.last_heart_rate
+                        # Do NOT recalculate / repaint metric labels while frozen.
+                        # The frozen snapshot texts are preserved by _freeze_current_view.
+                        if not getattr(self, '_grid_frozen', False):
+                            self.calculate_ecg_metrics()
+                            # Store current BPM for change detection
+                            if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
+                                self._last_calculated_bpm = self.last_heart_rate
+                        else:
+                            # While frozen: restore snapshot texts on every tick so
+                            # that any label flush from other code paths does not
+                            # overwrite the frozen values.
+                            _ftexts = getattr(self, '_frozen_metric_texts', {})
+                            if _ftexts:
+                                for _k, _txt in _ftexts.items():
+                                    try:
+                                        lbl = self.metric_labels.get(_k)
+                                        if lbl and lbl.text() != _txt:
+                                            lbl.setText(_txt)
+                                    except Exception:
+                                        pass
                     except Exception as e:
                         pass  # Silently handle errors to avoid console spam
                 # Removed heartbeat debug print for better performance
