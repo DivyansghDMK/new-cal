@@ -8,12 +8,12 @@ Registration form (§3.1 of SDD):
                     Organisation Address, Phone Number, Password + Confirm.
   Software collects automatically (not shown to user):
                     Hardware fingerprint, BIOS/machine serial, PC name,
-                    Windows version, RhythmUlta USB serial.
+                    Windows version, RhythmUltra USB serial.
 
-RhythmUlta guard (§3.2):
+RhythmUltra guard (§3.2):
   Sign Up button is DISABLED by default.
   A background QTimer scans USB every 2 seconds.
-  If RhythmUlta detected -> button enables + green status shown.
+  If RhythmUltra detected -> button enables + green status shown.
   If not detected -> button stays disabled + orange warning shown.
   Server is never contacted if device is missing.
 
@@ -42,8 +42,8 @@ try:
         format_key,
         get_hardware_fingerprint,
         get_machine_context,
-        get_rhythmulta_serial,
-        is_rhythmulta_connected,
+        get_RhythmUltra_serial,
+        is_RhythmUltra_connected,
         load_stored_key,
         register_device,
         remember_valid_license,
@@ -51,8 +51,8 @@ try:
         save_token_file,
         tier_name,
         SOFTWARE_VERSION,
-        RHYTHMULTA_VID,
-        RHYTHMULTA_PID,
+        RhythmUltra_VID,
+        RhythmUltra_PID,
     )
 except ImportError:
     from license_manager import (  # type: ignore
@@ -60,8 +60,8 @@ except ImportError:
         format_key,
         get_hardware_fingerprint,
         get_machine_context,
-        get_rhythmulta_serial,
-        is_rhythmulta_connected,
+        get_RhythmUltra_serial,
+        is_RhythmUltra_connected,
         load_stored_key,
         register_device,
         remember_valid_license,
@@ -69,8 +69,8 @@ except ImportError:
         save_token_file,
         tier_name,
         SOFTWARE_VERSION,
-        RHYTHMULTA_VID,
-        RHYTHMULTA_PID,
+        RhythmUltra_VID,
+        RhythmUltra_PID,
     )
 
 # ── Shared styles ─────────────────────────────────────────────────────────────
@@ -282,7 +282,7 @@ class RegistrationDialog(QDialog):
     """
     Full registration form per SDD §3.1.
     Only user-visible fields are shown; all hardware data is collected silently.
-    Sign Up button is disabled until RhythmUlta is detected.
+    Sign Up button is disabled until RhythmUltra is detected.
     """
 
     def __init__(self, parent=None):
@@ -308,10 +308,10 @@ class RegistrationDialog(QDialog):
 
         # USB scan timer — every 2 seconds (SDD §3.2)
         self._usb_timer = QTimer(self)
-        self._usb_timer.timeout.connect(self._scan_rhythmulta)
+        self._usb_timer.timeout.connect(self._scan_RhythmUltra)
         self._usb_timer.start(2000)
         # Initial scan immediately
-        self._scan_rhythmulta()
+        self._scan_RhythmUltra()
 
     def _fit_to_screen(self):
         try:
@@ -441,7 +441,7 @@ class RegistrationDialog(QDialog):
         machine_row.addWidget(self._machine_serial_field, 1)
         c.addLayout(machine_row)
 
-        # ── RhythmUlta Status ─────────────────────────────────────────────────
+        # ── RhythmUltra Status ─────────────────────────────────────────────────
         self._device_status = QLabel()
         self._device_status.setAlignment(Qt.AlignCenter)
         self._device_status.setMinimumHeight(36)
@@ -472,7 +472,7 @@ class RegistrationDialog(QDialog):
         self._register_btn = QPushButton("Register Device")
         self._register_btn.setFixedHeight(44)
         self._register_btn.setDefault(True)
-        self._register_btn.setEnabled(False)  # Disabled until RhythmUlta detected
+        self._register_btn.setEnabled(False)  # Disabled until RhythmUltra detected
         self._register_btn.setStyleSheet(_ORANGE_BTN)
         self._register_btn.clicked.connect(self._on_register)
 
@@ -533,7 +533,7 @@ class RegistrationDialog(QDialog):
         except Exception:
             self._machine_serial_field.setText("Detection failed")
 
-    # ── RhythmUlta USB polling ────────────────────────────────────────────────
+    # ── RhythmUltra USB polling ────────────────────────────────────────────────
 
     def _set_device_status_connected(self, serial: str):
         self._device_status.setText(
@@ -545,10 +545,10 @@ class RegistrationDialog(QDialog):
         )
 
     def _set_device_status_disconnected(self):
-        vid_str = f"0x{RHYTHMULTA_VID:04X}" if RHYTHMULTA_VID else "?"
-        pid_str = f"0x{RHYTHMULTA_PID:04X}" if RHYTHMULTA_PID else "?"
-        if RHYTHMULTA_VID == 0 and RHYTHMULTA_PID == 0:
-            msg = "[WARN]  RhythmUlta VID/PID not configured.  Set RHYTHMULTA_VID and RHYTHMULTA_PID in .env"
+        vid_str = f"0x{RhythmUltra_VID:04X}" if RhythmUltra_VID else "?"
+        pid_str = f"0x{RhythmUltra_PID:04X}" if RhythmUltra_PID else "?"
+        if RhythmUltra_VID == 0 and RhythmUltra_PID == 0:
+            msg = "[WARN]  RhythmUltra VID/PID not configured.  Set RhythmUltra_VID and RhythmUltra_PID in .env"
         else:
             if getattr(self, "_had_device_connected", False):
                 msg = (
@@ -638,11 +638,11 @@ class RegistrationDialog(QDialog):
             if not self._is_submitting():
                 self._register_btn.setEnabled(False)
 
-    def _scan_rhythmulta(self):
+    def _scan_RhythmUltra(self):
         """Called every 2 seconds by QTimer. Updates button state without page reload."""
         try:
             # 1. Fast path: if VID/PID is configured and device is connected
-            serial = get_rhythmulta_serial()
+            serial = get_RhythmUltra_serial()
             if serial:
                 from utils.license_manager import set_detected_device_serial
                 set_detected_device_serial(serial)
@@ -694,10 +694,10 @@ class RegistrationDialog(QDialog):
         self._status.setStyleSheet(f"font-size: 12px; color: {color};")
 
     def _on_register(self):
-        # Client-side guard: RhythmUlta must be connected (SDD §3.2)
-        if not is_rhythmulta_connected():
+        # Client-side guard: RhythmUltra must be connected (SDD §3.2)
+        if not is_RhythmUltra_connected():
             self._set_status(
-                "RhythmUlta device not detected.  Please connect it before registering.",
+                "RhythmUltra device not detected.  Please connect it before registering.",
                 "#e74c3c",
             )
             return
@@ -887,7 +887,7 @@ class StartupBlockDialog(QDialog):
         1: "Check 1 — License File",
         2: "Check 2 — License Integrity",
         3: "Check 3 — Machine Identity",
-        4: "Check 4 — RhythmUlta Device",
+        4: "Check 4 — RhythmUltra Device",
         5: "Check 5 — Server Verification",
     }
 
@@ -908,7 +908,7 @@ class StartupBlockDialog(QDialog):
         self._build_ui()
         self._fit_to_screen()
 
-        # For Check 4 (RhythmUlta), poll USB every 2s and auto-close when detected
+        # For Check 4 (RhythmUltra), poll USB every 2s and auto-close when detected
         if check_result.step_failed == 4:
             self._device_scan_in_progress = False
             self._poll_timer = QTimer(self)
@@ -990,7 +990,7 @@ class StartupBlockDialog(QDialog):
             btn_row.addStretch()
             btn_row.addWidget(reg_btn)
         elif step == 4:
-            # RhythmUlta block — show retry button
+            # RhythmUltra block — show retry button
             self._retry_btn = QPushButton("⟳  Retry Device Scan")
             self._retry_btn.setFixedHeight(40)
             self._retry_btn.setStyleSheet(_ORANGE_BTN)
@@ -1017,10 +1017,10 @@ class StartupBlockDialog(QDialog):
             self.accept()
 
     def _check_device(self):
-        """Check if RhythmUlta has been plugged in — auto-close if detected."""
+        """Check if RhythmUltra has been plugged in — auto-close if detected."""
         try:
             # 1. Fast path: if VID/PID is configured and device is connected
-            serial = get_rhythmulta_serial()
+            serial = get_RhythmUltra_serial()
             if serial:
                 from utils.license_manager import set_detected_device_serial
                 set_detected_device_serial(serial)

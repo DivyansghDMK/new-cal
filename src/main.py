@@ -2211,7 +2211,7 @@ class LoginRegisterDialog(QDialog):
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", "RUM") or not serial_id:
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUltra device", "RUM") or not serial_id:
             serial_id = ""
 
         ok, msg = self.sign_in_logic.register_user_with_details(

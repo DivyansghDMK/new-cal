@@ -738,7 +738,7 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUlta device", ""):
+        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUltra device", ""):
             serial_id = ""
         name = self.reg_name.text().strip()
         age = self.reg_age.text()

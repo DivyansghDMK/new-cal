@@ -6,7 +6,7 @@ CardioX License Validation Server (Flask) — v2.0 Three-Pillar Architecture.
 Endpoints
 ---------
 POST /api/v1/register          First-time device registration.  Validates key pool,
-                                hardware fingerprint uniqueness, RhythmUlta serial
+                                hardware fingerprint uniqueness, RhythmUltra serial
                                 uniqueness → creates seat → returns signed token.
 POST /api/v1/heartbeat         7-day check-in.  Verifies license not revoked.
                                 Updates last_heartbeat timestamp.
@@ -41,7 +41,7 @@ Database schema (JSON-backed; PostgreSQL-ready structure)
       "seats": {
         "1": {
           "bound_fingerprint":  str | null,
-          "rhythmulta_serial":  str | null,
+          "RhythmUltra_serial":  str | null,
           "machine_serial_id":  str | null,
           "pc_name":            str | null,
           "windows_version":    str | null,
@@ -163,7 +163,7 @@ def _migrate_legacy(db: dict) -> dict:
         for fp, act in activations.items():
             seats[str(seat_num)] = {
                 "bound_fingerprint": fp,
-                "rhythmulta_serial": None,
+                "RhythmUltra_serial": None,
                 "machine_serial_id": act.get("machine_name", ""),
                 "pc_name": act.get("machine_name", ""),
                 "windows_version": None,
@@ -274,7 +274,7 @@ def decode_key(license_key: str) -> dict | None:
 def _issue_token(
     license_key: str,
     fingerprint: str,
-    rhythmulta_serial: str,
+    RhythmUltra_serial: str,
     seat_number: int,
     tier: int,
     expiry: int,
@@ -288,7 +288,7 @@ def _issue_token(
     payload = {
         "license_key": license_key,
         "fingerprint": fingerprint,
-        "rhythmulta_serial": rhythmulta_serial,
+        "RhythmUltra_serial": RhythmUltra_serial,
         "seat_number": seat_number,
         "tier": tier,
         "expires": expiry,
@@ -347,30 +347,30 @@ def _find_seat_by_machine_serial(license_entry: dict, machine_serial_id: str) ->
     return None, None
 
 
-def _find_seat_by_rhythmulta(license_entry: dict, rhythmulta_serial: str) -> tuple[str | None, dict | None]:
-    """Return (seat_number_str, seat_dict) for a bound RhythmUlta serial, or (None, None)."""
+def _find_seat_by_RhythmUltra(license_entry: dict, RhythmUltra_serial: str) -> tuple[str | None, dict | None]:
+    """Return (seat_number_str, seat_dict) for a bound RhythmUltra serial, or (None, None)."""
     for seat_num, seat in license_entry.get("seats", {}).items():
-        if seat.get("rhythmulta_serial") == rhythmulta_serial and rhythmulta_serial:
+        if seat.get("RhythmUltra_serial") == RhythmUltra_serial and RhythmUltra_serial:
             return seat_num, seat
     return None, None
 
 
-def _find_global_seat_by_rhythmulta(
+def _find_global_seat_by_RhythmUltra(
     db: dict,
-    rhythmulta_serial: str,
+    RhythmUltra_serial: str,
     *,
     exclude_license_key: str | None = None,
     exclude_seat_num: str | None = None,
 ) -> tuple[str | None, str | None, dict | None]:
-    """Return the first active seat using this RhythmUlta serial anywhere in the DB."""
-    if not rhythmulta_serial:
+    """Return the first active seat using this RhythmUltra serial anywhere in the DB."""
+    if not RhythmUltra_serial:
         return None, None, None
 
     for license_key, license_entry in db.get("licenses", {}).items():
         for seat_num, seat in license_entry.get("seats", {}).items():
             if license_key == exclude_license_key and exclude_seat_num is not None and seat_num == str(exclude_seat_num):
                 continue
-            if seat.get("status") == "active" and seat.get("rhythmulta_serial") == rhythmulta_serial:
+            if seat.get("status") == "active" and seat.get("RhythmUltra_serial") == RhythmUltra_serial:
                 return license_key, seat_num, seat
     return None, None, None
 
@@ -386,10 +386,10 @@ def _clear_license_seat_bindings(license_entry: dict) -> int:
     for seat in license_entry.get("seats", {}).values():
         if not isinstance(seat, dict):
             continue
-        if seat.get("bound_fingerprint") is not None or seat.get("rhythmulta_serial") is not None:
+        if seat.get("bound_fingerprint") is not None or seat.get("RhythmUltra_serial") is not None:
             cleared += 1
         seat["bound_fingerprint"] = None
-        seat["rhythmulta_serial"] = None
+        seat["RhythmUltra_serial"] = None
         seat["machine_serial_id"] = None
         seat["pc_name"] = None
         seat["windows_version"] = None
@@ -444,7 +444,7 @@ def register():
       1. License key valid and not expired?
       2. License not revoked / has available seats?
       3. Hardware fingerprint unique across all seats?
-      4. RhythmUlta serial unique across all seats?
+      4. RhythmUltra serial unique across all seats?
     On success: create seat, issue signed token.
     """
     if not _verify_request_sig():
@@ -453,7 +453,7 @@ def register():
     body = request.get_json(silent=True) or {}
     license_key = body.get("license_key", "").strip().upper()
     fingerprint = body.get("hardware_fingerprint", "").strip()
-    rhythmulta_serial = body.get("rhythmulta_serial", "").strip()
+    RhythmUltra_serial = body.get("RhythmUltra_serial", "").strip()
     full_name = body.get("full_name", "")
     doctor_name = body.get("doctor_name", "")
     org_name = body.get("org_name", "")
@@ -511,10 +511,10 @@ def register():
 
     if existing_seat is not None:
         # Re-registration of same machine — update seat info and re-issue token
-        if rhythmulta_serial:
-            global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(
+        if RhythmUltra_serial:
+            global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(
                 db,
-                rhythmulta_serial,
+                RhythmUltra_serial,
                 exclude_license_key=license_key,
                 exclude_seat_num=seat_num,
             )
@@ -522,22 +522,22 @@ def register():
                 return _signed_response({
                     "valid": False,
                     "message": (
-                        "This RhythmUlta device is already bound to another active license "
+                        "This RhythmUltra device is already bound to another active license "
                         f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
                     ),
                 }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["pc_name"] = pc_name or existing_seat.get("pc_name", "")
         existing_seat["status"] = "active"
-        # Update rhythmulta if provided and not already bound
-        if rhythmulta_serial and not existing_seat.get("rhythmulta_serial"):
-            existing_seat["rhythmulta_serial"] = rhythmulta_serial
+        # Update RhythmUltra if provided and not already bound
+        if RhythmUltra_serial and not existing_seat.get("RhythmUltra_serial"):
+            existing_seat["RhythmUltra_serial"] = RhythmUltra_serial
         db["licenses"][license_key] = license_entry
         _save_db(db)
 
         token_str = _issue_token(
             license_key, fingerprint,
-            existing_seat.get("rhythmulta_serial", ""),
+            existing_seat.get("RhythmUltra_serial", ""),
             int(seat_num), key_data["tier"], key_data["expiry"],
         )
         return _signed_response({
@@ -553,14 +553,14 @@ def register():
     # ── Check 3: Hardware fingerprint unique? ─────────────────────────────────
     # Already checked above — no match means fingerprint is unique.
 
-    # ── Check 3b: RhythmUlta serial unique? ──────────────────────────────────
-    if rhythmulta_serial:
-        global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(db, rhythmulta_serial)
+    # ── Check 3b: RhythmUltra serial unique? ──────────────────────────────────
+    if RhythmUltra_serial:
+        global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(db, RhythmUltra_serial)
         if global_seat is not None:
             return _signed_response({
                 "valid": False,
                 "message": (
-                    "This RhythmUlta device is already bound to another active license "
+                    "This RhythmUltra device is already bound to another active license "
                     f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
                 ),
             }, 403)
@@ -577,7 +577,7 @@ def register():
     # ── Create seat ───────────────────────────────────────────────────────────
     new_seat = {
         "bound_fingerprint": fingerprint,
-        "rhythmulta_serial": rhythmulta_serial or None,
+        "RhythmUltra_serial": RhythmUltra_serial or None,
         "machine_serial_id": machine_serial_id,
         "pc_name": pc_name,
         "windows_version": windows_version,
@@ -598,7 +598,7 @@ def register():
 
     # ── Issue signed token ────────────────────────────────────────────────────
     token_str = _issue_token(
-        license_key, fingerprint, rhythmulta_serial,
+        license_key, fingerprint, RhythmUltra_serial,
         int(next_seat), key_data["tier"], key_data["expiry"],
     )
 
@@ -699,7 +699,7 @@ def deactivate():
         seat_num, seat = _find_seat_by_fingerprint(entry, fingerprint)
         if seat is not None:
             seat["bound_fingerprint"] = None
-            seat["rhythmulta_serial"] = None
+            seat["RhythmUltra_serial"] = None
             seat["status"] = "available"
             db["licenses"][license_key] = entry
             _save_db(db)
@@ -720,13 +720,13 @@ def activate():
     fingerprint = body.get("hardware_fingerprint", "").strip()
     machine_name = body.get("machine_name", "")
     machine_serial_id = body.get("machine_serial_id", "") or machine_name
-    rhythmulta_serial = body.get("rhythmulta_serial", "").strip()
+    RhythmUltra_serial = body.get("RhythmUltra_serial", "").strip()
 
     if not license_key or not fingerprint:
         return _signed_response({"valid": False, "message": "Missing required fields."}, 400)
 
     # Delegate to new register flow with minimal fields
-    body["rhythmulta_serial"] = body.get("rhythmulta_serial", "")
+    body["RhythmUltra_serial"] = body.get("RhythmUltra_serial", "")
     body["pc_name"] = machine_name
     body["machine_serial_id"] = machine_serial_id
 
@@ -759,10 +759,10 @@ def activate():
 
     seat_num, existing_seat = _find_seat_by_fingerprint(license_entry, fingerprint)
     if existing_seat is not None:
-        if rhythmulta_serial:
-            global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(
+        if RhythmUltra_serial:
+            global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(
                 db,
-                rhythmulta_serial,
+                RhythmUltra_serial,
                 exclude_license_key=license_key,
                 exclude_seat_num=seat_num,
             )
@@ -770,15 +770,15 @@ def activate():
                 return _signed_response({
                     "valid": False,
                     "message": (
-                        "This RhythmUlta device is already bound to another active license "
+                        "This RhythmUltra device is already bound to another active license "
                         f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
                     ),
                 }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["machine_serial_id"] = machine_serial_id or existing_seat.get("machine_serial_id", "")
         existing_seat["pc_name"] = machine_name or existing_seat.get("pc_name", "")
-        if rhythmulta_serial and not existing_seat.get("rhythmulta_serial"):
-            existing_seat["rhythmulta_serial"] = rhythmulta_serial
+        if RhythmUltra_serial and not existing_seat.get("RhythmUltra_serial"):
+            existing_seat["RhythmUltra_serial"] = RhythmUltra_serial
         db["licenses"][license_key] = license_entry
         _save_db(db)
         return _signed_response({
@@ -796,20 +796,20 @@ def activate():
             "message": f"Maximum activations reached for this license.",
         }, 403)
 
-    if rhythmulta_serial:
-        global_license, global_seat_num, global_seat = _find_global_seat_by_rhythmulta(db, rhythmulta_serial)
+    if RhythmUltra_serial:
+        global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(db, RhythmUltra_serial)
         if global_seat is not None:
             return _signed_response({
                 "valid": False,
                 "message": (
-                    "This RhythmUlta device is already bound to another active license "
+                    "This RhythmUltra device is already bound to another active license "
                     f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
                 ),
             }, 403)
 
     license_entry["seats"][next_seat] = {
         "bound_fingerprint": fingerprint,
-        "rhythmulta_serial": rhythmulta_serial or None,
+        "RhythmUltra_serial": RhythmUltra_serial or None,
         "machine_serial_id": machine_serial_id,
         "pc_name": machine_name,
         "windows_version": body.get("machine_os", ""),
@@ -1075,7 +1075,7 @@ def admin_unrevoke_key():
 @_require_admin
 def admin_reset_seat():
     """
-    Crash recovery: clear the bound_fingerprint and RhythmUlta serial
+    Crash recovery: clear the bound_fingerprint and RhythmUltra serial
     on a specific seat so the user can re-register on a new machine.
     """
     body = request.get_json(silent=True) or {}
@@ -1114,7 +1114,7 @@ def admin_reset_seat():
 
     old_fp = target_seat.get("bound_fingerprint", "")
     target_seat["bound_fingerprint"] = None
-    target_seat["rhythmulta_serial"] = None
+    target_seat["RhythmUltra_serial"] = None
     target_seat["status"] = "available"
     target_seat["reset_at"] = int(time.time())
 
@@ -1149,7 +1149,7 @@ def admin_view_seats():
             "seat_number": int(seat_num),
             "status": seat.get("status", "unknown"),
             "bound_fingerprint": seat.get("bound_fingerprint") or "(unbound)",
-            "rhythmulta_serial": seat.get("rhythmulta_serial") or "(unbound)",
+            "RhythmUltra_serial": seat.get("RhythmUltra_serial") or "(unbound)",
             "pc_name": seat.get("pc_name") or "",
             "machine_serial_id": seat.get("machine_serial_id") or "",
             "windows_version": seat.get("windows_version") or "",

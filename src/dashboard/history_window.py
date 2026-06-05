@@ -61,13 +61,13 @@ PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
 ).strip()
 
 
-def _get_rhythmulta_serial() -> str:
+def _get_RhythmUltra_serial() -> str:
     try:
-        from utils.license_manager import load_token_file, get_rhythmulta_serial
+        from utils.license_manager import load_token_file, get_RhythmUltra_serial
         token = load_token_file()
-        serial = (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", ""))
+        serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", ""))
         if not serial:
-            serial = get_rhythmulta_serial() or ""
+            serial = get_RhythmUltra_serial() or ""
     except Exception:
         serial = ""
     return serial or "DM ECG V1.0 A010"
@@ -1326,7 +1326,7 @@ class HistoryWindow(QDialog):
             params = {
                 "doctor": doc_name,
                 "doctorName": doc_name,
-                "rhythmulta_serial": _get_rhythmulta_serial(),
+                "RhythmUltra_serial": _get_RhythmUltra_serial(),
             }
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
@@ -2254,7 +2254,7 @@ class HistoryWindow(QDialog):
 
     def refresh_reviewed_reports(self):
         try:
-            params = {"rhythmulta_serial": _get_rhythmulta_serial()}
+            params = {"RhythmUltra_serial": _get_RhythmUltra_serial()}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
                 params=params,
@@ -2533,8 +2533,8 @@ class ReviewedReportsDialog(QDialog):
             params = {
                 "doctor": dname,
                 "doctorName": dname,
-                "rhythmulta_serial": _get_rhythmulta_serial(),
-            } if dname else {"rhythmulta_serial": _get_rhythmulta_serial()}
+                "RhythmUltra_serial": _get_RhythmUltra_serial(),
+            } if dname else {"RhythmUltra_serial": _get_RhythmUltra_serial()}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
                 params=params,
