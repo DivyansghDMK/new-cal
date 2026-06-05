@@ -65,7 +65,7 @@ def _get_RhythmUltra_serial() -> str:
     try:
         from utils.license_manager import load_token_file, get_RhythmUltra_serial
         token = load_token_file()
-        serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", ""))
+        serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", "")))
         if not serial:
             serial = get_RhythmUltra_serial() or ""
     except Exception:

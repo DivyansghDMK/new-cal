@@ -838,6 +838,7 @@ def register_device(
         "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
         "RhythmUltra_serial": RhythmUltra_serial,
         "rhythmultra_serial": RhythmUltra_serial,
+        "rhythmulta_serial": RhythmUltra_serial,
         "full_name": full_name,
         "doctor_name": doctor_name,
         "org_name": org_name,
@@ -875,7 +876,7 @@ def heartbeat(token_data: Dict) -> Dict:
     machine_ctx = get_machine_context()
     current_fp = get_hardware_fingerprint()
     current_RhythmUltra_serial = get_rhythmultra_serial() or token_data.get(
-        "rhythmultra_serial", token_data.get("RhythmUltra_serial", "")
+        "rhythmultra_serial", token_data.get("RhythmUltra_serial", token_data.get("rhythmulta_serial", ""))
     )
     body = {
         "token": load_raw_token(),
@@ -883,6 +884,7 @@ def heartbeat(token_data: Dict) -> Dict:
         "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
         "RhythmUltra_serial": current_RhythmUltra_serial,
         "rhythmultra_serial": current_RhythmUltra_serial,
+        "rhythmulta_serial": current_RhythmUltra_serial,
         "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
         "pc_name": machine_ctx.get("machine_name", ""),
         "license_key": token_data.get("license_key", ""),
@@ -931,6 +933,7 @@ def activate_with_server(license_key: str, fingerprint: str, machine_name: str =
         "windows_version": machine_ctx.get("windows_version", ""),
         "RhythmUltra_serial": RhythmUltra_serial,
         "rhythmultra_serial": RhythmUltra_serial,
+        "rhythmulta_serial": RhythmUltra_serial,
     }
     result = _post_json("activate", body)
     _verify_server_sig(result)
@@ -1319,7 +1322,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             res.reason = "Unauthorized RhythmUltra device connected."
             return res
 
-        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", ""))
+        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
         # If stored_serial is empty the device was never bound — allow first use.
         if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
             res.step_failed = 4
@@ -1328,7 +1331,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             return res
     else:
         # Development / non-Windows runs can proceed without the hardware lock.
-        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", ""))
+        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
         if usb_serial and stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
             _append_audit_event(
                 "DUPLICATE_ACTIVATION_ATTEMPT",
@@ -1681,8 +1684,9 @@ def deactivate(license_key: str) -> bool:
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,
-        "RhythmUltra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", "")),
-        "rhythmultra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", "")),
+        "RhythmUltra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
+        "rhythmultra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
+        "rhythmulta_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
         "seat_number": (token or {}).get("seat_number", 1),
     }
     result = _post_json("deactivate", body)

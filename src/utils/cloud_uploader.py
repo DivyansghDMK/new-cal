@@ -1418,7 +1418,7 @@ class CloudUploader:
             try:
                 from utils.license_manager import load_token_file, get_RhythmUltra_serial
                 token = load_token_file()
-                RhythmUltra_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", ""))
+                RhythmUltra_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", "")))
                 if not RhythmUltra_serial:
                     RhythmUltra_serial = get_RhythmUltra_serial() or ""
             except Exception:
