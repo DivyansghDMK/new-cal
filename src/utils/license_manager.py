@@ -889,7 +889,9 @@ def heartbeat(token_data: Dict) -> Dict:
         "seat_number": token_data.get("seat_number", 1),
         "version": SOFTWARE_VERSION,
     }
+    print(f"[License][DEBUG] heartbeat request body: {body}")
     result = _post_json("heartbeat", body, timeout=3)
+    print(f"[License][DEBUG] heartbeat response: {result}")
     _verify_server_sig(result)
     return result
 
