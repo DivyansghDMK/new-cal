@@ -350,7 +350,8 @@ def _find_seat_by_machine_serial(license_entry: dict, machine_serial_id: str) ->
 def _find_seat_by_RhythmUltra(license_entry: dict, RhythmUltra_serial: str) -> tuple[str | None, dict | None]:
     """Return (seat_number_str, seat_dict) for a bound RhythmUltra serial, or (None, None)."""
     for seat_num, seat in license_entry.get("seats", {}).items():
-        if seat.get("RhythmUltra_serial") == RhythmUltra_serial and RhythmUltra_serial:
+        stored_serial = seat.get("RhythmUltra_serial") or seat.get("rhythmulta_serial") or seat.get("rhythmultra_serial")
+        if stored_serial == RhythmUltra_serial and RhythmUltra_serial:
             return seat_num, seat
     return None, None
 
@@ -370,7 +371,8 @@ def _find_global_seat_by_RhythmUltra(
         for seat_num, seat in license_entry.get("seats", {}).items():
             if license_key == exclude_license_key and exclude_seat_num is not None and seat_num == str(exclude_seat_num):
                 continue
-            if seat.get("status") == "active" and seat.get("RhythmUltra_serial") == RhythmUltra_serial:
+            stored_serial = seat.get("RhythmUltra_serial") or seat.get("rhythmulta_serial") or seat.get("rhythmultra_serial")
+            if seat.get("status") == "active" and stored_serial == RhythmUltra_serial:
                 return license_key, seat_num, seat
     return None, None, None
 
@@ -386,10 +388,15 @@ def _clear_license_seat_bindings(license_entry: dict) -> int:
     for seat in license_entry.get("seats", {}).values():
         if not isinstance(seat, dict):
             continue
-        if seat.get("bound_fingerprint") is not None or seat.get("RhythmUltra_serial") is not None:
+        if (seat.get("bound_fingerprint") is not None or 
+            seat.get("RhythmUltra_serial") is not None or 
+            seat.get("rhythmulta_serial") is not None or 
+            seat.get("rhythmultra_serial") is not None):
             cleared += 1
         seat["bound_fingerprint"] = None
         seat["RhythmUltra_serial"] = None
+        seat["rhythmulta_serial"] = None
+        seat["rhythmultra_serial"] = None
         seat["machine_serial_id"] = None
         seat["pc_name"] = None
         seat["windows_version"] = None
@@ -453,7 +460,7 @@ def register():
     body = request.get_json(silent=True) or {}
     license_key = body.get("license_key", "").strip().upper()
     fingerprint = body.get("hardware_fingerprint", "").strip()
-    RhythmUltra_serial = body.get("RhythmUltra_serial", "").strip()
+    RhythmUltra_serial = body.get("RhythmUltra_serial", body.get("rhythmulta_serial", body.get("rhythmultra_serial", ""))).strip()
     full_name = body.get("full_name", "")
     doctor_name = body.get("doctor_name", "")
     org_name = body.get("org_name", "")
@@ -720,7 +727,7 @@ def activate():
     fingerprint = body.get("hardware_fingerprint", "").strip()
     machine_name = body.get("machine_name", "")
     machine_serial_id = body.get("machine_serial_id", "") or machine_name
-    RhythmUltra_serial = body.get("RhythmUltra_serial", "").strip()
+    RhythmUltra_serial = body.get("RhythmUltra_serial", body.get("rhythmulta_serial", body.get("rhythmultra_serial", ""))).strip()
 
     if not license_key or not fingerprint:
         return _signed_response({"valid": False, "message": "Missing required fields."}, 400)
