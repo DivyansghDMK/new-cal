@@ -1414,18 +1414,18 @@ class CloudUploader:
             if self.doctor_review_api_key:
                 headers['x-api-key'] = self.doctor_review_api_key
 
-            # Load dynamic rhythmulta_serial from local license token or USB probe
+            # Load dynamic RhythmUltra_serial from local license token or USB probe
             try:
-                from utils.license_manager import load_token_file, get_rhythmulta_serial
+                from utils.license_manager import load_token_file, get_RhythmUltra_serial
                 token = load_token_file()
-                rhythmulta_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", ""))
-                if not rhythmulta_serial:
-                    rhythmulta_serial = get_rhythmulta_serial() or ""
+                RhythmUltra_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", "")))
+                if not RhythmUltra_serial:
+                    RhythmUltra_serial = get_RhythmUltra_serial() or ""
             except Exception:
-                rhythmulta_serial = ""
+                RhythmUltra_serial = ""
 
-            if not rhythmulta_serial:
-                rhythmulta_serial = "DM ECG V1.0 A010"
+            if not RhythmUltra_serial:
+                RhythmUltra_serial = "DM ECG V1.0 A010"
 
             with open(file_path, 'rb') as f:
                 files = {
@@ -1435,7 +1435,7 @@ class CloudUploader:
                     "doctorName": doctor_name,
                     "patientName": patient_name,
                     "reportType": report_type,
-                    "rhythmulta_serial": rhythmulta_serial,
+                    "RhythmUltra_serial": RhythmUltra_serial,
                 }
                 response = requests.post(
                     upload_url_endpoint,

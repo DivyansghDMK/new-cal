@@ -3337,6 +3337,9 @@ class Dashboard(QWidget):
             if not hasattr(self, 'ecg_test_page') or not self.ecg_test_page:
                 return
                 
+            if getattr(self.ecg_test_page, '_grid_frozen', False):
+                return
+                
             if not hasattr(self.ecg_test_page, 'metric_labels'):
                 return
             

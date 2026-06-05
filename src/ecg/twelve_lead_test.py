@@ -2164,6 +2164,10 @@ class ECGTestPage(QWidget):
             print(" Demo mode active - skipping live ECG metrics calculation")
             return
 
+        # FREEZE guard: Do not recalculate metrics while frozen
+        if getattr(self, '_grid_frozen', False):
+            return
+
         # BPM FREEZE: Skip recalculation while report is being generated to keep BPM stable
         if getattr(self, '_report_generating', False):
             return
@@ -4255,6 +4259,9 @@ class ECGTestPage(QWidget):
                                    qt_interval=None, qtc_interval=None, qtcf_interval=None,
                                    force_immediate=False, rr_interval=None):
         """Update the ECG metrics display in the UI - wrapper for modular function"""
+        if getattr(self, '_grid_frozen', False):
+            return
+
         if not hasattr(self, '_last_metric_update_ts'):
             self._last_metric_update_ts = 0.0
 

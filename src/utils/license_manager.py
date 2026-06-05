@@ -8,7 +8,7 @@ Pillar 1 — Hardware Fingerprint
     Disk serial, MAC address.  Stable across reboots; cannot move to
     another machine without hardware spoofing.
 
-Pillar 2 — RhythmUlta Device Lock
+Pillar 2 — RhythmUltra Device Lock
     USB scan for matching VID/PID on every startup.  Serial number is
     compared against the bound serial stored in the token.  Missing or
     mismatched device = blocked immediately.
@@ -16,14 +16,14 @@ Pillar 2 — RhythmUlta Device Lock
 Pillar 3 — Server-Signed Token
     On successful registration the server issues an HMAC-signed JWT-like
     token stored at %APPDATA%\\Deckmount\\cardiox.lic.  The token carries
-    fingerprint, RhythmUlta serial, license key, seat number, and the
+    fingerprint, RhythmUltra serial, license key, seat number, and the
     timestamp of the last successful server heartbeat.
 
 Startup validation sequence (5 checks):
     1. Token file exists on disk.
     2. Token HMAC signature is valid (tamper detection).
     3. Hardware fingerprint in token matches this machine.
-    4. RhythmUlta connected and serial matches token.
+    4. RhythmUltra connected and serial matches token.
     5. Server heartbeat (POST /heartbeat) — attempted on startup, with offline grace.
 """
 
@@ -75,8 +75,8 @@ OFFLINE_GRACE_DAYS: int = 14
 # How many seconds between mandatory server heartbeats.
 HEARTBEAT_INTERVAL_SECONDS: int = OFFLINE_GRACE_DAYS * 86400
 
-# ── RhythmUlta USB Identity ───────────────────────────────────────────────────
-# Set RHYTHMULTA_VID / RHYTHMULTA_PID in .env or environment.
+# ── RhythmUltra USB Identity ───────────────────────────────────────────────────
+# Set RhythmUltra_VID / RhythmUltra_PID in .env or environment.
 # Values are integers (decimal or hex string accepted).
 def _parse_usb_id(env_key: str, default: int) -> int:
     raw = os.getenv(env_key, "").strip()
@@ -87,10 +87,10 @@ def _parse_usb_id(env_key: str, default: int) -> int:
     except ValueError:
         return default
 
-RHYTHMULTRA_VID: int = _parse_usb_id("RHYTHMULTRA_VID", 0x0000) or _parse_usb_id("RHYTHMULTA_VID", 0x0000)
-RHYTHMULTRA_PID: int = _parse_usb_id("RHYTHMULTRA_PID", 0x0000) or _parse_usb_id("RHYTHMULTA_PID", 0x0000)
-RHYTHMULTA_VID = RHYTHMULTRA_VID
-RHYTHMULTA_PID = RHYTHMULTRA_PID
+RHYTHMULTRA_VID: int = _parse_usb_id("RHYTHMULTRA_VID", 0x0000) or _parse_usb_id("RhythmUltra_VID", 0x0000)
+RHYTHMULTRA_PID: int = _parse_usb_id("RHYTHMULTRA_PID", 0x0000) or _parse_usb_id("RhythmUltra_PID", 0x0000)
+RhythmUltra_VID = RHYTHMULTRA_VID
+RhythmUltra_PID = RHYTHMULTRA_PID
 
 # ── File Paths ────────────────────────────────────────────────────────────────
 # Token lives in %APPDATA%\Deckmount\cardiox.lic (per SDD §3.4)
@@ -384,7 +384,7 @@ def get_machine_context() -> Dict[str, str]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PILLAR 2 — RhythmUlta USB Device Lock
+# PILLAR 2 — RhythmUltra USB Device Lock
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _list_usb_ports():
@@ -516,8 +516,8 @@ def is_rhythmultra_connected() -> bool:
     return get_rhythmultra_serial() is not None
 
 # Legacy aliases for backward compatibility
-get_rhythmulta_serial = get_rhythmultra_serial
-is_rhythmulta_connected = is_rhythmultra_connected
+get_RhythmUltra_serial = get_rhythmultra_serial
+is_RhythmUltra_connected = is_rhythmultra_connected
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -824,11 +824,11 @@ def register_device(
 ) -> Dict:
     """
     First-time registration: POST /register.
-    Server validates key pool -> fingerprint uniqueness -> RhythmUlta uniqueness
+    Server validates key pool -> fingerprint uniqueness -> RhythmUltra uniqueness
     -> creates seat -> returns signed token data.
     """
     fingerprint = get_hardware_fingerprint()
-    rhythmulta_serial = get_rhythmulta_serial() or ""
+    RhythmUltra_serial = get_RhythmUltra_serial() or ""
     machine_ctx = get_machine_context()
     machine_serial = machine_serial_id.strip() or machine_ctx["machine_serial_id"]
 
@@ -836,8 +836,9 @@ def register_device(
         "license_key": license_key.strip().upper(),
         "hardware_fingerprint": fingerprint,
         "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
-        "rhythmulta_serial": rhythmulta_serial,
-        "rhythmultra_serial": rhythmulta_serial,
+        "RhythmUltra_serial": RhythmUltra_serial,
+        "rhythmultra_serial": RhythmUltra_serial,
+        "rhythmulta_serial": RhythmUltra_serial,
         "full_name": full_name,
         "doctor_name": doctor_name,
         "org_name": org_name,
@@ -874,22 +875,25 @@ def heartbeat(token_data: Dict) -> Dict:
     """
     machine_ctx = get_machine_context()
     current_fp = get_hardware_fingerprint()
-    current_rhythmulta_serial = get_rhythmultra_serial() or token_data.get(
-        "rhythmultra_serial", token_data.get("rhythmulta_serial", "")
+    current_RhythmUltra_serial = get_rhythmultra_serial() or token_data.get(
+        "rhythmultra_serial", token_data.get("RhythmUltra_serial", token_data.get("rhythmulta_serial", ""))
     )
     body = {
         "token": load_raw_token(),
         "hardware_fingerprint": current_fp,
         "stable_hardware_fingerprint": _stable_hardware_fingerprint(),
-        "rhythmulta_serial": current_rhythmulta_serial,
-        "rhythmultra_serial": current_rhythmulta_serial,
+        "RhythmUltra_serial": current_RhythmUltra_serial,
+        "rhythmultra_serial": current_RhythmUltra_serial,
+        "rhythmulta_serial": current_RhythmUltra_serial,
         "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
         "pc_name": machine_ctx.get("machine_name", ""),
         "license_key": token_data.get("license_key", ""),
         "seat_number": token_data.get("seat_number", 1),
         "version": SOFTWARE_VERSION,
     }
+    print(f"[License][DEBUG] heartbeat request body: {body}")
     result = _post_json("heartbeat", body, timeout=3)
+    print(f"[License][DEBUG] heartbeat response: {result}")
     _verify_server_sig(result)
     return result
 
@@ -916,7 +920,7 @@ def validate_with_server(license_key: str, fingerprint: str) -> Dict:
 def activate_with_server(license_key: str, fingerprint: str, machine_name: str = "") -> Dict:
     """Legacy: kept for compatibility. Calls /activate on old-schema servers."""
     machine_ctx = get_machine_context()
-    rhythmulta_serial = get_rhythmultra_serial() or ""
+    RhythmUltra_serial = get_rhythmultra_serial() or ""
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,
@@ -927,8 +931,9 @@ def activate_with_server(license_key: str, fingerprint: str, machine_name: str =
         "machine_serial_id": machine_ctx.get("machine_serial_id", ""),
         "pc_name": machine_ctx.get("machine_name", ""),
         "windows_version": machine_ctx.get("windows_version", ""),
-        "rhythmulta_serial": rhythmulta_serial,
-        "rhythmultra_serial": rhythmulta_serial,
+        "RhythmUltra_serial": RhythmUltra_serial,
+        "rhythmultra_serial": RhythmUltra_serial,
+        "rhythmulta_serial": RhythmUltra_serial,
     }
     result = _post_json("activate", body)
     _verify_server_sig(result)
@@ -953,7 +958,7 @@ def restore_license_from_server(license_key: Optional[str] = None) -> Dict:
 
     fingerprint = get_hardware_fingerprint()
     machine_ctx = get_machine_context()
-    rhythmulta_serial = get_rhythmultra_serial() or ""
+    RhythmUltra_serial = get_rhythmultra_serial() or ""
     result = activate_with_server(key, fingerprint, machine_ctx.get("machine_name", ""))
 
     error_code = str(result.get("error", "")).strip().upper()
@@ -961,7 +966,7 @@ def restore_license_from_server(license_key: Optional[str] = None) -> Dict:
         _append_audit_event(
             "DUPLICATE_ACTIVATION_ATTEMPT",
             license_key=key,
-            rhythmulta_serial=rhythmulta_serial,
+            RhythmUltra_serial=RhythmUltra_serial,
             machine_serial_id=machine_ctx.get("machine_serial_id", ""),
         )
         return result
@@ -996,7 +1001,7 @@ def restore_license_from_server(license_key: Optional[str] = None) -> Dict:
             license_key=key,
             seat_number=seat_number,
             machine_serial_id=machine_ctx.get("machine_serial_id", ""),
-            rhythmulta_serial=rhythmulta_serial,
+            RhythmUltra_serial=RhythmUltra_serial,
         )
         result = dict(result)
         result["recovered"] = True
@@ -1021,7 +1026,7 @@ class StartupCheckResult:
         self.reason: str = ""
         self.error_code: str = ""
         self.token: Optional[Dict] = None
-        self.rhythmulta_serial: Optional[str] = None
+        self.RhythmUltra_serial: Optional[str] = None
         self.offline_mode: bool = False
         self.days_remaining: Optional[int] = None
 
@@ -1054,7 +1059,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     Check 1: Token file exists on disk.
     Check 2: Token HMAC signature valid (tamper detection).
     Check 3: Hardware fingerprint in token matches this machine.
-    Check 4: RhythmUlta connected and serial matches token.
+    Check 4: RhythmUltra connected and serial matches token.
     Check 5: Server heartbeat (attempted on startup; offline grace applies if unreachable).
 
     Returns a StartupCheckResult.  If .ok is False, .step_failed and
@@ -1306,9 +1311,9 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         token["stable_fingerprint"] = current_stable_fp
         token["last_local_time"] = now
 
-    # ── Check 4: RhythmUlta connected and serial matches (platform-dependent) ─
+    # ── Check 4: RhythmUltra connected and serial matches (platform-dependent) ─
     usb_serial = get_rhythmultra_serial()
-    res.rhythmulta_serial = usb_serial
+    res.RhythmUltra_serial = usb_serial
     enforce_device_lock = _enforce_rhythmultra_lock()
     if enforce_device_lock:
         if usb_serial is None:
@@ -1317,7 +1322,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             res.reason = "Unauthorized RhythmUltra device connected."
             return res
 
-        stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
+        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
         # If stored_serial is empty the device was never bound — allow first use.
         if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
             res.step_failed = 4
@@ -1326,12 +1331,12 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             return res
     else:
         # Development / non-Windows runs can proceed without the hardware lock.
-        stored_serial = token.get("rhythmultra_serial", token.get("rhythmulta_serial", ""))
+        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
         if usb_serial and stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
             _append_audit_event(
                 "DUPLICATE_ACTIVATION_ATTEMPT",
                 license_key=token.get("license_key", ""),
-                rhythmulta_serial=usb_serial,
+                RhythmUltra_serial=usb_serial,
                 machine_serial_id=token.get("machine_serial_id", ""),
             )
 
@@ -1612,7 +1617,7 @@ def remember_valid_license(
         "license_key": license_key.strip().upper(),
         "fingerprint": fingerprint,
         "stable_fingerprint": _stable_hardware_fingerprint(),
-        "rhythmulta_serial": "",   # populated on first real startup check
+        "RhythmUltra_serial": "",   # populated on first real startup check
         "rhythmultra_serial": "",   # populated on first real startup check
         "seat_number": 1,
         "last_server_check": now,
@@ -1679,8 +1684,9 @@ def deactivate(license_key: str) -> bool:
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,
-        "rhythmulta_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", "")),
-        "rhythmultra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("rhythmulta_serial", "")),
+        "RhythmUltra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
+        "rhythmultra_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
+        "rhythmulta_serial": (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", ""))),
         "seat_number": (token or {}).get("seat_number", 1),
     }
     result = _post_json("deactivate", body)
