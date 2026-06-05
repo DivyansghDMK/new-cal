@@ -82,7 +82,6 @@ from .metrics.axis_calculations import (
 from .metrics.heart_rate import calculate_heart_rate_from_signal
 # ── Unified ECG calculations (HR, RR, PR, QRS, QT, QTc) ──────────────────────
 from .ecg_calculations import calculate_all_ecg_metrics
-from .qrs_detection import get_authoritative_qrs_duration
 from .ui.display_updates import update_ecg_metrics_display, get_current_metrics_from_labels
 from .signal.signal_processing import (
     extract_low_frequency_baseline, detect_signal_source, 
@@ -2690,37 +2689,25 @@ class ECGTestPage(QWidget):
             # Keep a defined value for startup / low-signal states.
             self.pr_interval = 0
         
-        # FIX-TL3: Authoritative QRS duration using unified Curtin 2018 pipeline.
-        # get_authoritative_qrs_duration() builds the median beat first, falling back
-        # to per-beat raw measurements. This eliminates the discrepancy between the
-        # user_metrics (per-beat) and the median-beat calculation seen in the logs.
-        try:
-            authoritative_qrs = int(round(get_authoritative_qrs_duration(lead_ii_data, r_peaks, fs)))
-        except Exception:
-            authoritative_qrs = 0
-
-        # Blend with median-beat fallback for wide-QRS (LBBB) shapes
+        # FIX-TL3: QRS Blended Approach for LBBB Support
+        # Reference devices use slope-based onset. Threshold-based onset misses slow LBBB initial deflections.
+        # Blended QRS - more stable than either alone.
+        user_metrics_qrs = user_metrics.get("qrs_duration") or 0
         median_beat_qrs = measure_qrs_duration_from_median_beat(
             median_beat_ii, time_axis, fs, tp_baseline_ii
         ) or 0
-        user_metrics_qrs = user_metrics.get("qrs_duration") or 0
-
-        if authoritative_qrs > 0:
-            # Prefer authoritative; blend with median_beat when LBBB-like (>120ms)
-            if median_beat_qrs > 120 and authoritative_qrs > 0:
-                qrs_duration_raw = int(0.5 * authoritative_qrs + 0.5 * median_beat_qrs)
-            else:
-                qrs_duration_raw = authoritative_qrs
-        elif median_beat_qrs > 0:
-            qrs_duration_raw = median_beat_qrs
+        
+        if median_beat_qrs > 120 and user_metrics_qrs > 0:
+            qrs_duration_raw = int(0.4 * user_metrics_qrs + 0.6 * median_beat_qrs)
         else:
-            qrs_duration_raw = user_metrics_qrs
+            qrs_duration_raw = median_beat_qrs or user_metrics_qrs
 
         if not hasattr(self, '_qrs_print_count'):
             self._qrs_print_count = 0
         self._qrs_print_count += 1
         if self._qrs_print_count % 30 == 0:
-            print(f" ✓ QRS (authoritative={authoritative_qrs}, median={median_beat_qrs}, final={qrs_duration_raw} ms)")
+            src = "user_metrics" if (user_metrics["qrs_duration"] is not None and user_metrics["qrs_duration"] > 0) else "median_beat"
+            print(f" ✓ QRS ({src}): {qrs_duration_raw} ms")
         
         # FIX-TL2: Hold last good QRS. Do NOT use hardcoded 85 ms default:
         # it poisons the median buffer and shows wrong values for several beats.

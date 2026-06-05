@@ -14,8 +14,10 @@ Implements the 7-step decision pipeline for robust, clinical-grade ECG interpret
 import numpy as np
 from typing import List, Dict, Any, Tuple
 from .diagnosis_hysteresis import apply_diagnosis_hysteresis
-from .physiological_consistency import validate_diagnoses
+from .physiological_consistency import validate_diagnoses, get_last_audit_log
 from .lead_capability_matrix import get_lead_capabilities
+import logging as _logging
+_dl_logger = _logging.getLogger("DecisionLayer")
 
 # Priority lists
 CRITICAL = {"Asystole", "Ventricular Fibrillation", "VFib", "VF", "Ventricular Tachycardia", "VT", "VTach"}
@@ -241,7 +243,9 @@ def process_decision_layer(
     
     # Gate interpretation if SQI is poor
     if sqi < 0.5:
-        # Step 1 rejection
+        _dl_logger.debug(
+            f"[SQI_GATE] instance={instance_id} sqi={sqi:.3f} — interpretation disabled"
+        )
         return {
             "sqi": sqi,
             "sqi_details": sqi_details,
@@ -251,6 +255,13 @@ def process_decision_layer(
                 "confidence": 0.3,
                 "evidence": ["SQI is below interpretation gate threshold of 0.5"]
             }],
+            "audit_log": [
+                {
+                    "diagnosis": "ALL",
+                    "rejected": True,
+                    "rejection_reason": f"SQI gate blocked interpretation (SQI={sqi:.3f} < 0.50)"
+                }
+            ],
             "lead_capabilities": get_lead_capabilities(available_leads)
         }
         
@@ -266,9 +277,25 @@ def process_decision_layer(
     # Step 5: Persistence Filtering (Hysteresis)
     # Using 5 windows for activation, 3 for deactivation
     candidates = apply_diagnosis_hysteresis(instance_id, candidates, activate_threshold=5, deactivate_threshold=3)
-    
+
+    # Emit hysteresis audit entries for any suppressed diagnoses
+    for cand in candidates:
+        if not cand.get("activated", True):
+            _dl_logger.debug(
+                f"[HYSTERESIS] {cand['diagnosis']} suppressed — "
+                f"activation_count={cand.get('activation_count', '?')}/5"
+            )
+
     # Step 6: Conflict Resolution (Physiological Consistency)
     candidates = validate_diagnoses(candidates, metrics, features)
+
+    # Retrieve full audit log from the consistency engine
+    consistency_audit = get_last_audit_log()
+    for entry in consistency_audit:
+        if entry.get("rejected"):
+            _dl_logger.debug(
+                f"[CONSISTENCY_REJECT] {entry['diagnosis']} — {entry['rejection_reason']}"
+            )
     
     # Step 7: Final Interpretation Selection (Priority classification)
     # Apply human safety mode thresholds if enabled
@@ -324,11 +351,19 @@ def process_decision_layer(
             "evidence": ["Default fallback after decision layer filtering"]
         })
         
+    # Emit final interpretation log
+    for cand in filtered_candidates:
+        _dl_logger.debug(
+            f"[FINAL] {cand['diagnosis']} conf={cand.get('confidence', cand.get('final_confidence', 0)):.2f} "
+            f"evidence={cand.get('evidence', [])}"
+        )
+
     return {
         "sqi": sqi,
         "sqi_details": sqi_details,
         "interpretation_disabled": False,
         "diagnoses": filtered_candidates,
         "warnings": warnings,
-        "lead_capabilities": capabilities
+        "lead_capabilities": capabilities,
+        "audit_log": consistency_audit,
     }

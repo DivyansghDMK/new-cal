@@ -7,7 +7,6 @@ reference settings. Compares HR, PR, QRS, QT, and QTc intervals and outputs erro
 
 import numpy as np
 from typing import Dict, Any, List, Tuple
-from .qrs_detection import get_authoritative_qrs_duration
 from .arrhythmia_detector import ArrhythmiaDetector, analyze_ecg
 
 # Fluke reference values for standard simulation settings
