@@ -6240,12 +6240,35 @@ class Dashboard(QWidget):
 
         if hasattr(self, 'ecg_test_page'):
             self.ecg_test_page.current_username = self.username
-            
+
         self.page_stack.setCurrentWidget(self.ecg_test_page)
         # Sync dashboard metrics to ECG test page
         self.sync_dashboard_metrics_to_ecg_page()
         # Also update dashboard metrics when opening ECG test page
         self.update_dashboard_metrics_from_ecg()
+
+        # ── AUTO-START: send Start command if acquisition is not already running ──
+        # This mirrors what the doctor would do by clicking the "Start" button,
+        # so the 12-lead ECG view begins streaming the moment it opens.
+        try:
+            ecg = self.ecg_test_page
+            already_running = (
+                (hasattr(ecg, 'timer') and ecg.timer is not None and ecg.timer.isActive())
+                or (hasattr(ecg, 'serial_reader') and ecg.serial_reader is not None
+                    and getattr(ecg.serial_reader, 'running', False))
+                or (hasattr(ecg, 'demo_toggle') and ecg.demo_toggle is not None
+                    and ecg.demo_toggle.isChecked())
+            )
+            if not already_running and hasattr(ecg, 'start_acquisition'):
+                # Small delay so the page fully renders before the connection
+                # worker starts (prevents UI jank on slow machines)
+                from PyQt5.QtCore import QTimer as _QT
+                _QT.singleShot(150, ecg.start_acquisition)
+                print("[Dashboard] Auto-started 12-lead acquisition on page switch")
+        except Exception as _ae:
+            print(f"[Dashboard] Auto-start skipped: {_ae}")
+        # ─────────────────────────────────────────────────────────────────────────
+
     def go_to_dashboard(self):
         # # Close serial connection on ECG page to free up COM port
         # if hasattr(self, 'ecg_test_page') and self.ecg_test_page:

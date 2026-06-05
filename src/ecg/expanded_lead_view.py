@@ -1296,11 +1296,18 @@ class ExpandedLeadView(QDialog):
             if hasattr(parent, 'data') and len(parent.data) > 0:
                 # Find the lead index for this lead
                 lead_index = self.get_lead_index()
-                if lead_index is not None and lead_index < len(parent.data):
-                    # 🫀 CLINICAL: Get RAW data from parent's raw buffer
-                    # parent.data[lead_index] contains raw clinical data, NOT display-processed
-                    new_data = parent.data[lead_index]
-                    if len(new_data) > 0:
+                if lead_index is not None:
+                    # 🫀 CLINICAL: Get RAW data from parent's snapshot if frozen, or parent's raw buffer if live
+                    parent_frozen = getattr(parent, '_grid_frozen', False)
+                    parent_snapshot = getattr(parent, '_replay_snapshot', None)
+                    if parent_frozen and parent_snapshot is not None and lead_index < len(parent_snapshot):
+                        new_data = parent_snapshot[lead_index]
+                    elif lead_index < len(parent.data):
+                        new_data = parent.data[lead_index]
+                    else:
+                        new_data = None
+
+                    if new_data is not None and len(new_data) > 0:
                         # Store raw clinical data for analysis
                         self.ecg_data = np.array(new_data)
                         # Only auto-advance if user hasn't manually positioned the slider
@@ -1550,10 +1557,17 @@ class ExpandedLeadView(QDialog):
             'I': 0, 'II': 1, 'III': 2, 'aVR': 3, 'aVL': 4, 'aVF': 5,
             'V1': 6, 'V2': 7, 'V3': 8, 'V4': 9, 'V5': 10, 'V6': 11
         }
-        if parent is None or not hasattr(parent, 'data'):
+        if parent is None:
             return {}
         try:
-            data = parent.data
+            parent_frozen = getattr(parent, '_grid_frozen', False)
+            parent_snapshot = getattr(parent, '_replay_snapshot', None)
+            if parent_frozen and parent_snapshot is not None:
+                data = parent_snapshot
+            elif hasattr(parent, 'data'):
+                data = parent.data
+            else:
+                return {}
             return {
                 lead: np.asarray(data[idx], dtype=float)
                 for lead, idx in lead_mapping.items()
