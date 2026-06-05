@@ -71,6 +71,9 @@ except ImportError:
 
 
 def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QColor
+    return QBrush(QColor("#ffffff"))
+
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
@@ -224,6 +227,7 @@ class HRVTestWindow(QWidget):
 
         # Initialize UI
         self.init_ui()
+        self._last_displayed_bpm = 0
         
         # Timers
         self.capture_timer = QTimer(self)
@@ -397,13 +401,13 @@ class HRVTestWindow(QWidget):
         
         # Plot area
         plot_frame = QFrame()
-        plot_frame.setStyleSheet("background: #FFF5F5; border-radius: 16px; border: 1px solid #d9b3b3;")
+        plot_frame.setStyleSheet("background: #000000; border-radius: 16px; border: 1px solid #333333;")
         plot_layout = QVBoxLayout(plot_frame)
         plot_layout.setContentsMargins(10, 10, 10, 10)
         
         # PyQtGraph plot
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground(create_pink_grid_brush())
+        self.plot_widget.setBackground("#000000")
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.setClipToView(True)
         self.plot_widget.setDownsampling(auto=True, mode='peak')
@@ -412,13 +416,13 @@ class HRVTestWindow(QWidget):
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.hideButtons()  # Hide auto-scale button
 
-        self.plot_widget.setStyleSheet("border: 1px solid black;")
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        self.plot_widget.setStyleSheet("border: 1px solid #333333;")
+        self.plot_widget.showGrid(x=False, y=False)
         self.plot_widget.hideAxis('left')
         self.plot_widget.hideAxis('bottom')
         
-        # Plot curve (black wave on white background)
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#000000', width=1.0))
+        # Plot curve (green wave on black background)
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00ff00', width=1.0))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -615,7 +619,8 @@ class HRVTestWindow(QWidget):
             # Reset the visible metric labels immediately at capture start so the
             # display waits for fresh HRV calculations instead of showing old values.
             if 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText("00 BPM")
+                if getattr(self, '_last_displayed_bpm', 0) > 0:
+                    self.metric_labels['heart_rate'].setText(f"{int(self._last_displayed_bpm)} BPM")
             if 'pr_interval' in self.metric_labels:
                 self.metric_labels['pr_interval'].setText("0 ms")
             if 'qrs_duration' in self.metric_labels:
@@ -747,7 +752,8 @@ class HRVTestWindow(QWidget):
             pass
         try:
             if 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText("00 BPM")
+                if getattr(self, '_last_displayed_bpm', 0) > 0:
+                    self.metric_labels['heart_rate'].setText(f"{int(self._last_displayed_bpm)} BPM")
             if 'pr_interval' in self.metric_labels:
                 self.metric_labels['pr_interval'].setText("0 ms")
             if 'qrs_duration' in self.metric_labels:
@@ -814,10 +820,14 @@ class HRVTestWindow(QWidget):
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
             bpm = self._bpm_ctrl.current_bpm()
+            if bpm <= 0:
+                bpm = getattr(self, 'last_heart_rate', 0) or 0
             if bpm > 0 and hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText(f"{int(round(bpm))} BPM")
+                bpm_int = int(round(bpm))
+                self.metric_labels['heart_rate'].setText(f"{bpm_int} BPM")
+                self._last_displayed_bpm = bpm_int
                 # Keep last_heart_rate in sync for report generation
-                self.last_heart_rate = int(round(bpm))
+                self.last_heart_rate = bpm_int
         except Exception as _e:
             print(f"[HRVTestWindow] _refresh_holter_bpm_label error: {_e}")
 
@@ -963,11 +973,11 @@ class HRVTestWindow(QWidget):
 
             buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-            if len(buffer_data) > 20:
+            if len(buffer_data) > 5:
                 # Get filter settings from SettingsManager
-                ac_val = self.settings_manager.get_setting("filter_ac", "50")
-                emg_val = self.settings_manager.get_setting("filter_emg", "150")
-                dft_val = self.settings_manager.get_setting("filter_dft", "off")
+                ac_val = "50"
+                emg_val = "25"
+                dft_val = "0.5"
 
                 # Pad with edge values so startup filtering begins cleanly instead of
                 # showing a raw transient while the display buffer is still warming up.
@@ -976,12 +986,12 @@ class HRVTestWindow(QWidget):
                     padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='edge')
                 else:
                     padded_data = buffer_data
+                    
+                if ac_val != "Off" and ac_val != "off":
+                    padded_data = apply_ac_filter(padded_data, fs, ac_val)
 
                 if emg_val != "Off" and emg_val != "off":
                     padded_data = apply_emg_filter(padded_data, fs, emg_val)
-
-                if ac_val != "Off" and ac_val != "off":
-                    padded_data = apply_ac_filter(padded_data, fs, ac_val)
 
                 # Apply DFT (baseline) Filter
                 if dft_val not in ("Off", "off", "", None):
@@ -992,6 +1002,14 @@ class HRVTestWindow(QWidget):
                         padded_data = apply_dft_filter(padded_data, fs, dft_text)
 
                     padded_data = padded_data + 2048.0
+
+                    # Remove edge artifacts introduced by the 0.5 Hz baseline filter.
+                    # This mirrors the 12-lead display behavior and prevents left/right
+                    # wobble during the first and last few seconds of the visible window.
+                    if dft_text == "0.5":
+                        edge_trim = int(0.5 * fs)
+                        if edge_trim > 0 and len(padded_data) > (2 * edge_trim + 10):
+                            padded_data = padded_data[edge_trim:-edge_trim]
 
                 if pad_len > 0:
                     buffer_data = padded_data[pad_len:-pad_len]
@@ -1026,20 +1044,14 @@ class HRVTestWindow(QWidget):
                     x_dst = np.linspace(0.0, 1.0, display_len)
                     display_values = np.interp(x_dst, x_src, display_values)
 
-                # Right-align the data in a fixed buffer so the newest samples enter
-                # smoothly from the right edge instead of causing a visible jump.
-                if not hasattr(self, "_hrv_plot_buffer") or len(self._hrv_plot_buffer) != display_len:
-                    self._hrv_plot_buffer = np.full(display_len, np.nan, dtype=float)
-
-                plot_buffer = np.full(display_len, np.nan, dtype=float)
-                copy_len = min(display_len, len(display_values))
-                if copy_len > 0:
-                    plot_buffer[-copy_len:] = display_values[-copy_len:]
-                self._hrv_plot_buffer = plot_buffer
+                # Keep the full window populated so the line starts cleanly and
+                # does not show a partial/noisy lead-in while capture is warming up.
+                if len(display_values) == 1:
+                    display_values = np.full(display_len, float(display_values[0]), dtype=float)
 
                 display_times = np.linspace(0.0, window_seconds, display_len)
 
-                self.plot_curve.setData(display_times, self._hrv_plot_buffer, connect='finite')
+                self.plot_curve.setData(display_times, display_values, connect='finite')
 
                 # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
                 self.plot_widget.setXRange(0.0, window_seconds, padding=0)
@@ -1172,6 +1184,54 @@ class HRVTestWindow(QWidget):
         _ecg_calc = self.ecg_calculator
         _settings = self.settings_manager
 
+        def _parse_first_int(text):
+            import re
+            if text is None:
+                return 0
+            match = re.search(r'(\d+)', str(text))
+            return int(match.group(1)) if match else 0
+
+        def _capture_display_metrics():
+            metrics = {
+                "HR": 0,
+                "PR": 0,
+                "QRS": 0,
+                "QT": 0,
+                "QTc": 0,
+                "ST": 0,
+            }
+            try:
+                if hasattr(self, 'metric_labels'):
+                    hr_text = self.metric_labels.get('heart_rate').text() if 'heart_rate' in self.metric_labels else ""
+                    pr_text = self.metric_labels.get('pr_interval').text() if 'pr_interval' in self.metric_labels else ""
+                    qrs_text = self.metric_labels.get('qrs_duration').text() if 'qrs_duration' in self.metric_labels else ""
+                    qtc_text = self.metric_labels.get('qtc_interval').text() if 'qtc_interval' in self.metric_labels else ""
+
+                    metrics["HR"] = _parse_first_int(hr_text)
+                    metrics["PR"] = _parse_first_int(pr_text)
+                    metrics["QRS"] = _parse_first_int(qrs_text)
+
+                    # QT/QTc card is shown as "QT/QTc" on the UI, so split the pair.
+                    if qtc_text:
+                        parts = str(qtc_text).replace("ms", "").split("/")
+                        if len(parts) >= 2:
+                            metrics["QT"] = _parse_first_int(parts[0])
+                            metrics["QTc"] = _parse_first_int(parts[1])
+                        else:
+                            metrics["QT"] = _parse_first_int(qtc_text)
+                            metrics["QTc"] = _parse_first_int(qtc_text)
+
+                    # Keep the report's ST value aligned with the calculator if available.
+                    metrics["ST"] = _parse_first_int(getattr(_ecg_calc, "last_st_interval", 0))
+            except Exception:
+                pass
+
+            if metrics["HR"] <= 0:
+                metrics["HR"] = int(_last_hr or 0)
+            return metrics
+
+        _display_metrics_snap = _capture_display_metrics()
+
         from PyQt5.QtCore import QThread, pyqtSignal as _Signal
 
         class _PrepWorker(QThread):
@@ -1179,7 +1239,7 @@ class HRVTestWindow(QWidget):
             failed = _Signal(str)
 
             def __init__(self, captured_data, ecg_calculator, lead, sampling_rate,
-                         last_hr, filepath, patient, settings_manager):
+                         last_hr, filepath, patient, settings_manager, display_metrics):
                 super().__init__()
                 self._captured = captured_data
                 self._calc = ecg_calculator
@@ -1189,6 +1249,7 @@ class HRVTestWindow(QWidget):
                 self._filepath = filepath
                 self._patient = patient
                 self._sm = settings_manager
+                self._display_metrics = display_metrics or {}
 
             def run(self):
                 try:
@@ -1266,6 +1327,16 @@ class HRVTestWindow(QWidget):
                             hr_max = hr_value
                         if hr_min > hr_value or hr_min == 0:
                             hr_min = hr_value
+
+                    # Prefer the exact values the user saw on screen when the
+                    # test ended.
+                    if self._display_metrics:
+                        hr_value = int(self._display_metrics.get("HR", hr_value) or hr_value)
+                        pr_value = int(self._display_metrics.get("PR", pr_value) or pr_value)
+                        qrs_value = int(self._display_metrics.get("QRS", qrs_value) or qrs_value)
+                        qt_value = int(self._display_metrics.get("QT", qt_value) or qt_value)
+                        qtc_value = int(self._display_metrics.get("QTc", qtc_value) or qtc_value)
+                        st_value = int(self._display_metrics.get("ST", st_value) or st_value)
 
                     data = {
                         "HR": hr_value,
@@ -1430,6 +1501,7 @@ class HRVTestWindow(QWidget):
             filepath=filepath,
             patient=_patient_snap,
             settings_manager=_settings,
+            display_metrics=_display_metrics_snap,
         )
         self._prep_worker.done.connect(_on_prep_done)
         self._prep_worker.failed.connect(_on_prep_failed)
@@ -1607,13 +1679,25 @@ class HRVTestWindow(QWidget):
                 # Important: feed the shared display updater with the calculator's
                 # own stabilized HR, because 12-lead uses that same path when
                 # deciding how QT/QTc should be rendered/clamped.
-                display_hr = _attr_to_num('last_heart_rate', 0)
+                display_hr = _current_bpm if _current_bpm > 0 else _attr_to_num('last_heart_rate', 0)
+                if display_hr <= 0 and hr_val not in ('0', '--', ''):
+                    try:
+                        display_hr = int(round(float(hr_val)))
+                    except Exception:
+                        display_hr = 0
                 display_pr = _attr_to_num('pr_interval', 0)
                 display_qrs = _attr_to_num('last_qrs_duration', 0)
                 display_qt = _attr_to_num('last_qt_interval', 0)
                 display_qtc = _attr_to_num('last_qtc_interval', 0)
                 display_rr = _attr_to_num('last_rr_interval', 0)
                 display_qtcf = _attr_to_num('last_qtcf_interval', 0)
+
+                if display_hr > 0:
+                    display_hr = int(round(display_hr))
+                    self.ecg_calculator.last_heart_rate = display_hr
+                    self._last_displayed_bpm = display_hr
+                elif getattr(self, '_last_displayed_bpm', 0) > 0:
+                    display_hr = int(self._last_displayed_bpm)
 
                 self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
                     self.metric_labels,
@@ -1626,8 +1710,13 @@ class HRVTestWindow(QWidget):
                     display_qtcf,
                     getattr(self, '_last_metric_update_ts', 0.0),
                     rr_interval=display_rr,
-                    skip_heart_rate=_bpm_active,
+                    skip_heart_rate=(_bpm_active and _current_bpm > 0),
                 )
+
+                if 'heart_rate' in self.metric_labels:
+                    if display_hr > 0:
+                        self.metric_labels['heart_rate'].setText(f"{display_hr} BPM")
+                        self._last_displayed_bpm = display_hr
 
                 # HRV cards historically show explicit units in the value row.
                 if 'pr_interval' in self.metric_labels:
@@ -1646,8 +1735,11 @@ class HRVTestWindow(QWidget):
             else:
                 # Fallback if calculator not available
                 for key in self.metric_labels:
-                    if key == 'heart_rate': self.metric_labels[key].setText("00 BPM")
-                    elif key == 'st_interval': self.metric_labels[key].setText("0 ms")
+                    if key == 'heart_rate':
+                        if getattr(self, '_last_displayed_bpm', 0) > 0:
+                            self.metric_labels[key].setText(f"{int(self._last_displayed_bpm)} BPM")
+                    elif key == 'st_interval':
+                        self.metric_labels[key].setText("0 ms")
                     else: self.metric_labels[key].setText("0 ms")
         
         except Exception as e:

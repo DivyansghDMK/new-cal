@@ -6,47 +6,10 @@ from typing import List, Tuple, Callable
 
 
 def create_pink_grid_brush():
-    from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtGui import QBrush, QColor
 
-    app = QApplication.instance()
-    dpi = 96.0
-    try:
-        screen = app.primaryScreen() if app else None
-        if screen is not None:
-            dpi = float(screen.logicalDotsPerInchX() or screen.logicalDotsPerInch() or dpi)
-    except Exception:
-        dpi = 96.0
-
-    px_per_mm = max(1.0, dpi / 25.4)
-    minor_step = max(2, int(round(px_per_mm)))
-    grid_size = minor_step * 5
-    pixmap = QPixmap(grid_size, grid_size)
-    pixmap.fill(QColor('#FFF5F5'))
-    
-    painter = QPainter(pixmap)
-    try:
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        # Minor lines every 1 mm
-        minor_pen = QPen(QColor('#FFD9D9'), 0.5, Qt.SolidLine)
-        painter.setPen(minor_pen)
-        for i in range(1, 5):
-            x = i * minor_step
-            painter.drawLine(x, 0, x, grid_size)
-            painter.drawLine(0, x, grid_size, x)
-            
-        # Major lines every 5 mm
-        major_pen = QPen(QColor('#FFB3B3'), 1.0, Qt.SolidLine)
-        painter.setPen(major_pen)
-        painter.drawLine(0, 0, grid_size, 0)
-        painter.drawLine(0, 0, 0, grid_size)
-        painter.drawLine(grid_size - 1, 0, grid_size - 1, grid_size)
-        painter.drawLine(0, grid_size - 1, grid_size, grid_size - 1)
-    finally:
-        painter.end()
-        
-    return QBrush(pixmap)
+    # Keep the helper for compatibility, but use a plain background.
+    return QBrush(QColor("#ffffff"))
 
 
 # Lead colors for consistent visualization
@@ -87,9 +50,9 @@ def create_plot_grid(plot_area: QWidget, leads: List[str], click_handler: Callab
     
     for i in range(len(leads)):
         plot_widget = pg.PlotWidget()
-        plot_widget.setBackground(create_pink_grid_brush())
+        plot_widget.setBackground("w")
         plot_widget.setStyleSheet("border: 1px solid black;")
-        plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        plot_widget.showGrid(x=False, y=False)
         
         # Hide Y-axis labels for cleaner display
         plot_widget.getAxis('left').setTicks([])

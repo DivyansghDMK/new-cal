@@ -681,6 +681,9 @@ except ImportError as e:
     HOLTER_AVAILABLE = False
 
 def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QColor
+    return QBrush(QColor("#ffffff"))
+
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
@@ -1262,9 +1265,9 @@ class ECGTestPage(QWidget):
         positions = [(i, j) for i in range(4) for j in range(3)]
         for i in range(len(self.leads)):
             plot_widget = pg.PlotWidget()
-            plot_widget.setBackground(create_pink_grid_brush())
+            plot_widget.setBackground("w")
             plot_widget.setStyleSheet("border: 1px solid black;")
-            plot_widget.showGrid(x=True, y=True, alpha=0.12)
+            plot_widget.showGrid(x=False, y=False)
             plot_widget.setClipToView(True)
             plot_widget.setDownsampling(ds=1, auto=False, mode='subsample')
             # Hide Y-axis labels for cleaner display
@@ -5889,15 +5892,15 @@ class ECGTestPage(QWidget):
             vbox = QVBoxLayout(group)
             vbox.setContentsMargins(6, 6, 6, 6)  # Reduced margins
             vbox.setSpacing(4)  # Reduced spacing
-            fig = Figure(facecolor='#fafbfc', figsize=(5, 2))  # Reduced from (6, 2.5)
+            fig = Figure(facecolor='#ffffff', figsize=(5, 2))  # Reduced from (6, 2.5)
             ax = fig.add_subplot(111)
-            ax.set_facecolor('#fafbfc')
+            ax.set_facecolor('#ffffff')
             ylim = self.ylim if hasattr(self, 'ylim') else 400
             ax.set_ylim(-ylim, ylim)
             ax.set_xlim(0, self.buffer_size)
             
             # Modern grid styling
-            ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5, color='#e9ecef')
+            ax.grid(False)
             ax.set_axisbelow(True)
 
             # Remove spines for cleaner look
@@ -7906,9 +7909,9 @@ class ECGTestPage(QWidget):
         self.light_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("light"))
         self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
         self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
-        
-        # Apply default graph mode and highlight it
-        self._apply_overlay_mode("graph")
+
+        # Defer initial graph mode until widget is rendered so figure dimensions are final
+        QTimer.singleShot(50, lambda: self._apply_overlay_mode("graph"))
 
     # def _calculate_adaptive_figsize(self, layout="12x1", num_leads=12):
     #     """
@@ -8841,9 +8844,9 @@ class ECGTestPage(QWidget):
         self.light_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("light"))
         self.dark_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("dark"))
         self.graph_mode_btn.clicked.connect(lambda: self._apply_overlay_mode("graph"))
-        
-        # Apply default graph mode and highlight it
-        self._apply_overlay_mode("graph")
+
+        # Defer initial graph mode until widget is rendered so figure dimensions are final
+        QTimer.singleShot(50, lambda: self._apply_overlay_mode("graph"))
 
     def _create_two_column_figure(self, overlay_layout):
         from matplotlib.figure import Figure
