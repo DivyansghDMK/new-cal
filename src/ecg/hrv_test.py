@@ -71,6 +71,9 @@ except ImportError:
 
 
 def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QColor
+    return QBrush(QColor("#ffffff"))
+
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
@@ -398,13 +401,13 @@ class HRVTestWindow(QWidget):
         
         # Plot area
         plot_frame = QFrame()
-        plot_frame.setStyleSheet("background: #FFF5F5; border-radius: 16px; border: 1px solid #d9b3b3;")
+        plot_frame.setStyleSheet("background: #000000; border-radius: 16px; border: 1px solid #333333;")
         plot_layout = QVBoxLayout(plot_frame)
         plot_layout.setContentsMargins(10, 10, 10, 10)
         
         # PyQtGraph plot
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground(create_pink_grid_brush())
+        self.plot_widget.setBackground("#000000")
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.setClipToView(True)
         self.plot_widget.setDownsampling(auto=True, mode='peak')
@@ -413,13 +416,13 @@ class HRVTestWindow(QWidget):
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.hideButtons()  # Hide auto-scale button
 
-        self.plot_widget.setStyleSheet("border: 1px solid black;")
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        self.plot_widget.setStyleSheet("border: 1px solid #333333;")
+        self.plot_widget.showGrid(x=False, y=False)
         self.plot_widget.hideAxis('left')
         self.plot_widget.hideAxis('bottom')
         
-        # Plot curve (black wave on white background)
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#000000', width=1.0))
+        # Plot curve (green wave on black background)
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00ff00', width=1.0))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -970,11 +973,11 @@ class HRVTestWindow(QWidget):
 
             buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-            if len(buffer_data) > 20:
+            if len(buffer_data) > 5:
                 # Get filter settings from SettingsManager
                 ac_val = "50"
-                emg_val = "35"
-                dft_val = self.settings_manager.get_setting("filter_dft", "off")
+                emg_val = "25"
+                dft_val = "0.5"
 
                 # Pad with edge values so startup filtering begins cleanly instead of
                 # showing a raw transient while the display buffer is still warming up.
@@ -999,6 +1002,14 @@ class HRVTestWindow(QWidget):
                         padded_data = apply_dft_filter(padded_data, fs, dft_text)
 
                     padded_data = padded_data + 2048.0
+
+                    # Remove edge artifacts introduced by the 0.5 Hz baseline filter.
+                    # This mirrors the 12-lead display behavior and prevents left/right
+                    # wobble during the first and last few seconds of the visible window.
+                    if dft_text == "0.5":
+                        edge_trim = int(0.5 * fs)
+                        if edge_trim > 0 and len(padded_data) > (2 * edge_trim + 10):
+                            padded_data = padded_data[edge_trim:-edge_trim]
 
                 if pad_len > 0:
                     buffer_data = padded_data[pad_len:-pad_len]
@@ -1033,20 +1044,14 @@ class HRVTestWindow(QWidget):
                     x_dst = np.linspace(0.0, 1.0, display_len)
                     display_values = np.interp(x_dst, x_src, display_values)
 
-                # Right-align the data in a fixed buffer so the newest samples enter
-                # smoothly from the right edge instead of causing a visible jump.
-                if not hasattr(self, "_hrv_plot_buffer") or len(self._hrv_plot_buffer) != display_len:
-                    self._hrv_plot_buffer = np.full(display_len, np.nan, dtype=float)
-
-                plot_buffer = np.full(display_len, np.nan, dtype=float)
-                copy_len = min(display_len, len(display_values))
-                if copy_len > 0:
-                    plot_buffer[-copy_len:] = display_values[-copy_len:]
-                self._hrv_plot_buffer = plot_buffer
+                # Keep the full window populated so the line starts cleanly and
+                # does not show a partial/noisy lead-in while capture is warming up.
+                if len(display_values) == 1:
+                    display_values = np.full(display_len, float(display_values[0]), dtype=float)
 
                 display_times = np.linspace(0.0, window_seconds, display_len)
 
-                self.plot_curve.setData(display_times, self._hrv_plot_buffer, connect='finite')
+                self.plot_curve.setData(display_times, display_values, connect='finite')
 
                 # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
                 self.plot_widget.setXRange(0.0, window_seconds, padding=0)
@@ -1187,7 +1192,6 @@ class HRVTestWindow(QWidget):
             return int(match.group(1)) if match else 0
 
         def _capture_display_metrics():
-            """Snapshot the live on-screen HRV cards so the PDF matches the UI."""
             metrics = {
                 "HR": 0,
                 "PR": 0,
@@ -1325,8 +1329,7 @@ class HRVTestWindow(QWidget):
                             hr_min = hr_value
 
                     # Prefer the exact values the user saw on screen when the
-                    # test ended. The live report can still compute fallbacks,
-                    # but the final PDF should match the UI snapshot.
+                    # test ended.
                     if self._display_metrics:
                         hr_value = int(self._display_metrics.get("HR", hr_value) or hr_value)
                         pr_value = int(self._display_metrics.get("PR", pr_value) or pr_value)

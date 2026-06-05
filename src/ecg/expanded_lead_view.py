@@ -650,9 +650,9 @@ class ExpandedLeadView(QDialog):
         plot_frame = QFrame()
         plot_frame.setStyleSheet("""
             QFrame {
-                background: #FFF5F5;
+                background: #ffffff;
                 border-radius: 8px;
-                border: 1px solid #d9b3b3;
+                border: 1px solid #e0e5eb;
             }
         """)
         plot_layout = QVBoxLayout(plot_frame)
@@ -660,7 +660,7 @@ class ExpandedLeadView(QDialog):
         
         # Create matplotlib figure with better sizing
         # Use a moderate DPI, but allow canvas to expand with layout
-        self.fig = Figure(figsize=(10, 6), facecolor='#FFF5F5', dpi=110)
+        self.fig = Figure(figsize=(10, 6), facecolor='#ffffff', dpi=110)
         self.ax = self.fig.add_subplot(111)
         self.fig.tight_layout(pad=2.0)
         
@@ -1116,15 +1116,14 @@ class ExpandedLeadView(QDialog):
         self.ax.set_title(f'Lead {self.lead_name} - PQRST Analysis{mode_text}', 
                          fontsize=18, fontweight='bold', color='#2c3e50')
         
-        self.ax.set_facecolor('#FFF5F5')
+        self.ax.set_facecolor('#ffffff')
         self.ax.set_axisbelow(True)
         self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
         self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
         self.ax.yaxis.set_major_locator(MultipleLocator(500))
         self.ax.yaxis.set_minor_locator(MultipleLocator(100))
         self.ax.minorticks_on()
-        self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
-        self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')
+        self.ax.grid(False)
         self.ax.spines['top'].set_visible(False)
         self.ax.spines['right'].set_visible(False)
         
@@ -2050,16 +2049,15 @@ class ExpandedLeadView(QDialog):
             else:
                 self.ax.set_xlim(0, 1)  # Fallback
             
-            self.fig.patch.set_facecolor('#FFF5F5')
-            self.ax.set_facecolor('#FFF5F5')
+            self.fig.patch.set_facecolor('#ffffff')
+            self.ax.set_facecolor('#ffffff')
             self.ax.set_axisbelow(True)
             self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
             self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
             self.ax.yaxis.set_major_locator(MultipleLocator(500))
             self.ax.yaxis.set_minor_locator(MultipleLocator(100))
             self.ax.minorticks_on()
-            self.ax.grid(True, which='major', linestyle='-', linewidth=0.8, color='#FFA6A6')
-            self.ax.grid(True, which='minor', linestyle='-', linewidth=0.4, color='#FFD9D9')
+            self.ax.grid(False)
             self.ax.spines['top'].set_visible(False)
             self.ax.spines['right'].set_visible(False)
             

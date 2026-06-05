@@ -62,6 +62,9 @@ except ImportError:
 
 
 def create_pink_grid_brush():
+    from PyQt5.QtGui import QBrush, QColor
+    return QBrush(QColor("#ffffff"))
+
     from PyQt5.QtGui import QBrush, QPixmap, QPainter, QPen, QColor
     from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
@@ -450,7 +453,7 @@ class HyperkalemiaTestWindow(QWidget):
         # Plot area - Grid layout for 7 leads (Lead II + V1-V6)
         plot_frame = QFrame()
         plot_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        plot_frame.setStyleSheet("background: #ffffff; border-radius: 16px; border: 1px solid #e0e5eb;")
+        plot_frame.setStyleSheet("background: #000000; border-radius: 16px; border: 1px solid #333333;")
         plot_layout = QGridLayout(plot_frame)
         plot_layout.setContentsMargins(16, 16, 16, 16)
         plot_layout.setSpacing(10)
@@ -475,13 +478,13 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Consistent colors from 12-lead dashboard (all black as requested)
         lead_colors = {
-            'II': '#000000', 
-            'V1': '#000000',
-            'V2': '#000000',
-            'V3': '#000000',
-            'V4': '#000000',
-            'V5': '#000000',
-            'V6': '#000000'
+            'II': '#00ff00',
+            'V1': '#00ff00',
+            'V2': '#00ff00',
+            'V3': '#00ff00',
+            'V4': '#00ff00',
+            'V5': '#00ff00',
+            'V6': '#00ff00'
         }
         
         for i, lead_name in enumerate(lead_names):
@@ -489,8 +492,8 @@ class HyperkalemiaTestWindow(QWidget):
             card = QFrame()
             card.setStyleSheet("""
                 QFrame {
-                    background: #FFF5F5;
-                    border: 1px solid #d9b3b3;
+                    background: #000000;
+                    border: 1px solid #333333;
                     border-radius: 12px;
                 }
             """)
@@ -500,16 +503,16 @@ class HyperkalemiaTestWindow(QWidget):
 
             # Create plot widget
             plot_widget = pg.PlotWidget()
-            plot_widget.setBackground(create_pink_grid_brush())
+            plot_widget.setBackground("#000000")
             plot_widget.setMenuEnabled(False)
             plot_widget.setStyleSheet("border: none;")
-            plot_widget.showGrid(x=True, y=True, alpha=0.12)
+            plot_widget.showGrid(x=False, y=False)
             
             # Hide Y-axis numeric labels (clean clinical look)
-            plot_widget.getAxis('left').setPen('k')
+            plot_widget.getAxis('left').setPen('#00ff00')
             plot_widget.getAxis('left').setStyle(showValues=False)
-            plot_widget.getAxis('bottom').setTextPen('k')
-            plot_widget.getAxis('bottom').setPen('k')
+            plot_widget.getAxis('bottom').setTextPen('#00ff00')
+            plot_widget.getAxis('bottom').setPen('#00ff00')
             plot_widget.getAxis('bottom').setStyle(showValues=False)
             
             lead_color = lead_colors.get(lead_name, '#000000')
@@ -523,7 +526,7 @@ class HyperkalemiaTestWindow(QWidget):
             
             # Add center line at 2048
             center_pos = -2048 if lead_name == 'aVR' else 2048
-            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#e0e5eb', width=1.0, style=Qt.DashLine))
+            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#003300', width=1.0, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
             vb = plot_widget.getViewBox()
@@ -1085,8 +1088,8 @@ class HyperkalemiaTestWindow(QWidget):
 
             # Get filter settings from SettingsManager
             ac_val = "50"
-            emg_val = "35"
-            dft_val = self.settings_manager.get_setting("filter_dft", "off")
+            emg_val = "25"
+            dft_val = "0.5"
             fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             if fs < 100.0 or fs > 1000.0:
                 fs = 500.0
@@ -1135,7 +1138,7 @@ class HyperkalemiaTestWindow(QWidget):
                             apply_dft_filter,
                             apply_baseline_wander_median_mean,
                         )
-                        if len(values) > 20:  # Start display filtering as soon as the buffer is usable
+                        if len(values) > 5:  # Start display filtering almost immediately after capture begins
                             values_array = np.array(values, dtype=float)
                             pad_len = min(50, max(0, len(values_array) - 1))
                             if pad_len > 0:
@@ -1155,6 +1158,13 @@ class HyperkalemiaTestWindow(QWidget):
                                     padded_values = apply_dft_filter(padded_values, fs, dft_text)
 
                                 padded_values = padded_values + float(self._adc_center)
+
+                                # Trim the filter edge artifacts so the visible wave
+                                # doesn't wobble on the left/right sides when 0.5 Hz is selected.
+                                if dft_text == "0.5":
+                                    edge_trim = int(0.5 * fs)
+                                    if edge_trim > 0 and len(padded_values) > (2 * edge_trim + 10):
+                                        padded_values = padded_values[edge_trim:-edge_trim]
 
                             if pad_len > 0:
                                 values = padded_values[pad_len:-pad_len].tolist()
@@ -1186,13 +1196,13 @@ class HyperkalemiaTestWindow(QWidget):
                         else:
                             display_values = np.asarray(display_values, dtype=float)
 
-                        plot_buffer = np.full(display_len, np.nan, dtype=float)
-                        copy_len = min(display_len, len(display_values))
-                        if copy_len > 0:
-                            plot_buffer[-copy_len:] = display_values[-copy_len:]
+                        # Keep the visible window fully populated so the trace
+                        # starts smoothly instead of showing a partial warm-up artifact.
+                        if len(display_values) == 1:
+                            display_values = np.full(display_len, float(display_values[0]), dtype=float)
                         display_times = np.linspace(0.0, seconds_to_show, display_len)
 
-                        self.plot_curves[lead_name].setData(display_times, plot_buffer, connect='finite')
+                        self.plot_curves[lead_name].setData(display_times, display_values, connect='finite')
                         self.plot_widgets[lead_name].setXRange(0.0, seconds_to_show, padding=0)
 
                         # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
