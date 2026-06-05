@@ -59,7 +59,7 @@ from scipy.signal import butter, filtfilt, find_peaks
 
 # ── Internal imports ──────────────────────────────────────────────────────────
 from .signal_paths import display_filter
-from .qrs_detection import qrs_duration_from_raw_signal
+from .qrs_detection import qrs_duration_from_raw_signal, get_authoritative_qrs_duration
 from .metrics.reference_intervals import lookup_reference_intervals
 from .pre_analysis import pre_analyze, should_analyze
 
@@ -1084,8 +1084,8 @@ def calculate_all_ecg_metrics(
         r_next_idx = int(r_peaks[-1])
 
         try:
-            qrs_dur_ms  = qrs_duration_from_raw_signal(
-                filt, r_curr_idx, fs, adc_per_mv=1200.0, heart_rate=hr
+            qrs_dur_ms  = get_authoritative_qrs_duration(
+                filt, r_peaks, fs
             )
             qrs_dur_int = int(round(qrs_dur_ms)) if qrs_dur_ms > 0 else 0
         except Exception:
@@ -1188,8 +1188,7 @@ def calculate_qrs(lead_data: np.ndarray, r_peaks: np.ndarray,
         if len(r_peaks) < 2:
             return 0
         filt   = _bandpass(np.asarray(lead_data, dtype=float) - np.mean(lead_data), fs)
-        r_curr = int(r_peaks[len(r_peaks) // 2])
-        qrs_ms = qrs_duration_from_raw_signal(filt, r_curr, fs, adc_per_mv=1200.0)
+        qrs_ms = get_authoritative_qrs_duration(filt, r_peaks, fs)
         if qrs_ms <= 0:
             return 0
         qrs_int = int(round(qrs_ms))

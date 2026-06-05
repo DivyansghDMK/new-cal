@@ -1619,6 +1619,58 @@ def analyze_ecg(
         "patient_gender": patient_gender,
     }
 
+    # ── 7-Step Decision Layer ─────────────────────────────────────────────────
+    # Integrates SQI gating, physiological consistency, hysteresis, and
+    # priority-based selection. Runs non-destructively; failures fall through.
+    try:
+        from ecg.decision_layer import process_decision_layer
+        rr_arr = np.array(rate_info.get("rr_intervals_ms") or rr_intervals_ms.tolist(), dtype=float)
+        dl_features = {
+            "p_detected": p_present,
+            "p_present": p_present,
+            "rr_std": rr_std_ms,
+            "av_dissociation": av_dissociation,
+            "atrial_flutter": spectral_flutter,
+            "atrial_rate_bpm": float(flutter_features.get("atrial_rate_bpm") or 0.0),
+            "flutter_score": float(flutter_features.get("score") or 0.0),
+            "vf_score": float(vf_score),
+            "organized_qrs": qrs_count >= 3 and rr_std_ms < 300.0,
+            "signal_amplitude": signal_amplitude,
+            "signal_snr": signal_snr,
+        }
+        dl_metrics = {
+            "heart_rate_bpm": heart_rate,
+            "pr_ms": pr_ms or 0.0,
+            "qrs_ms": qrs_ms or 0.0,
+            "qt_ms": qt_ms,
+            "qtc_bazett": qtc_bazett,
+            "Confidence": confidence,
+        }
+        available_leads = list(cleaned_leads.keys())
+        instance_key = str(id(detection_signal)) if detection_signal.size else "default"
+        dl_result = process_decision_layer(
+            instance_id=instance_key,
+            raw_signal=detection_signal,
+            fs=fs,
+            r_peaks=np.array(r_peaks, dtype=int),
+            rr_intervals_ms=rr_arr,
+            metrics=dl_metrics,
+            features=dl_features,
+            engine_diagnoses=combined,
+            available_leads=available_leads,
+            human_safety_mode=False,
+        )
+        results["decision_layer"] = dl_result
+        # If the decision layer produced a valid result, update primary diagnosis
+        if dl_result and not dl_result.get("interpretation_disabled"):
+            dl_diagnoses = dl_result.get("diagnoses", [])
+            if dl_diagnoses:
+                results["Primary Diagnosis"] = dl_diagnoses[0]["diagnosis"]
+                results["primary_rhythm"] = dl_diagnoses[0]["diagnosis"]
+                results["arrhythmias"] = [d["diagnosis"] for d in dl_diagnoses]
+    except Exception as _dl_err:
+        pass  # Decision layer failure must not crash the main pipeline
+
     return results
 
 
