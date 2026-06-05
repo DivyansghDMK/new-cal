@@ -9821,7 +9821,7 @@ class ECGTestPage(QWidget):
                                 self._lead_off_latched = True
                                 self._lead_off_latch_off_count = 0
                         else:
-                            if raw_off_count == 0:
+                            if raw_off_count < global_threshold:
                                 self._lead_off_latch_off_count = int(getattr(self, "_lead_off_latch_off_count", 0)) + 1
                             else:
                                 self._lead_off_latch_off_count = 0
