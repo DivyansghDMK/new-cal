@@ -961,7 +961,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Priority: ecg_settings.json  wave_speed  (calculation-based beats  )
     wave_speed_setting = settings_manager.get_setting("wave_speed", "25")
     wave_gain_setting = settings_manager.get_setting("wave_gain", "10")
-    wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)  # Default: 25.0 mm/s
+    wave_speed_mm_s = 25.0  # Forced to 25.0 mm/s for report
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)   # Default: 10.0 mm/mV
     print(f" Using wave_speed from ecg_settings.json: {wave_speed_mm_s} mm/s (for calculation-based beats)")
     # Keep sampling rate aligned with main ECG report logic
@@ -3172,7 +3172,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Get settings (SAME AS MAIN REPORT)
     wave_speed_setting = settings_manager.get_setting("wave_speed", "25")
     wave_gain_setting = settings_manager.get_setting("wave_gain", "10")
-    wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)
+    wave_speed_mm_s = 25.0  # Forced to 25.0 mm/s for report
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)
     emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
