@@ -252,7 +252,10 @@ class HRVTestWindow(QWidget):
         import pyqtgraph as pg
         pg.setConfigOptions(antialias=True)
         
-        self.setStyleSheet("QWidget { background: #f4f7f6; }")
+        self.setStyleSheet("""
+            QWidget { background: #0D1117; color: #F9FAFB; }
+            QFrame  { background: #111827; }
+        """)
         
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -262,20 +265,20 @@ class HRVTestWindow(QWidget):
         header = QHBoxLayout()
         self.title_label = QLabel("HRV Test - Lead II")
         self.title_label.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        self.title_label.setStyleSheet("color: #ff6600; font-weight: 900; background: transparent;")
+        self.title_label.setStyleSheet("color: #FFFFFF; font-weight: 900; background: transparent;")
         header.addWidget(self.title_label)
         header.addStretch()
         
         # Status label
         self.status_label = QLabel("Status: Ready")
         self.status_label.setFont(QFont("Segoe UI", 12))
-        self.status_label.setStyleSheet("color: #667085; padding: 5px; background: transparent;")
+        self.status_label.setStyleSheet("color: #6B7280; padding: 5px; background: transparent;")
         header.addWidget(self.status_label)
         
         # Timer label
         self.timer_label = QLabel("Time: 00:00")
         self.timer_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.timer_label.setStyleSheet("color: #ff6600; padding: 5px; font-weight: 900; background: transparent;")
+        self.timer_label.setStyleSheet("color: #EF4444; padding: 5px; font-weight: 900; background: transparent;")
         header.addWidget(self.timer_label)
         
         layout.addLayout(header)
@@ -289,11 +292,11 @@ class HRVTestWindow(QWidget):
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background: #17b26a; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #1A2E1A; color: #4ADE80; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: 1px solid #22C55E;
             }
-            QPushButton:hover { background: #0b9b55; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
+            QPushButton:hover { background: #22402A; }
+            QPushButton:disabled { background: #151B15; color: #374151; border: 1px solid #1F2937; }
         """)
         self.start_btn.clicked.connect(self.start_capture)
         controls.addWidget(self.start_btn)
@@ -303,11 +306,11 @@ class HRVTestWindow(QWidget):
         self.stop_btn.setCursor(Qt.PointingHandCursor)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background: #ef4444; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #2E1A1A; color: #F87171; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: 1px solid #EF4444;
             }
-            QPushButton:hover { background: #dc2626; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; border: none; }
+            QPushButton:hover { background: #3F2020; }
+            QPushButton:disabled { background: #1A1515; color: #374151; border: 1px solid #1F2937; }
         """)
         self.stop_btn.clicked.connect(self.confirm_stop)
         self.stop_btn.setEnabled(False)
@@ -318,7 +321,7 @@ class HRVTestWindow(QWidget):
         # Lead Selection
         lead_label = QLabel("Select Lead:")
         lead_label.setFont(QFont("Segoe UI", 11))
-        lead_label.setStyleSheet("color: #101828; background: transparent;")
+        lead_label.setStyleSheet("color: #9CA3AF; background: transparent;")
         controls.addWidget(lead_label)
         
         self.lead_combo = QComboBox()
@@ -326,9 +329,11 @@ class HRVTestWindow(QWidget):
         self.lead_combo.setMinimumHeight(42)
         self.lead_combo.setCursor(Qt.PointingHandCursor)
         self.lead_combo.setStyleSheet("""
-            QComboBox { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font: 11pt 'Segoe UI', Arial; background: #ffffff; color: #101828; }
-            QComboBox:focus { border: 2px solid #ff6600; }
+            QComboBox { padding: 6px 12px; border: 1px solid #374151; border-radius: 8px;
+                        font: 11pt 'Segoe UI'; background: #1E2530; color: #F9FAFB; }
+            QComboBox:focus { border: 1px solid #3B82F6; }
             QComboBox::drop-down { border: none; width: 30px; }
+            QComboBox QAbstractItemView { background: #1E2530; color: #F9FAFB; border: 1px solid #374151; }
         """)
         self.lead_combo.addItems(["Lead I", "Lead II", "V1", "V2", "V3", "V4", "V5", "V6"])
         self.lead_combo.setCurrentText("Lead II")
@@ -342,11 +347,11 @@ class HRVTestWindow(QWidget):
         self.report_btn.setCursor(Qt.PointingHandCursor)
         self.report_btn.setStyleSheet("""
             QPushButton {
-                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #1E2D4A; color: #60A5FA; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI'; border: 1px solid #3B82F6;
             }
-            QPushButton:hover { background: #e65c00; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
+            QPushButton:hover { background: #2A3F6B; }
+            QPushButton:disabled { background: #151A25; color: #374151; border: 1px solid #2A3040; }
         """)
         self.report_btn.clicked.connect(self.generate_report)
         self.report_btn.setEnabled(False)
@@ -356,7 +361,7 @@ class HRVTestWindow(QWidget):
         
         # Metrics display section (below buttons, without Time)
         metrics_card = QFrame()
-        metrics_card.setStyleSheet("QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; } QLabel { border: none; background: transparent; }")
+        metrics_card.setStyleSheet("QFrame { background: #111827; border: 1px solid #1E2A3A; border-radius: 16px; } QLabel { border: none; background: transparent; }")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         metrics_layout = QHBoxLayout(metrics_card)
         metrics_layout.setContentsMargins(24, 20, 24, 20)
@@ -386,11 +391,11 @@ class HRVTestWindow(QWidget):
             box = QVBoxLayout()
             lbl = QLabel(title)
             lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            lbl.setStyleSheet("color: #101828;")
+            lbl.setStyleSheet("color: #6B7280;")
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
             val.setFont(QFont("Segoe UI", 16, QFont.Bold))
-            val.setStyleSheet("color: #101828;")
+            val.setStyleSheet("color: #FFFFFF;")
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
@@ -421,8 +426,40 @@ class HRVTestWindow(QWidget):
         self.plot_widget.hideAxis('left')
         self.plot_widget.hideAxis('bottom')
         
-        # Plot curve (green wave on black background)
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00ff00', width=1.0))
+        # ── Medical monitor sweep display ──────────────────────────────────────
+        # Three layered curves for a realistic ECG glow effect:
+        #   1. Outer glow  (dark green, thick)  — phosphor afterglow
+        #   2. Inner trace (bright green, thin)  — actual ECG line
+        #   3. Dot         (bright dot)           — current sweep head
+        #   4. Gap eraser  (black, thick)         — erases ahead of sweep
+
+        self.plot_widget.setXRange(0, 2500, padding=0)
+        self.plot_widget.setYRange(0, 4096, padding=0)
+
+        # Layer 1 — phosphor glow (drawn first = behind)
+        self.plot_curve_glow = self.plot_widget.plot(
+            pen=pg.mkPen(color='#003300', width=5)
+        )
+        # Layer 2 — bright ECG trace (drawn on top of glow)
+        self.plot_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#00DD00', width=1.5), connect='finite'
+        )
+        # Layer 3 — sweep head dot
+        self.sweep_dot = self.plot_widget.plot(
+            pen=None, symbol='o',
+            symbolSize=7,
+            symbolBrush=pg.mkBrush('#00FF41'),
+            symbolPen=pg.mkPen('#00FF41', width=1)
+        )
+        # Layer 4 — black eraser gap ahead of sweep head
+        self.sweep_gap_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#000000', width=14)
+        )
+
+        # Sweep state variables
+        self._sweep_buf  = np.full(2500, 2048.0, dtype=float)  # circular display buffer
+        self._sweep_pos  = 0                                    # current write index (0-2499)
+        self._sweep_gap  = 80                                   # eraser width in samples
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -436,7 +473,7 @@ class HRVTestWindow(QWidget):
             f"The capture will stop automatically after {m} {mw}."
         )
         self.info_label.setFont(QFont("Segoe UI", 10))
-        self.info_label.setStyleSheet("color: #667085; padding: 10px; background: transparent;")
+        self.info_label.setStyleSheet("color: #4B5563; padding: 10px; background: transparent;")
         self.info_label.setWordWrap(True)
         layout.addWidget(self.info_label)
 
@@ -602,6 +639,9 @@ class HRVTestWindow(QWidget):
             self.active_samples = 0
             self.start_time = time.time()
             self.is_capturing = True
+            # Reset sweep display buffer so next capture starts from left edge
+            self._sweep_buf[:] = 2048.0
+            self._sweep_pos = 0
             
             # Reset smoothing buffers
             if self.ecg_calculator:
@@ -647,7 +687,7 @@ class HRVTestWindow(QWidget):
             self.plot_widget.setMouseEnabled(x=False, y=False)
 
             self.status_label.setText("Status: Capturing from RhythmUltra Device...")
-            self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
+            self.status_label.setStyleSheet("color: #00E676; padding: 5px;")
             self._silent_data_warned = False
             
             # Start timers
@@ -732,7 +772,7 @@ class HRVTestWindow(QWidget):
         # Re-enable display interaction after capture (optional, but allows inspection)
         self.plot_widget.setMouseEnabled(x=True, y=True)
         
-        self.status_label.setStyleSheet("color: #666; padding: 5px;")
+        self.status_label.setStyleSheet("color: #6B7280; padding: 5px;")
         self.timer_label.setText("Time: 00:00")
 
     def _reset_after_report_open(self):
@@ -764,7 +804,7 @@ class HRVTestWindow(QWidget):
             pass
         try:
             self.status_label.setText("Status: Ready")
-            self.status_label.setStyleSheet("color: #667085; padding: 5px;")
+            self.status_label.setStyleSheet("color: #6B7280; padding: 5px;")
         except Exception:
             pass
         try:
@@ -850,6 +890,7 @@ class HRVTestWindow(QWidget):
             
         
         try:
+            n_new = 0
             # Read multiple packets per GUI tick (same idea as 12‑lead test)
             # so we don't under‑sample and miss beats when HR changes.
             max_packets = 100
@@ -937,6 +978,7 @@ class HRVTestWindow(QWidget):
                     # Update local circular buffer for plot
                     self.data = np.roll(self.data, -1)
                     self.data[-1] = lead_value
+                    n_new += 1
                     
                     if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler"):
                         try:
@@ -1018,7 +1060,7 @@ class HRVTestWindow(QWidget):
 
             if len(buffer_data) > 5:
                 # Gentle smoothing for HRV display so the trace looks continuous.
-                buffer_data = gaussian_filter1d(buffer_data, sigma=0.8)
+                buffer_data = gaussian_filter1d(buffer_data, sigma=1.2)
 
             if len(buffer_data) > 0:
                 # Center the waveform in the middle of the plot so it stays visually stable
@@ -1037,24 +1079,49 @@ class HRVTestWindow(QWidget):
                 centered = (buffer_data - self._hrv_display_anchor) * gain_factor
                 display_values = np.clip(2048.0 + centered, 0, 4096)
 
-                # Resample to a fixed density for smooth rendering.
-                display_len = min(2400, max(500, int(window_seconds * 250)))
-                if len(display_values) >= 2:
-                    x_src = np.linspace(0.0, 1.0, len(display_values))
-                    x_dst = np.linspace(0.0, 1.0, display_len)
-                    display_values = np.interp(x_dst, x_src, display_values)
+                # ── Medical monitor sweep render ──────────────────────────────
+                SWEEP_N = 2500
+                x_axis = np.arange(SWEEP_N, dtype=float)
 
-                # Keep the full window populated so the line starts cleanly and
-                # does not show a partial/noisy lead-in while capture is warming up.
-                if len(display_values) == 1:
-                    display_values = np.full(display_len, float(display_values[0]), dtype=float)
+                # CORRECT: Push only n_new raw samples per frame
+                # display_values has resampled data — take last n_new points only
+                if n_new > 0 and len(display_values) > 0:
+                    # Take exactly n_new samples from end of filtered buffer
+                    samples_to_push = min(n_new, len(display_values))
+                    new_vals = display_values[-samples_to_push:]
+                    for v in new_vals:
+                        self._sweep_buf[self._sweep_pos] = float(np.clip(v, 0, 4096))
+                        self._sweep_pos = (self._sweep_pos + 1) % SWEEP_N
 
-                display_times = np.linspace(0.0, window_seconds, display_len)
+                pos = self._sweep_pos
+                buf = self._sweep_buf
 
-                self.plot_curve.setData(display_times, display_values, connect='finite')
+                # Build y array with NaN gap eraser ahead of sweep head
+                gap  = self._sweep_gap
+                y_display = buf.copy().astype(float)
 
-                # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
-                self.plot_widget.setXRange(0.0, window_seconds, padding=0)
+                # Erase the gap slots immediately AFTER the write head (oldest data zone)
+                for k in range(gap):
+                    y_display[(pos + k) % SWEEP_N] = np.nan
+
+                # Layer 1 — phosphor glow (same data, thick dark green)
+                self.plot_curve_glow.setData(x_axis, y_display)
+
+                # Layer 2 — bright trace
+                self.plot_curve.setData(x_axis, y_display, connect='finite')
+
+                # Layer 3 — black eraser gap (solid black block covers gap zone)
+                gap_indices = np.array([(pos + k) % SWEEP_N for k in range(gap)])
+                gap_indices.sort()
+                # Find contiguous runs for efficient rendering
+                gap_y = np.full(gap, 2048.0)  # mid-screen black line
+                self.sweep_gap_curve.setData(gap_indices, np.full(len(gap_indices), 2048.0))
+
+                # Layer 4 — glowing dot at exact sweep head
+                head_pos = (pos - 1) % SWEEP_N
+                self.sweep_dot.setData([float(head_pos)], [float(buf[head_pos])])
+
+                self.plot_widget.setXRange(0, SWEEP_N, padding=0)
                 self.plot_widget.setYRange(0, 4096, padding=0)
         
         except Exception as e:
@@ -1075,20 +1142,20 @@ class HRVTestWindow(QWidget):
         dlg.setFixedSize(340, 160)
         dlg.setStyleSheet("""
             QDialog {
-                background: #ffffff;
+                background: #111827;
                 border-radius: 16px;
             }
             QLabel#spinner {
                 font-size: 36px;
             }
             QLabel#msg {
-                color: #344054;
+                color: #F9FAFB;
                 font-size: 14px;
                 font-family: 'Segoe UI', Arial;
                 font-weight: bold;
             }
             QLabel#sub {
-                color: #667085;
+                color: #6B7280;
                 font-size: 11px;
                 font-family: 'Segoe UI', Arial;
             }
@@ -1388,15 +1455,15 @@ class HRVTestWindow(QWidget):
             dlg.setWindowTitle("Report Generated")
             dlg.setMinimumWidth(480)
             dlg.setStyleSheet("""
-                QDialog { background: #ffffff; }
-                QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
-                QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
-                QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
+                QDialog { background: #111827; }
+                QLabel  { color: #D1D5DB; font-size: 13px; font-family: 'Segoe UI', Arial; }
+                QLabel#title { color: #00E676; font-size: 16px; font-weight: bold; }
+                QPushButton { background: #1E2530; color: #D1D5DB; border: 1px solid #374151;
                               border-radius: 8px; padding: 8px 20px; font-size: 12px;
                               font-weight: bold; font-family: 'Segoe UI', Arial; }
-                QPushButton:hover { background: #f9fafb; }
-                QPushButton#open_btn { background: #007bff; color: white; border: none; }
-                QPushButton#open_btn:hover { background: #0056b3; }
+                QPushButton:hover { background: #252B3B; }
+                QPushButton#open_btn { background: #3B82F6; color: white; border: none; }
+                QPushButton#open_btn:hover { background: #2563EB; }
             """)
             vbox = QVBoxLayout(dlg)
             vbox.setSpacing(12)

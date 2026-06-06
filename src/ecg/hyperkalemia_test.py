@@ -204,6 +204,16 @@ class HyperkalemiaTestWindow(QWidget):
         # Track active sample count to avoid skewing stats with leading zeros
         self.active_samples = 0
 
+        # Sweep state variables for each lead
+        self._sweep_bufs = {}
+        self._sweep_poses = {}
+        self._sweep_gaps = {}
+        self._sweep_ns = {}
+        
+        self.plot_curves_glow = {}
+        self.sweep_dots = {}
+        self.sweep_gap_curves = {}
+
         # Store last displayed metrics so analysis dialog matches dashboard values
         self.last_metrics = {}
         
@@ -275,7 +285,7 @@ class HyperkalemiaTestWindow(QWidget):
         self._plot_seconds = {}
         self._plot_buffers = {}
         for lead_name in self.lead_data.keys():
-            seconds = 10.0 if lead_name == 'II' else 3.0
+            seconds = 5.0 if lead_name == 'II' else 2.0
             self._plot_seconds[lead_name] = float(seconds)
             max_seconds = seconds + 2.0  # margin for filtering
             maxlen = int(max_seconds * fs)
@@ -310,7 +320,10 @@ class HyperkalemiaTestWindow(QWidget):
         """Initialize the user interface"""
         import pyqtgraph as pg
         
-        self.setStyleSheet("QWidget { background: #f4f7f6; }")
+        self.setStyleSheet("""
+            QWidget { background: #0D1117; color: #F9FAFB; }
+            QFrame  { background: #111827; }
+        """)
         
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -320,20 +333,20 @@ class HyperkalemiaTestWindow(QWidget):
         header = QHBoxLayout()
         title = QLabel("Hyperkalemia Detection Test")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        title.setStyleSheet("color: #ff6600; font-weight: 900; background: transparent;")
+        title.setStyleSheet("color: #FFFFFF; font-weight: 900; background: transparent;")
         header.addWidget(title)
         header.addStretch()
         
         # Status label
         self.status_label = QLabel("Status: Ready")
         self.status_label.setFont(QFont("Segoe UI", 12))
-        self.status_label.setStyleSheet("color: #667085; padding: 5px; background: transparent;")
+        self.status_label.setStyleSheet("color: #6B7280; padding: 5px; background: transparent;")
         header.addWidget(self.status_label)
         
         # Timer label
         self.timer_label = QLabel("Time: 00:00")
         self.timer_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.timer_label.setStyleSheet("color: #ff6600; padding: 5px; font-weight: 900; background: transparent;")
+        self.timer_label.setStyleSheet("color: #EF4444; padding: 5px; font-weight: 900; background: transparent;")
         header.addWidget(self.timer_label)
         
         layout.addLayout(header)
@@ -347,11 +360,11 @@ class HyperkalemiaTestWindow(QWidget):
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background: #17b26a; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #1A2E1A; color: #4ADE80; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: 1px solid #22C55E;
             }
-            QPushButton:hover { background: #0b9b55; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
+            QPushButton:hover { background: #22402A; }
+            QPushButton:disabled { background: #151B15; color: #374151; border: 1px solid #1F2937; }
         """)
         self.start_btn.clicked.connect(self.start_capture)
         controls.addWidget(self.start_btn)
@@ -361,11 +374,11 @@ class HyperkalemiaTestWindow(QWidget):
         self.stop_btn.setCursor(Qt.PointingHandCursor)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background: #ef4444; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #2E1A1A; color: #F87171; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI', Arial; border: 1px solid #EF4444;
             }
-            QPushButton:hover { background: #dc2626; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; border: none; }
+            QPushButton:hover { background: #3F2020; }
+            QPushButton:disabled { background: #1A1515; color: #374151; border: 1px solid #1F2937; }
         """)
         self.stop_btn.clicked.connect(self.confirm_stop)
         self.stop_btn.setEnabled(False)
@@ -378,11 +391,11 @@ class HyperkalemiaTestWindow(QWidget):
         self.analyze_btn.setCursor(Qt.PointingHandCursor)
         self.analyze_btn.setStyleSheet("""
             QPushButton {
-                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #1E2D4A; color: #60A5FA; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI'; border: 1px solid #3B82F6;
             }
-            QPushButton:hover { background: #e65c00; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
+            QPushButton:hover { background: #2A3F6B; }
+            QPushButton:disabled { background: #1A1F2E; color: #374151; border: 1px solid #374151; }
         """)
         self.analyze_btn.clicked.connect(self.analyze_hyperkalemia)
         self.analyze_btn.setEnabled(False)
@@ -393,11 +406,11 @@ class HyperkalemiaTestWindow(QWidget):
         self.report_btn.setCursor(Qt.PointingHandCursor)
         self.report_btn.setStyleSheet("""
             QPushButton {
-                background: #ff6600; color: white; border-radius: 10px; padding: 10px 24px;
-                font: bold 11pt 'Segoe UI', Arial; border: none;
+                background: #1A1F2E; color: #9CA3AF; border-radius: 10px; padding: 10px 24px;
+                font: bold 11pt 'Segoe UI'; border: 1px solid #374151;
             }
-            QPushButton:hover { background: #e65c00; }
-            QPushButton:disabled { background: #eaecf0; color: #98a2b3; }
+            QPushButton:hover { background: #252B3B; }
+            QPushButton:disabled { background: #151A25; color: #374151; border: 1px solid #2A3040; }
         """)
         self.report_btn.clicked.connect(self.generate_report)
         self.report_btn.setEnabled(False)
@@ -407,7 +420,7 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Metrics display section
         metrics_card = QFrame()
-        metrics_card.setStyleSheet("QFrame { background: #ffffff; border: 1px solid #e0e5eb; border-radius: 16px; } QLabel { border: none; background: transparent; }")
+        metrics_card.setStyleSheet("QFrame { background: #111827; border: 1px solid #1E2A3A; border-radius: 16px; } QLabel { border: none; background: transparent; }")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         metrics_layout = QHBoxLayout(metrics_card)
         metrics_layout.setContentsMargins(24, 20, 24, 20)
@@ -437,11 +450,11 @@ class HyperkalemiaTestWindow(QWidget):
             box = QVBoxLayout()
             lbl = QLabel(title)
             lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            lbl.setStyleSheet("color: #101828;")
+            lbl.setStyleSheet("color: #9CA3AF; font-size: 11px;")
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             val = QLabel(f"{value} {unit}")
             val.setFont(QFont("Segoe UI", 16, QFont.Bold))
-            val.setStyleSheet("color: #101828;")
+            val.setStyleSheet("color: #FFFFFF; font-size: 16px; font-weight: bold;")
             val.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.addWidget(lbl)
             box.addWidget(val)
@@ -509,14 +522,13 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.showGrid(x=False, y=False)
             
             # Hide Y-axis numeric labels (clean clinical look)
-            plot_widget.getAxis('left').setPen('#00ff00')
+            plot_widget.getAxis('left').setPen(pg.mkPen(None))
             plot_widget.getAxis('left').setStyle(showValues=False)
-            plot_widget.getAxis('bottom').setTextPen('#00ff00')
-            plot_widget.getAxis('bottom').setPen('#00ff00')
+            plot_widget.getAxis('bottom').setPen(pg.mkPen(None))
             plot_widget.getAxis('bottom').setStyle(showValues=False)
             
-            lead_color = lead_colors.get(lead_name, '#000000')
-            plot_widget.setTitle(f"Lead {lead_name}", color=lead_color, size='11pt')
+            lead_color = lead_colors.get(lead_name, '#00ff00')
+            plot_widget.setTitle(f"Lead {lead_name}", color='#FFFFFF', size='11pt')
             
             # Fixed raw-ADC Y ranges (same as 12-lead style)
             if lead_name == 'aVR':
@@ -529,6 +541,13 @@ class HyperkalemiaTestWindow(QWidget):
             center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#003300', width=1.0, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
+            seconds = 5.0 if lead_name == 'II' else 2.0
+            sweep_n = int(seconds * 500)  # 500Hz pe map karo — real time speed
+            self._sweep_ns[lead_name] = sweep_n
+            self._sweep_bufs[lead_name] = np.full(sweep_n, 2048.0, dtype=float)
+            self._sweep_poses[lead_name] = 0
+            self._sweep_gaps[lead_name] = 50 if lead_name == 'II' else 20
+
             vb = plot_widget.getViewBox()
             if vb is not None:
                 if lead_name == 'aVR':
@@ -536,16 +555,37 @@ class HyperkalemiaTestWindow(QWidget):
                 else:
                     vb.setLimits(yMin=0, yMax=4096)
                 try:
-                    vb.setRange(xRange=(0.0, 3.0))
+                    vb.setLimits(xMin=0, xMax=sweep_n)
+                    vb.setRange(xRange=(0, sweep_n))
                 except Exception:
                     pass
             
-            # Create plot curve with clinical line width
-            plot_curve = plot_widget.plot(pen=pg.mkPen(color=lead_color, width=1.0))
-            
+            # Layer 1 — phosphor glow (drawn first = behind)
+            plot_curve_glow = plot_widget.plot(
+                pen=pg.mkPen(color='#003300', width=5)
+            )
+            # Layer 2 — bright ECG trace
+            plot_curve = plot_widget.plot(
+                pen=pg.mkPen(color='#00DD00', width=1.5), connect='finite'
+            )
+            # Layer 3 — sweep head dot
+            sweep_dot = plot_widget.plot(
+                pen=None, symbol='o',
+                symbolSize=7,
+                symbolBrush=pg.mkBrush('#00FF41'),
+                symbolPen=pg.mkPen('#00FF41', width=1)
+            )
+            # Layer 4 — black eraser gap ahead of sweep head
+            sweep_gap_curve = plot_widget.plot(
+                pen=pg.mkPen(color='#000000', width=14)
+            )
+
             self.plot_widgets[lead_name] = plot_widget
+            self.plot_curves_glow[lead_name] = plot_curve_glow
             self.plot_curves[lead_name] = plot_curve
             self.data_lines[lead_name] = plot_curve
+            self.sweep_dots[lead_name] = sweep_dot
+            self.sweep_gap_curves[lead_name] = sweep_gap_curve
 
             card_layout.addWidget(plot_widget)
             row, col = positions[lead_name]
@@ -563,7 +603,7 @@ class HyperkalemiaTestWindow(QWidget):
         # Info label
         info_label = QLabel("Capture 30 seconds of Lead II and V1-V6 data for hyperkalemia detection. The system will analyze T-waves, PR interval, QRS duration, and P-wave morphology according to ECG standards.")
         info_label.setFont(QFont("Segoe UI", 10))
-        info_label.setStyleSheet("color: #667085; padding: 10px; background: transparent;")
+        info_label.setStyleSheet("color: #4B5563; padding: 10px; background: transparent;")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
         
@@ -711,6 +751,9 @@ class HyperkalemiaTestWindow(QWidget):
             self.lead_ii_data = []
             for lead_name in self.lead_data.keys():
                 self.lead_data[lead_name] = []
+                if lead_name in self._sweep_bufs:
+                    self._sweep_bufs[lead_name][:] = 2048.0
+                    self._sweep_poses[lead_name] = 0
             # Reset adaptive scaling
             self.y_centers = {lead: 0.0 for lead in self.lead_data.keys()}
             self.y_ranges = {lead: 200.0 for lead in self.lead_data.keys()}
@@ -734,7 +777,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.analyze_btn.setEnabled(False)
             self.report_btn.setEnabled(False)
             self.status_label.setText("Status: Capturing from RhythmUltra Device...")
-            self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
+            self.status_label.setStyleSheet("color: #00E676; padding: 5px;")
             self._silent_data_warned = False
 
             if 'heart_rate' in self.metric_labels:
@@ -850,7 +893,7 @@ class HyperkalemiaTestWindow(QWidget):
             else:
                 self.status_label.setText("Status: Capture Stopped (No data)")
         
-        self.status_label.setStyleSheet("color: #666; padding: 5px;")
+        self.status_label.setStyleSheet("color: #6B7280; padding: 5px;")
 
     def _reset_after_report_open(self):
         """Clear the completed hyperkalemia session so the next test starts fresh."""
@@ -862,13 +905,23 @@ class HyperkalemiaTestWindow(QWidget):
         try:
             for curve in getattr(self, "plot_curves", {}).values():
                 curve.setData([], [])
+            for curve in getattr(self, "plot_curves_glow", {}).values():
+                curve.setData([], [])
+            for curve in getattr(self, "sweep_dots", {}).values():
+                curve.setData([], [])
+            for curve in getattr(self, "sweep_gap_curves", {}).values():
+                curve.setData([], [])
         except Exception:
             pass
         try:
             if hasattr(self, "plot_widgets"):
-                for widget in self.plot_widgets.values():
-                    widget.setXRange(0.0, 1.0, padding=0)
-                    widget.setYRange(0, 4096, padding=0)
+                for lead_name, widget in self.plot_widgets.items():
+                    sweep_n = self._sweep_ns.get(lead_name, 750)
+                    widget.setXRange(0, sweep_n, padding=0)
+                    if lead_name == 'aVR':
+                        widget.setYRange(0, -4096, padding=0)
+                    else:
+                        widget.setYRange(0, 4096, padding=0)
         except Exception:
             pass
         try:
@@ -885,7 +938,7 @@ class HyperkalemiaTestWindow(QWidget):
             pass
         try:
             self.status_label.setText("Status: Ready")
-            self.status_label.setStyleSheet("color: #667085; padding: 5px;")
+            self.status_label.setStyleSheet("color: #6B7280; padding: 5px;")
         except Exception:
             pass
         try:
@@ -996,6 +1049,7 @@ class HyperkalemiaTestWindow(QWidget):
                 self._plot_update_in_progress = False
                 return
             
+            n_new = len(packets)
             # Process each packet
             for packet in packets:
                 self.active_samples = min(len(self.data), self.active_samples + 1)
@@ -1184,32 +1238,68 @@ class HyperkalemiaTestWindow(QWidget):
                         if t >= min_time:
                             start_i = i
                             break
-                    display_times = times[start_i:]
-                    display_values = values[start_i:]
+                    display_values = np.asarray(values[start_i:], dtype=float)
 
-                    if len(display_times) > 1:
-                        display_len = min(2400, max(500, int(seconds_to_show * 250)))
-                        if len(display_values) >= 2:
-                            x_src = np.linspace(0.0, 1.0, len(display_values))
-                            x_dst = np.linspace(0.0, 1.0, display_len)
-                            display_values = np.interp(x_dst, x_src, np.asarray(display_values, dtype=float))
+                    if len(display_values) > 0:
+                        # Adaptive centering and gain scaling to prevent "small peaks" issue
+                        if not hasattr(self, "_display_anchors"):
+                            self._display_anchors = {}
+                        if lead_name not in self._display_anchors:
+                            self._display_anchors[lead_name] = float(np.nanmedian(display_values)) if len(display_values) else 2048.0
+
+                        alpha = 0.02
+                        baseline_estimate = float(np.nanmedian(display_values)) if len(display_values) else 2048.0
+                        self._display_anchors[lead_name] = (1.0 - alpha) * self._display_anchors[lead_name] + alpha * baseline_estimate
+
+                        from ecg.utils.helpers import get_display_gain
+                        gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
+
+                        if lead_is_off:
+                            display_values = np.full(len(display_values), self._adc_center)
                         else:
-                            display_values = np.asarray(display_values, dtype=float)
+                            centered = (display_values - self._display_anchors[lead_name]) * gain_factor
+                            display_values = np.clip(2048.0 + centered, 0, 4096)
 
-                        # Keep the visible window fully populated so the trace
-                        # starts smoothly instead of showing a partial warm-up artifact.
-                        if len(display_values) == 1:
-                            display_values = np.full(display_len, float(display_values[0]), dtype=float)
-                        display_times = np.linspace(0.0, seconds_to_show, display_len)
+                    # ── Medical monitor sweep render ──────────────────────────────
+                    sweep_n = self._sweep_ns[lead_name]
+                    if n_new > 0 and len(display_values) > 0:
+                        # Use actual filtered values directly — no ratio scaling
+                        samples_to_push = min(n_new, len(display_values))
+                        new_vals = np.asarray(display_values[-samples_to_push:], dtype=float)
+                        for v in new_vals:
+                            self._sweep_bufs[lead_name][self._sweep_poses[lead_name]] = float(v)
+                            self._sweep_poses[lead_name] = (self._sweep_poses[lead_name] + 1) % sweep_n
 
-                        self.plot_curves[lead_name].setData(display_times, display_values, connect='finite')
-                        self.plot_widgets[lead_name].setXRange(0.0, seconds_to_show, padding=0)
+                    pos = self._sweep_poses[lead_name]
+                    s_buf = self._sweep_bufs[lead_name]
 
-                        # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
-                        if lead_name == 'aVR':
-                            self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
-                        else:
-                            self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
+                    # Build y array with NaN gap eraser ahead of sweep head
+                    gap = self._sweep_gaps[lead_name]
+                    y_display = s_buf.copy().astype(float)
+                    for k in range(gap):
+                        y_display[(pos + k) % sweep_n] = np.nan
+
+                    # Layer 1 — phosphor glow
+                    x_axis = np.arange(sweep_n, dtype=float)
+                    self.plot_curves_glow[lead_name].setData(x_axis, y_display)
+
+                    # Layer 2 — bright trace
+                    self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
+
+                    # Layer 3 — black eraser
+                    gap_indices = np.array([(pos + k) % sweep_n for k in range(gap)], dtype=float)
+                    gap_indices_sorted = np.sort(gap_indices)
+                    self.sweep_gap_curves[lead_name].setData(gap_indices_sorted, np.full(len(gap_indices_sorted), 2048.0))
+
+                    # Layer 4 — sweep head dot
+                    head_pos = (pos - 1) % sweep_n
+                    self.sweep_dots[lead_name].setData([float(head_pos)], [float(s_buf[head_pos])])
+
+                    self.plot_widgets[lead_name].setXRange(0, sweep_n, padding=0)
+                    if lead_name == 'aVR':
+                        self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                    else:
+                        self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
         
         except Exception as e:
             pass
@@ -1839,14 +1929,14 @@ class HyperkalemiaTestWindow(QWidget):
             dlg.setWindowTitle("Report Generated")
             dlg.setMinimumWidth(480)
             dlg.setStyleSheet("""
-                QDialog { background: #ffffff; border-radius: 12px; }
-                QLabel  { color: #344054; font-size: 13px; font-family: 'Segoe UI', Arial; }
-                QLabel#title { color: #0b9b55; font-size: 16px; font-weight: bold; }
-                QPushButton { background: #ffffff; color: #344054; border: 1px solid #d0d5dd;
+                QDialog { background: #111827; border-radius: 12px; }
+                QLabel  { color: #D1D5DB; font-size: 13px; font-family: 'Segoe UI', Arial; }
+                QLabel#title { color: #00E676; font-size: 16px; font-weight: bold; }
+                QPushButton { background: #1E2530; color: #D1D5DB; border: 1px solid #374151;
                               border-radius: 8px; padding: 8px 20px; font-size: 12px; font-weight: bold; font-family: 'Segoe UI', Arial; }
-                QPushButton:hover { background: #f9fafb; }
-                QPushButton#open_btn { background: #007bff; color: white; border: none; }
-                QPushButton#open_btn:hover { background: #0056b3; }
+                QPushButton:hover { background: #252B3B; }
+                QPushButton#open_btn { background: #3B82F6; color: white; border: none; }
+                QPushButton#open_btn:hover { background: #2563EB; }
             """)
             vbox = QVBoxLayout(dlg)
             vbox.setSpacing(12)
