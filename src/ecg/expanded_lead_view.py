@@ -19,6 +19,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 import matplotlib.patches as patches
+import pyqtgraph as pg
 from .arrhythmia_detector import ArrhythmiaDetector
 from .pan_tompkins import pan_tompkins
 try:
@@ -452,7 +453,7 @@ class ExpandedLeadView(QDialog):
         self.history_slider = None
         self.history_slider_label = None
         self.history_slider_frame = None
-        self.view_window_duration = 10.0  # seconds visible at once
+        self.view_window_duration = 6.0  # seconds visible at once (matches 12-lead grid)
         self.min_view_window_duration = 2.0  # min time window (seconds)
         self.max_view_window_duration = 60.0  # max time window (seconds)
         self.view_window_offset = 0.0
@@ -658,21 +659,60 @@ class ExpandedLeadView(QDialog):
         plot_layout = QVBoxLayout(plot_frame)
         plot_layout.setContentsMargins(8, 8, 8, 8)
         
-        # Create matplotlib figure with better sizing
-        # Use a moderate DPI, but allow canvas to expand with layout
-        self.fig = Figure(figsize=(10, 6), facecolor='#ffffff', dpi=110)
-        self.ax = self.fig.add_subplot(111)
-        self.fig.tight_layout(pad=2.0)
-        
+        # ── Smooth pyqtgraph plot (same render engine as the 12-lead grid) ───
+        # Matplotlib redrew the whole figure every frame (ax.clear + draw_idle),
+        # which made the expanded waveform feel laggy. pyqtgraph instead only
+        # pushes new point data into persistent curve items via setData(), so the
+        # trace scrolls right-to-left fluidly exactly like the 12-lead box.
+        try:
+            pg.setConfigOptions(antialias=True)
+        except Exception:
+            pass
+
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('#ffffff')
+        self.plot_widget.setMenuEnabled(False)
+        self.plot_widget.hideButtons()
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.plot_widget.setClipToView(True)
+        try:
+            self.plot_widget.setDownsampling(auto=True, mode='peak')
+        except Exception:
+            pass
+        self.plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plot_widget.setMinimumSize(500, 320)
+
+        # Axis styling — keep it close to the previous matplotlib look
+        self.plot_widget.setLabel('left', 'Amplitude (ADC)', color='#34495e')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        for _ax_name in ('left', 'bottom'):
+            try:
+                _ax = self.plot_widget.getAxis(_ax_name)
+                _ax.setPen(pg.mkPen(color='#34495e', width=1))
+                _ax.setTextPen(pg.mkPen(color='#34495e'))
+            except Exception:
+                pass
+
+        # Persistent curve items (created ONCE, updated each frame via setData)
+        self.curve = self.plot_widget.plot(pen=pg.mkPen(color=(0, 0, 0), width=1.2))
+        self.median_curve = self.plot_widget.plot(pen=pg.mkPen(color='#7f8c8d', width=2.0))
+        self.resp_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#27ae60', width=1.5, style=Qt.DashLine))
+        self.marker_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#8e44ad', width=0.8, style=Qt.DashLine))
+        self.event_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#e74c3c', width=1.0, style=Qt.DashLine))
+        # Isoelectric baseline (horizontal reference at ADC center)
+        self.baseline_line = pg.InfiniteLine(
+            angle=0, pen=pg.mkPen(color='#95a5a6', width=1.0, style=Qt.DashLine))
+        self.plot_widget.addItem(self.baseline_line)
+
+        # Keep a 'canvas' alias so any legacy references stay valid.
+        self.canvas = self.plot_widget
+
         self.setup_ecg_plot()
-        
-        self.canvas = FigureCanvas(self.fig)
-        # Let the canvas grow/shrink with the window instead of forcing a large minimum
-        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.canvas.setMinimumSize(500, 320)
-        
-        plot_layout.addWidget(self.canvas)
+
+        plot_layout.addWidget(self.plot_widget)
 
         # --- AMPLIFICATION CONTROLS ---
         control_frame = QFrame()
@@ -1089,16 +1129,7 @@ class ExpandedLeadView(QDialog):
             pass
     
     def setup_ecg_plot(self):
-        """Setup the ECG plot with proper styling, but without plotting raw squeezed data"""
-        if len(self.ecg_data) == 0:
-            self.ax.text(0.5, 0.5, 'No ECG Data Available', 
-                        transform=self.ax.transAxes, ha='center', va='center',
-                        fontsize=16, color='gray')
-            return
-        
-        self.ax.clear()
-        self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
-        
+        """Configure the pyqtgraph plot widget: fixed Y range, title, X window."""
         # Add demo mode or wave speed info to title
         if self.demo_mode_active and self.demo_manager:
             mode_text = f" [{self.demo_manager.current_wave_speed}mm/s]"
@@ -1112,31 +1143,23 @@ class ExpandedLeadView(QDialog):
                     mode_text = ""
             except Exception:
                 mode_text = ""
-        
-        self.ax.set_title(f'Lead {self.lead_name} - PQRST Analysis{mode_text}', 
-                         fontsize=18, fontweight='bold', color='#2c3e50')
-        
-        self.ax.set_facecolor('#ffffff')
-        self.ax.set_axisbelow(True)
-        self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
-        self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
-        self.ax.yaxis.set_major_locator(MultipleLocator(500))
-        self.ax.yaxis.set_minor_locator(MultipleLocator(100))
-        self.ax.minorticks_on()
-        self.ax.grid(False)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        
-        # Set stable default axes limits
-        self.ax.set_xlim(0, self.view_window_duration)
-        
+
         ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
         self.display_ylim = (ylim_low, ylim_high)
-        self.ax.set_ylim(ylim_low, ylim_high)
 
-        if hasattr(self, 'canvas'):
-            self.canvas.draw_idle()
-    
+        try:
+            self.plot_widget.setTitle(
+                f'Lead {self.lead_name} - PQRST Analysis{mode_text}',
+                color='#2c3e50', size='14pt')
+            # Fixed Y range (no auto-range jumping); X starts at the window width.
+            self.plot_widget.setYRange(ylim_low, ylim_high, padding=0)
+            self.plot_widget.setXRange(0, self.view_window_duration, padding=0)
+            vb = self.plot_widget.getViewBox()
+            if vb is not None:
+                vb.setLimits(yMin=ylim_low, yMax=ylim_high)
+        except Exception:
+            pass
+
     def create_metrics_panel(self, parent_layout):
         """Create the metrics panel"""
         # A container frame for the entire right-side panel
@@ -1227,7 +1250,9 @@ class ExpandedLeadView(QDialog):
     def start_live_mode(self):
         """Start live data updates"""
         self.is_live = True
-        self.timer.start(100)  # Update every 100ms
+        # ~30 FPS (33 ms) to match the smooth scrolling of the 12-lead grid.
+        # The previous 100 ms (10 FPS) made the expanded waveform look slow/choppy.
+        self.timer.start(33)  # Update every ~33ms (~30 FPS)
 
     def resizeEvent(self, event):
         """Respond to window resizing by scaling fonts and components."""
@@ -1317,10 +1342,20 @@ class ExpandedLeadView(QDialog):
                             # do not make the visible window jump frame-to-frame.
                             if not hasattr(self, "_live_follow_offset"):
                                 self._live_follow_offset = target_offset
+                            # Light smoothing only: enough to absorb bursty serial
+                            # chunk arrival without letting the view lag behind real
+                            # time. Heavy smoothing (old 0.85/0.15) made the wave
+                            # crawl; this tracks the newest samples closely so the
+                            # waveform flows smoothly like the 12-lead grid.
                             self._live_follow_offset = (
-                                0.85 * float(self._live_follow_offset)
-                                + 0.15 * float(target_offset)
+                                0.6 * float(self._live_follow_offset)
+                                + 0.4 * float(target_offset)
                             )
+                            # If we have fallen noticeably behind the newest data
+                            # (e.g. after a focus switch dropped frames), snap forward
+                            # so the trace never appears to stall.
+                            if target_offset - self._live_follow_offset > self.view_window_duration * 0.5:
+                                self._live_follow_offset = target_offset
                             self.view_window_offset = self._live_follow_offset
                         
                         # Update plot first (visual update)
@@ -1937,31 +1972,10 @@ class ExpandedLeadView(QDialog):
 
             ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
 
-            self.ax.clear()
-
-            # Heat map overlay behind waveform (DEACTIVATED as per user request might be used later)
-            """
-            if (
-                self.heatmap_overlay is not None
-                and self.heatmap_time_axis is not None
-                and len(self.heatmap_time_axis) > 0
-            ):
-                window_half = max(0.001, self.heatmap_window_step / 2.0)
-                extent = [
-                    self.heatmap_time_axis[0] - window_half,
-                    self.heatmap_time_axis[-1] + window_half,
-                    ylim_low,
-                    ylim_high,
-                ]
-                self.ax.imshow(
-                    self.heatmap_overlay,
-                    extent=extent,
-                    aspect='auto',
-                    origin='lower',
-                    interpolation='nearest',
-                    zorder=0,
-                )
-            """
+            # ── SMOOTH RENDER (pyqtgraph) ────────────────────────────────────
+            # No matplotlib clear/redraw. We push new data into persistent curve
+            # items (setData), the same technique the 12-lead grid uses, so the
+            # trace scrolls right-to-left fluidly with no per-frame figure rebuild.
 
             # Ensure time and display_adc arrays have matching lengths
             if len(time) != len(display_adc):
@@ -1969,230 +1983,142 @@ class ExpandedLeadView(QDialog):
                 time = time[:min_len]
                 display_adc = display_adc[:min_len]
             
-            # Only plot if we have valid data
-            waveform_alpha = 1.0
+            # Beat-quality estimate → line opacity (kept from previous behavior)
+            waveform_alpha = 255
             quality_text = None
             if len(display_adc) > 0:
-                # Remove NaN values for plotting (replace with interpolation or skip)
                 valid_mask = ~np.isnan(display_adc)
                 if np.any(valid_mask):
-                    # Simple beat quality: peak-to-peak vs threshold
                     try:
                         ptp = np.ptp(display_adc[valid_mask])
                         if self.show_quality and ptp < 0.15:
-                            waveform_alpha = 0.4
+                            waveform_alpha = 110
                             quality_text = "Quality: Noisy/Low"
                         elif self.show_quality:
                             quality_text = "Quality: Clean"
                     except Exception:
                         pass
-                    # Apply light smoothing for smooth wave appearance without
-                    # zero-padding artifacts at the newest/right edge.
+                    # Light smoothing for a clean line without right-edge artifacts
                     display_adc = self._smooth_display_signal(display_adc, sigma=0.5)
-                    
-                    # Plot only valid points
-                    if np.all(valid_mask):
-                        # All data is valid - plot normally with anti-aliasing
-                        self.ax.plot(time, display_adc, color='#000000', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
-                    else:
-                        # Some NaN values - plot segments
-                        time_valid = time[valid_mask]
-                        scaled_valid = display_adc[valid_mask]
-                        if len(time_valid) > 1:
-                            # Apply smoothing to valid segment without edge
-                            # artifacts at the segment tail.
-                            scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
-                            self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=1.0, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Black
+
+                    # Update the main waveform curve. connect='finite' makes
+                    # pyqtgraph break the line across any NaN gaps automatically.
+                    self.curve.setPen(pg.mkPen(color=(0, 0, 0, int(waveform_alpha)), width=1.2))
+                    self.curve.setData(np.asarray(time, dtype=float),
+                                       np.asarray(display_adc, dtype=float),
+                                       connect='finite')
                 else:
+                    self.curve.setData([], [])
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
+                self.curve.setData([], [])
                 print(f" No data to plot in expanded view for lead {self.lead_name}: len={len(display_adc)}")
-            
-            # Overlay vertical markers at detected arrhythmia event times within the visible window
-            if hasattr(self, "arrhythmia_events") and self.arrhythmia_events:
-                t_start, t_end = time[0], time[-1]
-                for evt_time, evt_label in self.arrhythmia_events:
-                    if t_start <= evt_time <= t_end:
-                        # Vertical dashed red line
-                        self.ax.axvline(evt_time, color="#e74c3c", linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
-                        # Small label at the top of the plot
-                        try:
-                            ylim_current = self.ax.get_ylim()
-                            y_top = ylim_current[1]
-                            self.ax.text(
-                                evt_time,
-                                y_top,
-                                "★",
-                                color="#e74c3c",
-                                fontsize=10,
-                                fontweight="bold",
-                                ha="center",
-                                va="bottom",
-                                zorder=3,
-                            )
-                        except Exception:
-                            pass
 
-            # Remove explicit X-axis label ("Time (seconds)") to match dashboard style
-            self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
-            amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
-            self.ax.set_title(
-                f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',
-                fontsize=18,
-                fontweight='bold',
-                color='#2c3e50'
-            )
-            
-            # Set x-limits only if we have valid time data
+            # X window follows the newest samples → smooth right-to-left scroll
             if len(time) > 0:
-                self.ax.set_xlim(time[0], time[-1])
-            else:
-                self.ax.set_xlim(0, 1)  # Fallback
-            
-            self.fig.patch.set_facecolor('#ffffff')
-            self.ax.set_facecolor('#ffffff')
-            self.ax.set_axisbelow(True)
-            self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
-            self.ax.xaxis.set_minor_locator(MultipleLocator(0.04))
-            self.ax.yaxis.set_major_locator(MultipleLocator(500))
-            self.ax.yaxis.set_minor_locator(MultipleLocator(100))
-            self.ax.minorticks_on()
-            self.ax.grid(False)
-            self.ax.spines['top'].set_visible(False)
-            self.ax.spines['right'].set_visible(False)
-            
-            # Y-limits are already set above with amplification scaling - don't override here
-            
+                self.plot_widget.setXRange(float(time[0]), float(time[-1]), padding=0)
+
+            # Isoelectric baseline (display units) — static horizontal reference
+            self.baseline_line.setValue(adc_center)
+            self.baseline_line.setVisible(len(display_adc) > 0)
+
+            # Arrhythmia event markers: vertical dashed lines built as a single
+            # NaN-separated curve (cheap, no per-frame item churn).
+            try:
+                ex, ey = [], []
+                if getattr(self, "arrhythmia_events", None) and len(time) > 0:
+                    t_start, t_end = float(time[0]), float(time[-1])
+                    for evt_time, _evt_label in self.arrhythmia_events:
+                        if t_start <= evt_time <= t_end:
+                            ex += [evt_time, evt_time, np.nan]
+                            ey += [ylim_low, ylim_high, np.nan]
+                self.event_curve.setData(np.asarray(ex, dtype=float),
+                                         np.asarray(ey, dtype=float), connect='finite')
+            except Exception as evt_err:
+                print(f" Event marker overlay error: {evt_err}")
+                self.event_curve.setData([], [])
+
             # Median beat overlay (display-only)
             try:
                 if self.show_median_overlay and len(display_adc) > 0:
                     r_peaks_local = self.analyzer._detect_r_peaks(window_signal)
                     t_median, median_beat = self._compute_median_beat(display_adc, r_peaks_local, self.sampling_rate)
-                    if t_median is not None and median_beat is not None and len(t_median) == len(median_beat):
-                        # Align median beat to first valid R peak in window
-                        if len(r_peaks_local) > 0:
-                            r0 = r_peaks_local[0]
-                            t0 = time[0] + r0 / self.sampling_rate
-                            self.ax.plot(t0 + t_median, median_beat, color="#7f8c8d", linewidth=2.0, alpha=0.6, label="Median beat")
+                    if (t_median is not None and median_beat is not None
+                            and len(t_median) == len(median_beat) and len(r_peaks_local) > 0):
+                        r0 = r_peaks_local[0]
+                        t0 = time[0] + r0 / self.sampling_rate
+                        self.median_curve.setData(np.asarray(t0 + t_median, dtype=float),
+                                                  np.asarray(median_beat, dtype=float))
+                    else:
+                        self.median_curve.setData([], [])
+                else:
+                    self.median_curve.setData([], [])
             except Exception as median_err:
                 print(f" Median beat overlay error: {median_err}")
+                self.median_curve.setData([], [])
 
-            # Isoelectric baseline (TP segment estimate, display units)
+            # Measurement markers (optional P/Q/S/T) as NaN-separated verticals
             try:
-                if len(display_adc) > 0:
-                    r_peaks_local = self.analyzer._detect_r_peaks(window_signal)
-                    tp_samples = []
-                    pre_tp = int(0.35 * self.sampling_rate)
-                    tp_len = int(0.15 * self.sampling_rate)
-                    for r in r_peaks_local:
-                        start = max(0, r - pre_tp)
-                        end = min(len(window_signal), start + tp_len)
-                        if end > start:
-                            tp_samples.append(np.median(window_signal[start:end]))
-                    if len(tp_samples) > 0:
-                        tp_baseline = np.median(tp_samples)
-                        baseline_disp = adc_center
-                        self.ax.axhline(baseline_disp, color="#95a5a6", linestyle="--", linewidth=1.0, alpha=0.7, label="Isoelectric (TP)")
-            except Exception as tp_err:
-                print(f" Baseline overlay error: {tp_err}")
-
-            # Measurement markers (optional)
-            try:
-                if self.show_markers:
+                mx, my = [], []
+                if self.show_markers and len(time) > 0:
                     analysis_local = self.analyzer.analyze_signal(window_signal)
-                    r_peaks = analysis_local.get("r_peaks", [])
-                    p_peaks = analysis_local.get("p_peaks", [])
-                    q_peaks = analysis_local.get("q_peaks", [])
-                    s_peaks = analysis_local.get("s_peaks", [])
-                    t_peaks = analysis_local.get("t_peaks", [])
-                    def _plot_marker(peaks, color, label):
-                        for idx in peaks:
+                    for _key in ("p_peaks", "q_peaks", "s_peaks", "t_peaks"):
+                        for idx in analysis_local.get(_key, []):
                             if 0 <= idx < len(time):
-                                self.ax.axvline(time[idx], color=color, linestyle="--", linewidth=0.8, alpha=0.8)
-                    _plot_marker(p_peaks, "#8e44ad", "P")
-                    _plot_marker(q_peaks, "#16a085", "Q")
-                    _plot_marker(s_peaks, "#16a085", "S")
-                    _plot_marker(t_peaks, "#e67e22", "T")
-                    # QT span if Q and T exist
-                    if len(q_peaks) > 0 and len(t_peaks) > 0:
-                        q_idx = q_peaks[0]
-                        t_idx = t_peaks[-1]
-                        if q_idx < len(time) and t_idx < len(time) and t_idx > q_idx:
-                            self.ax.hlines(y=ylim_high * 0.8, xmin=time[q_idx], xmax=time[t_idx], colors="#e74c3c", linestyles="-", linewidth=2.0)
-                            self.ax.text((time[q_idx]+time[t_idx])/2, ylim_high*0.82, "QT", color="#e74c3c", ha="center", va="bottom", fontsize=9)
+                                mx += [float(time[idx]), float(time[idx]), np.nan]
+                                my += [ylim_low, ylim_high, np.nan]
+                self.marker_curve.setData(np.asarray(mx, dtype=float),
+                                          np.asarray(my, dtype=float), connect='finite')
             except Exception as marker_err:
                 print(f" Marker overlay error: {marker_err}")
+                self.marker_curve.setData([], [])
 
-            # 🫁 RESPIRATION: Plot with separate Y-axis (if respiration data exists)
-            # Respiration uses percentile-based dynamic Y-limits (not fixed like ECG)
-            # This prevents cropping while ECG keeps its fixed Y-axis
-            # No median centering, no EMA clamping - just percentile-based scaling
-            if self.show_respiration and hasattr(self, 'respiration_data') and self.respiration_data is not None:
-                try:
-                    # Extract respiration window matching ECG window
+            # Respiration overlay. pyqtgraph has no twin-axis here, so respiration
+            # is normalized (percentile-based) and mapped into a band in the upper
+            # part of the ECG view, keeping the ECG amplitude scale fixed.
+            try:
+                show_resp = (self.show_respiration
+                             and hasattr(self, 'respiration_data')
+                             and self.respiration_data is not None)
+                if show_resp and len(time) > 0:
                     if len(self.respiration_data) > end_idx:
                         respiration_window = self.respiration_data[start_idx:end_idx]
                     elif len(self.respiration_data) > start_idx:
                         respiration_window = self.respiration_data[start_idx:]
                     else:
                         respiration_window = self.respiration_data
-                    
-                    # Ensure respiration window matches time array length
-                    if len(respiration_window) > len(time):
-                        respiration_window = respiration_window[:len(time)]
-                    elif len(respiration_window) < len(time):
-                        # Pad or interpolate if needed
-                        time_resp = np.arange(len(respiration_window), dtype=float) / self.sampling_rate + (start_idx / self.sampling_rate)
-                        respiration_window = np.interp(time, time_resp, respiration_window)
-                    
-                    if len(respiration_window) > 0 and len(respiration_window) == len(time):
-                        # Create secondary Y-axis for respiration (if not exists)
-                        if self.respiration_ax is None:
-                            self.respiration_ax = self.ax.twinx()
-                            self.respiration_ax.spines['top'].set_visible(False)
-                            self.respiration_ax.spines['left'].set_visible(False)
-                            self.respiration_ax.spines['right'].set_visible(True)
-                            self.respiration_ax.spines['right'].set_color('#27ae60')
-                            self.respiration_ax.tick_params(axis='y', labelcolor='#27ae60')
-                            self.respiration_ax.set_ylabel('Respiration (mV)', fontsize=12, fontweight='bold', color='#27ae60')
-                        
-                        # Clear previous respiration plot
-                        self.respiration_ax.clear()
-                        self.respiration_ax.spines['top'].set_visible(False)
-                        self.respiration_ax.spines['left'].set_visible(False)
-                        self.respiration_ax.spines['right'].set_visible(True)
-                        self.respiration_ax.spines['right'].set_color('#27ae60')
-                        self.respiration_ax.tick_params(axis='y', labelcolor='#27ae60')
-                        self.respiration_ax.set_ylabel('Respiration (mV)', fontsize=12, fontweight='bold', color='#27ae60')
-                        
-                        # Plot respiration on secondary axis
-                        self.respiration_ax.plot(time, respiration_window, color='#27ae60', linewidth=1.5, 
-                                                 label='Respiration', alpha=0.7, linestyle='--', zorder=1)
-                        
-                        # Calculate percentile-based Y-limits for respiration (dynamic, prevents cropping)
-                        # No median centering, no EMA - just percentile-based scaling
-                        resp_ylim = self.calculate_respiration_ylim(respiration_window)
-                        self.respiration_ax.set_ylim(resp_ylim[0], resp_ylim[1])
-                        self.respiration_ylim = resp_ylim
-                        
-                        # Sync X-axis with ECG
-                        self.respiration_ax.set_xlim(time[0], time[-1])
-                except Exception as resp_error:
-                    print(f" Error plotting respiration: {resp_error}")
-            elif self.respiration_ax is not None:
-                # Clear respiration axis if no data
-                self.respiration_ax.clear()
-                self.respiration_ax = None
+                    respiration_window = np.asarray(respiration_window, dtype=float)
 
-            # Apply smoothed Y-limits after all overlays
-            self.ax.set_ylim(ylim_low, ylim_high)
-            if quality_text:
-                try:
-                    self.ax.text(time[0] if len(time) > 0 else 0, ylim_high * 0.9, quality_text, color="#7f8c8d", fontsize=9, va="top")
-                except Exception:
-                    pass
+                    if respiration_window.size != len(time) and respiration_window.size >= 2:
+                        xp = np.linspace(0.0, 1.0, respiration_window.size)
+                        xq = np.linspace(0.0, 1.0, len(time))
+                        respiration_window = np.interp(xq, xp, respiration_window)
 
-            self.canvas.draw_idle()
+                    valid_resp = respiration_window[~np.isnan(respiration_window)]
+                    if valid_resp.size > 0 and respiration_window.size == len(time):
+                        p1 = float(np.percentile(valid_resp, 1))
+                        p99 = float(np.percentile(valid_resp, 99))
+                        span = max(1e-6, p99 - p1)
+                        full = (ylim_high - ylim_low)
+                        band = 0.18 * full
+                        center = adc_center + 0.55 * (ylim_high - adc_center)
+                        resp_disp = center + (((respiration_window - p1) / span) - 0.5) * band
+                        self.resp_curve.setData(np.asarray(time, dtype=float),
+                                                np.asarray(resp_disp, dtype=float), connect='finite')
+                    else:
+                        self.resp_curve.setData([], [])
+                else:
+                    self.resp_curve.setData([], [])
+            except Exception as resp_error:
+                print(f" Error plotting respiration: {resp_error}")
+                self.resp_curve.setData([], [])
+
+            # Title (amplification + quality)
+            amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
+            q_text = f"  •  {quality_text}" if quality_text else ""
+            self.plot_widget.setTitle(
+                f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}{q_text}',
+                color='#2c3e50', size='14pt')
         except Exception as e:
             print(f"Error updating plot: {e}")
     
@@ -2286,16 +2212,29 @@ class ExpandedLeadView(QDialog):
                 f"Failed to stop acquisition: {str(e)}")
     
     def update_button_states(self):
-        """Update start/stop button states based on parent acquisition status"""
+        """Update start/stop button states based on parent acquisition status.
+
+        Called every live tick (~30 FPS), so it must be cheap and quiet: we only
+        touch the widgets / log when the state actually changes.
+        """
         try:
             parent = self.parent()
-            
+
             # Check if demo mode is active
             is_demo_mode = False
             if parent and hasattr(parent, 'demo_toggle'):
                 is_demo_mode = parent.demo_toggle.isChecked()
-            
-            # Hide buttons if demo mode is ON, show if OFF
+
+            is_running = False
+            if (not is_demo_mode) and parent and hasattr(parent, 'timer'):
+                is_running = parent.timer.isActive()
+
+            # Skip all work (and logging) if nothing changed since last tick.
+            state = (is_demo_mode, is_running)
+            if getattr(self, '_last_button_state', None) == state:
+                return
+            self._last_button_state = state
+
             if hasattr(self, 'expanded_start_btn') and hasattr(self, 'expanded_stop_btn'):
                 if is_demo_mode:
                     # Demo mode is ON - hide the buttons
@@ -2306,17 +2245,8 @@ class ExpandedLeadView(QDialog):
                     # Demo mode is OFF - show the buttons and update their states
                     self.expanded_start_btn.setVisible(True)
                     self.expanded_stop_btn.setVisible(True)
-                    
-                    # Update enabled/disabled state based on acquisition status
-                    if parent and hasattr(parent, 'timer'):
-                        is_running = parent.timer.isActive()
-                        self.expanded_start_btn.setEnabled(not is_running)
-                        self.expanded_stop_btn.setEnabled(is_running)
-                    else:
-                        # Default state if parent not available
-                        self.expanded_start_btn.setEnabled(True)
-                        self.expanded_stop_btn.setEnabled(False)
-                    
+                    self.expanded_start_btn.setEnabled(not is_running)
+                    self.expanded_stop_btn.setEnabled(is_running)
                     print("Demo mode OFF - Start/Stop buttons visible in expanded view")
         except Exception as e:
             print(f"Error updating button states: {e}")
@@ -2833,24 +2763,13 @@ class ExpandedLeadView(QDialog):
             print(f" Error saving expanded arrhythmia findings: {exc}")
     
     def update_plot_with_markers(self, analysis):
-        """Update the plot without PQRST labels/markers (as requested)"""
+        """Clear any optional PQRST marker overlay (pyqtgraph path)."""
         if self.ecg_data.size == 0:
             return
 
         try:
-            # Remove any previously drawn markers/labels and do not add new ones
-            for artist in list(self.ax.collections):
-                artist.remove()
-            for artist in list(self.ax.texts):
-                artist.remove()
-
-            # Ensure no legend is shown
-            leg = self.ax.get_legend()
-            if leg is not None:
-                leg.remove()
-
-            self.canvas.draw_idle()
-
+            if hasattr(self, 'marker_curve'):
+                self.marker_curve.setData([], [])
         except Exception as e:
             print(f"Error updating plot markers: {e}")
 
