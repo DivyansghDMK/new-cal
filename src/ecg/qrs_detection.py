@@ -75,7 +75,7 @@ MIN_SIGNIFICANT_PEAK_HEIGHT_RATIO: float = 0.10
 
 # Physiological QRS limits
 QRS_DURATION_MIN_MS: float = 40.0
-QRS_DURATION_MAX_MS: float = 300.0
+QRS_DURATION_MAX_MS: float = 200.0  # Even extreme LBBB/RBBB rarely exceeds 200ms
 
 
 def _amplitude_qrs_width(signal: np.ndarray,
@@ -951,7 +951,12 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
             pre_ms=250.0,
             post_ms=400.0,
         )
-        if amp_qrs_ms > qrs_ms:
+        # Use amplitude-based measurement ONLY for already-wide complexes.
+        # This avoids inflating normal QRS (80-120ms) with P-wave/T-wave contamination.
+        # Condition: slope-based must already be >= 110ms (suggesting real wide QRS/BBB)
+        # AND amplitude result must be within physiological limits (≤ 180ms).
+        # This preserves LBBB/RBBB detection while rejecting false wide measurements.
+        if qrs_ms >= 110.0 and amp_qrs_ms > qrs_ms and amp_qrs_ms <= 180.0:
             qrs_ms = amp_qrs_ms
             global_onset = amp_onset if amp_onset is not None else global_onset
             global_offset = amp_offset if amp_offset is not None else global_offset

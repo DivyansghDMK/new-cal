@@ -1412,57 +1412,58 @@ class LoginRegisterDialog(QDialog):
         # layout.addSpacing(4)
         # layout.addWidget(phone_card)
 
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(10)
+        # COMMENTED OUT: Home, About us, Blog, Pricing navigation menu
+        # nav_row = QHBoxLayout()
+        # nav_row.setSpacing(10)
 
-        class NavHome(QWidget):
-            def __init__(self): super().__init__(); self.setWindowTitle("Home")
-        class NavAbout(QWidget):
-            def __init__(self): super().__init__(); self.setWindowTitle("About")
-        class NavBlog(QWidget):
-            def __init__(self): super().__init__(); self.setWindowTitle("Blog")
-        class NavPricing(QWidget):
-            def __init__(self): super().__init__(); self.setWindowTitle("Pricing")
+        # class NavHome(QWidget):
+        #     def __init__(self): super().__init__(); self.setWindowTitle("Home")
+        # class NavAbout(QWidget):
+        #     def __init__(self): super().__init__(); self.setWindowTitle("About")
+        # class NavBlog(QWidget):
+        #     def __init__(self): super().__init__(); self.setWindowTitle("Blog")
+        # class NavPricing(QWidget):
+        #     def __init__(self): super().__init__(); self.setWindowTitle("Pricing")
 
-        nav_links = [
-            ("Home", NavHome),
-            ("About us", NavAbout),
-            ("Blog", NavBlog),
-            ("Pricing", NavPricing)
-        ]
-        self.nav_stack = QStackedWidget()
-        self.nav_pages = {}
+        # nav_links = [
+        #     ("Home", NavHome),
+        #     ("About us", NavAbout),
+        #     ("Blog", NavBlog),
+        #     ("Pricing", NavPricing)
+        # ]
+        # self.nav_stack = QStackedWidget()
+        # self.nav_pages = {}
 
-        def show_nav_page(page_name):
-            self.nav_stack.setCurrentWidget(self.nav_pages[page_name])
-            self.nav_stack.setVisible(True)
+        # def show_nav_page(page_name):
+        #     self.nav_stack.setCurrentWidget(self.nav_pages[page_name])
+        #     self.nav_stack.setVisible(True)
 
-        nav_row.addStretch(1)
-        for text, NavClass in nav_links:
-            nav_btn = QPushButton(text)
-            nav_btn.setStyleSheet("""
-                color: #ff9a3b;
-                background: transparent;
-                border: none;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 4px 8px;
-            """)
-            page = NavClass()
-            self.nav_stack.addWidget(page)
-            self.nav_pages[text] = page
-            if text == "Pricing":
-                def show_pricing_dialog():
-                    QMessageBox.information(self, "Pricing", "Pricing information not available.")
-                nav_btn.clicked.connect(lambda checked, p=self: show_pricing_dialog())
-            else:
-                nav_btn.clicked.connect(lambda checked, t=text: show_nav_page(t))
-            nav_row.addWidget(nav_btn)
-        nav_row.addStretch(1)
+        # nav_row.addStretch(1)
+        # for text, NavClass in nav_links:
+        #     nav_btn = QPushButton(text)
+        #     nav_btn.setStyleSheet("""
+        #         color: #ff9a3b;
+        #         background: transparent;
+        #         border: none;
+        #         font-size: 14px;
+        #         font-weight: bold;
+        #         padding: 4px 8px;
+        #     """)
+        #     page = NavClass()
+        #     self.nav_stack.addWidget(page)
+        #     self.nav_pages[text] = page
+        #     if text == "Pricing":
+        #         def show_pricing_dialog():
+        #             QMessageBox.information(self, "Pricing", "Pricing information not available.")
+        #         nav_btn.clicked.connect(lambda checked, p=self: show_pricing_dialog())
+        #     else:
+        #         nav_btn.clicked.connect(lambda checked, t=text: show_nav_page(t))
+        #     nav_row.addWidget(nav_btn)
+        # nav_row.addStretch(1)
 
-        layout.addLayout(nav_row)
-        layout.addWidget(self.nav_stack)
-        self.nav_stack.setVisible(False)
+        # layout.addLayout(nav_row)
+        # layout.addWidget(self.nav_stack)
+        # self.nav_stack.setVisible(False)
         self._refresh_otp_controls()
         layout.addStretch(1)
         widget.setLayout(layout)
@@ -1599,13 +1600,14 @@ class LoginRegisterDialog(QDialog):
         self.confirm_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_confirm, self.confirm_eye_btn))
         confirm_row.addWidget(self.confirm_eye_btn)
         
+        # COMMENTED OUT: Request for New Organization and Existing Organization buttons
         # Organization buttons (imported from organization module)
-        import importlib
-        organization_module = importlib.import_module('organization')
-        create_organization_buttons_layout = getattr(organization_module, 'create_organization_buttons_layout')
-        self.org_buttons_layout, self.new_org_handler, self.existing_org_handler = create_organization_buttons_layout(self)
-        
-        layout.addLayout(self.org_buttons_layout)
+        # import importlib
+        # organization_module = importlib.import_module('organization')
+        # create_organization_buttons_layout = getattr(organization_module, 'create_organization_buttons_layout')
+        # self.org_buttons_layout, self.new_org_handler, self.existing_org_handler = create_organization_buttons_layout(self)
+
+        # layout.addLayout(self.org_buttons_layout)
         layout.addWidget(self.reg_serial)
         layout.addWidget(self.reg_name)
         layout.addWidget(self.reg_doctor)

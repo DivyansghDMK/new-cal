@@ -791,9 +791,10 @@ class HRVTestWindow(QWidget):
         except Exception:
             pass
         try:
+            # Reset ALL metrics to initial values when report is opened
+            self._last_displayed_bpm = 0
             if 'heart_rate' in self.metric_labels:
-                if getattr(self, '_last_displayed_bpm', 0) > 0:
-                    self.metric_labels['heart_rate'].setText(f"{int(self._last_displayed_bpm)} BPM")
+                self.metric_labels['heart_rate'].setText("00 BPM")
             if 'pr_interval' in self.metric_labels:
                 self.metric_labels['pr_interval'].setText("0 ms")
             if 'qrs_duration' in self.metric_labels:
