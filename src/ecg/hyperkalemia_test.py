@@ -18,6 +18,7 @@ from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
 # import pyqtgraph as pg  # Lazy loaded in methods
 from scipy.signal import find_peaks, butter, filtfilt
+from scipy.ndimage import gaussian_filter1d
 
 # Try to import serial
 try:
@@ -530,7 +531,7 @@ class HyperkalemiaTestWindow(QWidget):
             lead_color = lead_colors.get(lead_name, '#00ff00')
             plot_widget.setTitle(f"Lead {lead_name}", color='#FFFFFF', size='11pt')
             
-            # Fixed raw-ADC Y ranges (same as 12-lead style)
+            # Fixed Y range — same as HRV / 12-lead (stable, no clipping)
             if lead_name == 'aVR':
                 plot_widget.setYRange(0, -4096, padding=0)
             else:
@@ -762,6 +763,31 @@ class HyperkalemiaTestWindow(QWidget):
                 if lead_name in self._sweep_bufs:
                     self._sweep_bufs[lead_name][:] = 2048.0
                     self._sweep_poses[lead_name] = 0
+
+            # Per-lead circular display buffers (same stable sweep model as HRV test)
+            HISTORY_LENGTH = 10000
+            self._ring_bufs = {
+                lead: np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32)
+                for lead in self.lead_data.keys()
+            }
+            self._ring_active = {lead: 0 for lead in self.lead_data.keys()}
+
+            # Reset display anchors and warmup so trace starts clean (same as HRV test)
+            if hasattr(self, "_display_anchors"):
+                del self._display_anchors
+            self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
+
+            # Discard stale serial packets so the trace does not start mid-stream
+            if self.serial_reader:
+                try:
+                    if hasattr(self.serial_reader, "buf"):
+                        self.serial_reader.buf.clear()
+                    ser = getattr(self.serial_reader, "ser", None)
+                    if ser and hasattr(ser, "reset_input_buffer"):
+                        ser.reset_input_buffer()
+                except Exception:
+                    pass
+
             # Reset adaptive scaling
             self.y_centers = {lead: 0.0 for lead in self.lead_data.keys()}
             self.y_ranges = {lead: 200.0 for lead in self.lead_data.keys()}
@@ -1125,6 +1151,16 @@ class HyperkalemiaTestWindow(QWidget):
                             if lead_name in self._plot_buffers:
                                 self._plot_buffers[lead_name].append(value_for_buffers)
 
+                            # Circular display buffer for stable sweep rendering
+                            if lead_name in self.lead_data and hasattr(self, "_ring_bufs"):
+                                ring = self._ring_bufs.get(lead_name)
+                                if ring is not None:
+                                    self._ring_bufs[lead_name] = np.roll(ring, -1)
+                                    self._ring_bufs[lead_name][-1] = value_for_buffers
+                                    self._ring_active[lead_name] = min(
+                                        len(ring), self._ring_active.get(lead_name, 0) + 1
+                                    )
+
                             # Primary Lead II backup
                             if lead_name == 'II':
                                 self.data = np.roll(self.data, -1)
@@ -1149,166 +1185,133 @@ class HyperkalemiaTestWindow(QWidget):
                         safe_sr = 500.0
                     self.sampling_rate = safe_sr
 
-            # Get filter settings from SettingsManager
+            from ecg.ecg_filters import (
+                apply_ac_filter,
+                apply_emg_filter,
+                apply_dft_filter,
+                apply_baseline_wander_median_mean,
+            )
+            from ecg.utils.helpers import get_display_gain
+
             ac_val = "50"
             emg_val = "25"
             dft_val = "0.5"
             fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             if fs < 100.0 or fs > 1000.0:
                 fs = 500.0
-            
+
             render_stride = max(1, int(getattr(self, "_plot_render_stride", 1)))
             if (self.sample_index % render_stride) != 0:
                 self._plot_update_in_progress = False
                 return
 
-            # Update all plots with stable display window
+            warmup_needed = getattr(self, "_display_warmup_samples", int(1.2 * fs))
+            display_ready = self.active_samples >= warmup_needed
+            if not display_ready:
+                self._plot_update_in_progress = False
+                return
+
+            gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
+
+            if not hasattr(self, "_display_anchors"):
+                self._display_anchors = {}
+
             for lead_name in self.lead_data.keys():
-                buf = self._plot_buffers.get(lead_name)
-                if not buf:
+                ring = getattr(self, "_ring_bufs", {}).get(lead_name)
+                if ring is None:
                     continue
 
-                seconds_to_show = float(self._plot_seconds.get(lead_name, 3.0))
-                try:
-                    if lead_name != 'II' and self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
-                        ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
-                        if ws > 0:
-                            seconds_to_show = max(1.0, ws / float(fs))
-                except Exception:
-                    pass
-
-                values = list(buf)
-                if not values:
-                    continue
-
-                # If lead is OFF, render a stable flat trace (match 12-lead behavior).
                 lead_is_off = bool(self._lead_off_state.get(lead_name, False))
+                valid_count = min(self._ring_active.get(lead_name, 0), len(ring))
+                if valid_count <= 0:
+                    continue
+
+                window_seconds = 10.0 if lead_name == 'II' else 4.0
+                window_samples = max(50, int(window_seconds * fs))
+                window_samples = min(window_samples, valid_count)
+
+                buffer_data = np.asarray(ring[-window_samples:], dtype=float)
                 if lead_is_off:
-                    values = [self._adc_center] * len(values)
+                    buffer_data = np.full_like(buffer_data, self._adc_center)
 
-                # Build aligned time axis for the bounded buffer (oldest → newest)
-                latest_t = float(self._last_packet_time or 0.0)
-                n = len(values)
-                start_t = latest_t - ((n - 1) / float(fs)) if n > 1 else latest_t
-                times = (start_t + (np.arange(n, dtype=float) / float(fs))).tolist()
-
-                # Apply Filters only when lead is connected (avoid distorting flat OFF trace)
-                if not lead_is_off:
-                    try:
-                        from ecg.ecg_filters import (
-                            apply_ac_filter,
-                            apply_emg_filter,
-                            apply_dft_filter,
-                            apply_baseline_wander_median_mean,
-                        )
-                        if len(values) > 5:  # Start display filtering almost immediately after capture begins
-                            values_array = np.array(values, dtype=float)
-                            pad_len = min(50, max(0, len(values_array) - 1))
-                            if pad_len > 0:
-                                padded_values = np.pad(values_array, (pad_len, pad_len), mode='edge')
-                            else:
-                                padded_values = values_array
-
-                            if ac_val not in ["Off", "off"]:
-                                padded_values = apply_ac_filter(padded_values, fs, ac_val)
-                            if emg_val not in ["Off", "off"]:
-                                padded_values = apply_emg_filter(padded_values, fs, emg_val)
-                            if dft_val not in ["Off", "off", "", None]:
-                                dft_text = str(dft_val).strip()
-                                if dft_text == "0.5":
-                                    padded_values = apply_baseline_wander_median_mean(padded_values, fs)
-                                else:
-                                    padded_values = apply_dft_filter(padded_values, fs, dft_text)
-
-                                padded_values = padded_values + float(self._adc_center)
-
-                                # Trim the filter edge artifacts so the visible wave
-                                # doesn't wobble on the left/right sides when 0.5 Hz is selected.
-                                if dft_text == "0.5":
-                                    edge_trim = int(0.5 * fs)
-                                    if edge_trim > 0 and len(padded_values) > (2 * edge_trim + 10):
-                                        padded_values = padded_values[edge_trim:-edge_trim]
-
-                            if pad_len > 0:
-                                values = padded_values[pad_len:-pad_len].tolist()
-                            else:
-                                values = padded_values.tolist()
-                    except ImportError:
-                        pass
-                    
-                if len(times) > 0:
-                    max_time = times[-1]
-                    min_time = max(0, max_time - seconds_to_show)
-
-                    # Keep only visible range (fast slice instead of full-history mask)
-                    # times is ascending; find first index >= min_time
-                    start_i = 0
-                    for i, t in enumerate(times):
-                        if t >= min_time:
-                            start_i = i
-                            break
-                    display_values = np.asarray(values[start_i:], dtype=float)
-
-                    if len(display_values) > 0:
-                        # Adaptive centering and gain scaling to prevent "small peaks" issue
-                        if not hasattr(self, "_display_anchors"):
-                            self._display_anchors = {}
-                        if lead_name not in self._display_anchors:
-                            self._display_anchors[lead_name] = float(np.nanmedian(display_values)) if len(display_values) else 2048.0
-
-                        alpha = 0.02
-                        baseline_estimate = float(np.nanmedian(display_values)) if len(display_values) else 2048.0
-                        self._display_anchors[lead_name] = (1.0 - alpha) * self._display_anchors[lead_name] + alpha * baseline_estimate
-
-                        from ecg.utils.helpers import get_display_gain
-                        gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
-
-                        if lead_is_off:
-                            display_values = np.full(len(display_values), self._adc_center)
-                        else:
-                            centered = (display_values - self._display_anchors[lead_name]) * gain_factor
-                            display_values = np.clip(2048.0 + centered, 0, 4096)
-
-                    # ── Medical monitor sweep render ──────────────────────────────
-                    sweep_n = self._sweep_ns[lead_name]
-                    if n_new > 0 and len(display_values) > 0:
-                        # Use actual filtered values directly — no ratio scaling
-                        samples_to_push = min(n_new, len(display_values))
-                        new_vals = np.asarray(display_values[-samples_to_push:], dtype=float)
-                        for v in new_vals:
-                            self._sweep_bufs[lead_name][self._sweep_poses[lead_name]] = float(v)
-                            self._sweep_poses[lead_name] = (self._sweep_poses[lead_name] + 1) % sweep_n
-
-                    pos = self._sweep_poses[lead_name]
-                    s_buf = self._sweep_bufs[lead_name]
-
-                    # Build y array with NaN gap eraser ahead of sweep head
-                    gap = self._sweep_gaps[lead_name]
-                    y_display = s_buf.copy().astype(float)
-                    for k in range(gap):
-                        y_display[(pos + k) % sweep_n] = np.nan
-
-                    # Layer 1 — phosphor glow
-                    x_axis = np.arange(sweep_n, dtype=float)
-                    self.plot_curves_glow[lead_name].setData(x_axis, y_display)
-
-                    # Layer 2 — bright trace
-                    self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
-
-                    # Layer 3 — black eraser
-                    # Set empty to prevent erasing/cropping the center line or grid lines
-                    self.sweep_gap_curves[lead_name].setData([], [])
-
-                    # Layer 4 — sweep head dot
-                    head_pos = (pos - 1) % sweep_n
-                    self.sweep_dots[lead_name].setData([float(head_pos)], [float(s_buf[head_pos])])
-
-                    self.plot_widgets[lead_name].setXRange(0, sweep_n, padding=0)
-                    if lead_name == 'aVR':
-                        self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                # Same filter + smooth pipeline as HRV test (clean display)
+                if len(buffer_data) > 5 and not lead_is_off:
+                    pad_len = min(50, max(0, len(buffer_data) - 1))
+                    if pad_len > 0:
+                        padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='edge')
                     else:
-                        self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
-        
+                        padded_data = buffer_data
+
+                    if ac_val not in ("Off", "off"):
+                        padded_data = apply_ac_filter(padded_data, fs, ac_val)
+                    if emg_val not in ("Off", "off"):
+                        padded_data = apply_emg_filter(padded_data, fs, emg_val)
+                    if dft_val not in ("Off", "off", "", None):
+                        dft_text = str(dft_val).strip()
+                        if dft_text == "0.5":
+                            padded_data = apply_baseline_wander_median_mean(padded_data, fs)
+                        else:
+                            padded_data = apply_dft_filter(padded_data, fs, dft_text)
+                        padded_data = padded_data + float(self._adc_center)
+                        if dft_text == "0.5":
+                            edge_trim = int(0.5 * fs)
+                            min_keep = max(50, pad_len * 2 + 20)
+                            if edge_trim > 0 and len(padded_data) > (2 * edge_trim + min_keep):
+                                padded_data = padded_data[edge_trim:-edge_trim]
+
+                    if pad_len > 0:
+                        buffer_data = padded_data[pad_len:-pad_len]
+                    else:
+                        buffer_data = padded_data
+
+                    buffer_data = gaussian_filter1d(buffer_data, sigma=1.2)
+
+                if len(buffer_data) <= 0:
+                    continue
+
+                if lead_name not in self._display_anchors:
+                    self._display_anchors[lead_name] = float(np.nanmedian(buffer_data))
+
+                baseline_estimate = float(np.nanmedian(buffer_data))
+                self._display_anchors[lead_name] = (
+                    0.98 * self._display_anchors[lead_name] + 0.02 * baseline_estimate
+                )
+
+                if lead_is_off:
+                    display_values = np.full(len(buffer_data), self._adc_center)
+                else:
+                    centered = (buffer_data - self._display_anchors[lead_name]) * gain_factor
+                    display_values = np.clip(2048.0 + centered, 0, 4096)
+
+                sweep_n = self._sweep_ns[lead_name]
+                if n_new > 0 and len(display_values) > 0:
+                    samples_to_push = min(n_new, len(display_values))
+                    new_vals = display_values[-samples_to_push:]
+                    for v in new_vals:
+                        pos = self._sweep_poses[lead_name]
+                        self._sweep_bufs[lead_name][pos] = float(v)
+                        self._sweep_poses[lead_name] = (pos + 1) % sweep_n
+
+                pos = self._sweep_poses[lead_name]
+                s_buf = self._sweep_bufs[lead_name]
+                gap = self._sweep_gaps[lead_name]
+                y_display = s_buf.copy().astype(float)
+                for k in range(gap):
+                    y_display[(pos + k) % sweep_n] = np.nan
+
+                x_axis = np.arange(sweep_n, dtype=float)
+                self.plot_curves_glow[lead_name].setData(x_axis, y_display)
+                self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
+                self.sweep_gap_curves[lead_name].setData([], [])
+
+                head_pos = (pos - 1) % sweep_n
+                self.sweep_dots[lead_name].setData([float(head_pos)], [float(s_buf[head_pos])])
+                self.plot_widgets[lead_name].setXRange(0, sweep_n, padding=0)
+                if lead_name == 'aVR':
+                    self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                else:
+                    self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
+
         except Exception as e:
             pass
         finally:

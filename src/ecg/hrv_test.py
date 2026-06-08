@@ -650,6 +650,24 @@ class HRVTestWindow(QWidget):
             # Reset sweep display buffer so next capture starts from left edge
             self._sweep_buf[:] = 2048.0
             self._sweep_pos = 0
+
+            # Reset display baseline anchor so centering adapts fresh for this session
+            if hasattr(self, "_hrv_display_anchor"):
+                del self._hrv_display_anchor
+            # Baseline/DFT filters need ~1.2 s of real samples before output is stable
+            self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
+            self._display_warmed_up = False
+
+            # Discard stale serial packets so the trace does not start mid-stream
+            if self.serial_reader:
+                try:
+                    if hasattr(self.serial_reader, "buf"):
+                        self.serial_reader.buf.clear()
+                    ser = getattr(self.serial_reader, "ser", None)
+                    if ser and hasattr(ser, "reset_input_buffer"):
+                        ser.reset_input_buffer()
+                except Exception:
+                    pass
             
             # Reset smoothing buffers
             if self.ecg_calculator:
@@ -1024,7 +1042,10 @@ class HRVTestWindow(QWidget):
 
             buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-            if len(buffer_data) > 5:
+            warmup_needed = getattr(self, "_display_warmup_samples", int(1.2 * fs))
+            display_ready = valid_count >= warmup_needed
+
+            if len(buffer_data) > 5 and display_ready:
                 # Get filter settings from SettingsManager
                 ac_val = "50"
                 emg_val = "25"
@@ -1059,7 +1080,8 @@ class HRVTestWindow(QWidget):
                     # wobble during the first and last few seconds of the visible window.
                     if dft_text == "0.5":
                         edge_trim = int(0.5 * fs)
-                        if edge_trim > 0 and len(padded_data) > (2 * edge_trim + 10):
+                        min_keep = max(50, pad_len * 2 + 20)
+                        if edge_trim > 0 and len(padded_data) > (2 * edge_trim + min_keep):
                             padded_data = padded_data[edge_trim:-edge_trim]
 
                 if pad_len > 0:
@@ -1067,21 +1089,21 @@ class HRVTestWindow(QWidget):
                 else:
                     buffer_data = padded_data
 
-            if len(buffer_data) > 5:
                 # Gentle smoothing for HRV display so the trace looks continuous.
                 buffer_data = gaussian_filter1d(buffer_data, sigma=1.2)
 
-            if len(buffer_data) > 0:
+            if len(buffer_data) > 0 and display_ready:
                 # Center the waveform in the middle of the plot so it stays visually stable
                 # across devices with different ADC offsets.
-                if not hasattr(self, "_hrv_display_anchor"):
+                if not getattr(self, "_display_warmed_up", False):
+                    self._display_warmed_up = True
                     self._hrv_display_anchor = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
-                    self._hrv_display_anchor_alpha = 0.02
+                elif not hasattr(self, "_hrv_display_anchor"):
+                    self._hrv_display_anchor = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
 
                 baseline_estimate = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
                 self._hrv_display_anchor = (
-                    (1.0 - self._hrv_display_anchor_alpha) * self._hrv_display_anchor
-                    + self._hrv_display_anchor_alpha * baseline_estimate
+                    0.98 * self._hrv_display_anchor + 0.02 * baseline_estimate
                 )
 
                 gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
