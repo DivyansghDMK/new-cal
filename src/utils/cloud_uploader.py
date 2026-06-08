@@ -774,22 +774,18 @@ class CloudUploader:
         except ClientError as e:
             return {"status": "error", "message": f"S3 upload failed: {str(e)}"}
     
-    def upload_complete_report_package(self, pdf_path, patient_data, ecg_data_file, report_metadata=None):
+    def upload_complete_report_package(self, pdf_path, patient_data, ecg_data_file, report_metadata=None, report_type="12_LEAD_ECG", clinical_measurements=None):
         """
         Upload complete ECG report package to S3:
-        - PDF report
-        - Patient details (JSON)
-        - 12-lead ECG data (10 seconds, JSON)
+        - PDF report (kept separate)
+        - Unified report_package.json containing:
+          - device_provenance
+          - doctor_registration
+          - patient
+          - clinical_measurements
+          - ecg_data
+          - report_metadata
         Supports offline mode - queues for upload when internet is restored
-        
-        Args:
-            pdf_path (str): Path to PDF report file
-            patient_data (dict): Patient details dictionary
-            ecg_data_file (str): Path to JSON file containing 12-lead ECG data (10 seconds)
-            report_metadata (dict): Optional additional metadata
-            
-        Returns:
-            dict: Upload result with status and details
         """
         if not self.upload_enabled:
             return {"status": "disabled", "message": "Cloud upload is disabled"}
@@ -803,6 +799,15 @@ class CloudUploader:
         # Check if online - if offline, queue for later upload
         if self.offline_queue and not self.offline_queue.is_online():
             print(f"[OFFLINE] Queuing complete report package for upload when online")
+            queue_payload = {
+                "pdf_path": pdf_path,
+                "patient_data": patient_data,
+                "ecg_data_file": ecg_data_file,
+                "report_metadata": report_metadata,
+                "report_type": report_type,
+                "clinical_measurements": clinical_measurements
+            }
+            self.offline_queue.queue_data("cloud_complete_package", queue_payload, priority=2)
             return {
                 "status": "queued",
                 "message": "Report package queued for upload when internet connection is restored"
@@ -811,6 +816,103 @@ class CloudUploader:
         try:
             import boto3
             from botocore.exceptions import ClientError
+            import uuid
+            import platform
+            from utils.license_manager import load_registration_profile, load_token_file, get_machine_context
+            
+            # Helper to sanitize numbers
+            def _to_num(val):
+                if val is None:
+                    return None
+                try:
+                    if isinstance(val, (int, float)):
+                        return val
+                    s = str(val).strip().replace("°", "").replace(" ms", "").replace(" bpm", "")
+                    if not s or s == "--":
+                        return None
+                    if "." in s:
+                        return float(s)
+                    return int(s)
+                except Exception:
+                    return None
+
+            profile = load_registration_profile()
+            token = load_token_file()
+            machine_ctx = get_machine_context()
+            
+            # Parse ECG JSON
+            ecg_json = {}
+            if ecg_data_file:
+                if isinstance(ecg_data_file, dict):
+                    ecg_json = ecg_data_file
+                elif isinstance(ecg_data_file, str) and os.path.exists(ecg_data_file):
+                    try:
+                        with open(ecg_data_file, 'r', encoding='utf-8') as f:
+                            ecg_json = json.load(f)
+                    except Exception as e:
+                        print(f"[WARN] Could not parse ECG data file {ecg_data_file}: {e}")
+            
+            # Build clinical measurements
+            if not clinical_measurements:
+                meta = report_metadata or {}
+                clinical_measurements = {
+                    "heart_rate": _to_num(meta.get("heart_rate") or meta.get("heart_rate_bpm") or meta.get("heart_rate_avg") or meta.get("HR_bpm") or meta.get("Heart_Rate")),
+                    "pr_interval": _to_num(meta.get("pr_interval") or meta.get("pr_ms")),
+                    "qrs_duration": _to_num(meta.get("qrs_duration") or meta.get("qrs_ms")),
+                    "qt_interval": _to_num(meta.get("qt_interval") or meta.get("qt_ms")),
+                    "qtc": _to_num(meta.get("qtc_interval") or meta.get("qtc_ms") or meta.get("qtc")),
+                    "p_axis": _to_num(meta.get("p_axis") or meta.get("p_axis_display") or meta.get("p_axis_deg")),
+                    "qrs_axis": _to_num(meta.get("qrs_axis") or meta.get("qrs_axis_display") or meta.get("qrs_axis_deg")),
+                    "t_axis": _to_num(meta.get("t_axis") or meta.get("t_axis_display") or meta.get("t_axis_deg")),
+                }
+            # Clean clinical measurements to keep only valid values
+            clinical_measurements = {k: v for k, v in clinical_measurements.items() if v is not None}
+            
+            # Generate/retrieve report ID and timestamps
+            report_id = (report_metadata or {}).get("report_id") or str(uuid.uuid4())
+            generated_at = (report_metadata or {}).get("generated_at") or (report_metadata or {}).get("report_date") or datetime.utcnow().isoformat()
+            uploaded_at = datetime.utcnow().isoformat()
+            
+            # Build device provenance
+            device_provenance = {
+                "rhythmultra_serial": profile.get("rhythmultra_serial") or profile.get("rhythmulta_serial") or profile.get("RhythmUltra_serial") or "",
+                "machine_serial_id": machine_ctx.get("machine_serial_id") or profile.get("machine_serial_id") or "",
+                "pc_name": machine_ctx.get("machine_name") or platform.node(),
+                "software_version": "2.0.0"
+            }
+            
+            # Extract license_id and seat_number
+            license_id = (token or {}).get("license_id") or (token or {}).get("id") or profile.get("license_id") or ""
+            seat_number = (token or {}).get("seat_number") or (token or {}).get("seat") or profile.get("seat_number") or 1
+            
+            # Add seat number to device provenance/rhythmultra if needed
+            rhythmultra = {
+                "serial_number": device_provenance["rhythmultra_serial"],
+                "seat_number": seat_number
+            }
+            
+            # Build unified report package JSON
+            upload_package = {
+                "report_type": report_type,
+                "device_provenance": device_provenance,
+                "rhythmultra": rhythmultra,
+                "doctor_registration": {
+                    "doctor_name": profile.get("doctor_name", ""),
+                    "hospital_name": profile.get("hospital_name", ""),
+                    "hospital_address": profile.get("hospital_address", ""),
+                    "phone": profile.get("phone", "")
+                },
+                "patient": patient_data or {},
+                "clinical_measurements": clinical_measurements,
+                "ecg_data": ecg_json,
+                "report_metadata": {
+                    "report_id": report_id,
+                    "generated_at": generated_at,
+                    "uploaded_at": uploaded_at,
+                    "report_version": "1",
+                    "license_id": license_id
+                }
+            }
             
             s3_client = boto3.client(
                 's3',
@@ -819,8 +921,42 @@ class CloudUploader:
                 region_name=self.s3_region
             )
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            date_prefix = datetime.now().strftime("%Y/%m/%d")
+            import re
+            patient_name = "Unknown"
+            if patient_data:
+                patient_name = (
+                    patient_data.get("name") 
+                    or patient_data.get("patient_name") 
+                    or f"{patient_data.get('first_name', '')} {patient_data.get('last_name', '')}".strip()
+                )
+            if not patient_name or patient_name == "Unknown":
+                if report_metadata:
+                    patient_name = report_metadata.get("patient_name") or report_metadata.get("name") or "Unknown"
+            
+            sanitized_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(patient_name))
+            sanitized_name = re.sub(r'_+', '_', sanitized_name).strip('_')
+            if not sanitized_name:
+                sanitized_name = "Unknown"
+
+            now = datetime.now()
+            year = now.strftime("%Y")
+            month = now.strftime("%m")
+            day = now.strftime("%d")
+            
+            # S3 prefix and keys with patient name and report_id for easy identification
+            s3_prefix = f"reports/{year}/{month}/{day}/{report_id}"
+            package_s3_key = f"{s3_prefix}/{sanitized_name}_{report_id}.json"
+            pdf_s3_key = f"{s3_prefix}/{sanitized_name}_{report_id}.pdf"
+            
+            # Convenience custom metadata headers (Step 7)
+            custom_metadata = {
+                "report_type": report_type,
+                "rhythmultra_serial": device_provenance["rhythmultra_serial"],
+                "doctor_name": profile.get("doctor_name", ""),
+                "hospital_name": profile.get("hospital_name", "")
+            }
+            # Clean headers values to be strings
+            s3_metadata_headers = {k: str(v) for k, v in custom_metadata.items() if v is not None}
             
             upload_results = {
                 "status": "success",
@@ -831,24 +967,12 @@ class CloudUploader:
             
             # 1. Upload PDF Report
             if pdf_path and os.path.exists(pdf_path):
-                pdf_filename = os.path.basename(pdf_path)
-                pdf_s3_key = f"ecg-reports/{date_prefix}/{timestamp}/{pdf_filename}"
-                
-                pdf_metadata = {
-                    "type": "ecg_report_pdf",
-                    "uploaded_at": datetime.now().isoformat(),
-                    "filename": pdf_filename
-                }
-                if report_metadata:
-                    pdf_metadata.update(report_metadata)
-                
                 s3_client.upload_file(
                     pdf_path,
                     self.s3_bucket,
                     pdf_s3_key,
-                    ExtraArgs={'Metadata': {k: str(v) for k, v in pdf_metadata.items()}}
+                    ExtraArgs={'Metadata': s3_metadata_headers}
                 )
-                
                 upload_results["uploads"].append({
                     "type": "pdf_report",
                     "key": pdf_s3_key,
@@ -856,121 +980,74 @@ class CloudUploader:
                 })
                 print(f"[OK] Uploaded PDF report to S3: {pdf_s3_key}")
             
-            # 2. Upload Patient Details (JSON)
-            if patient_data:
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
-                    json.dump(patient_data, f, indent=2, ensure_ascii=False)
-                    patient_file = f.name
-                
+            # 2. Upload Package JSON
+            def _sanitize(o):
                 try:
-                    patient_filename = f"patient_details_{timestamp}.json"
-                    patient_s3_key = f"ecg-reports/{date_prefix}/{timestamp}/{patient_filename}"
-                    
-                    patient_metadata = {
-                        "type": "patient_details",
-                        "uploaded_at": datetime.now().isoformat(),
-                        "patient_name": patient_data.get("patient_name") or 
-                                       f"{patient_data.get('first_name', '')} {patient_data.get('last_name', '')}".strip()
-                    }
-                    
-                    s3_client.upload_file(
-                        patient_file,
-                        self.s3_bucket,
-                        patient_s3_key,
-                        ExtraArgs={'Metadata': {k: str(v) for k, v in patient_metadata.items()}}
-                    )
-                    
-                    upload_results["uploads"].append({
-                        "type": "patient_details",
-                        "key": patient_s3_key,
-                        "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{patient_s3_key}"
-                    })
-                    print(f"[OK] Uploaded patient details to S3: {patient_s3_key}")
-                finally:
-                    try:
-                        os.remove(patient_file)
-                    except:
-                        pass
+                    import numpy as np
+                except ImportError:
+                    np = None
+                
+                if isinstance(o, dict):
+                    return {k: _sanitize(v) for k, v in o.items()}
+                elif isinstance(o, (list, tuple)):
+                    return [_sanitize(x) for x in o]
+                elif np is not None:
+                    if isinstance(o, np.integer):
+                        return int(o)
+                    elif isinstance(o, np.floating):
+                        return float(o)
+                    elif isinstance(o, np.bool_):
+                        return bool(o)
+                    elif isinstance(o, np.ndarray):
+                        return [_sanitize(x) for x in o.tolist()]
+                return o
+
+            upload_package = _sanitize(upload_package)
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+                json.dump(upload_package, f, indent=2, ensure_ascii=False)
+                package_file_path = f.name
             
-            # 3. Upload 12-Lead ECG Data (10 seconds, JSON)
-            if ecg_data_file and os.path.exists(ecg_data_file):
-                ecg_filename = os.path.basename(ecg_data_file)
-                ecg_s3_key = f"ecg-reports/{date_prefix}/{timestamp}/{ecg_filename}"
-                
-                # Load ECG data to verify it has 10 seconds
-                try:
-                    with open(ecg_data_file, 'r') as f:
-                        ecg_data = json.load(f)
-                    
-                    sampling_rate = ecg_data.get("sampling_rate", 80.0)
-                    expected_samples = int(sampling_rate * 10)  # 10 seconds
-                    
-                    ecg_metadata = {
-                        "type": "ecg_12lead_data",
-                        "uploaded_at": datetime.now().isoformat(),
-                        "filename": ecg_filename,
-                        "sampling_rate": str(sampling_rate),
-                        "duration_seconds": "10",
-                        "expected_samples": str(expected_samples)
-                    }
-                    
-                    # Verify each lead has approximately 10 seconds of data
-                    leads = ecg_data.get("leads", {})
-                    for lead_name, lead_data in leads.items():
-                        if isinstance(lead_data, list):
-                            actual_samples = len(lead_data)
-                            ecg_metadata[f"lead_{lead_name}_samples"] = str(actual_samples)
-                    
-                except Exception as e:
-                    print(f"[WARN] Could not verify ECG data: {e}")
-                    ecg_metadata = {
-                        "type": "ecg_12lead_data",
-                        "uploaded_at": datetime.now().isoformat(),
-                        "filename": ecg_filename
-                    }
-                
+            try:
                 s3_client.upload_file(
-                    ecg_data_file,
+                    package_file_path,
                     self.s3_bucket,
-                    ecg_s3_key,
-                    ExtraArgs={'Metadata': {k: str(v) for k, v in ecg_metadata.items()}}
+                    package_s3_key,
+                    ExtraArgs={'Metadata': s3_metadata_headers}
                 )
-                
                 upload_results["uploads"].append({
-                    "type": "ecg_data",
-                    "key": ecg_s3_key,
-                    "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{ecg_s3_key}"
+                    "type": "package_json",
+                    "key": package_s3_key,
+                    "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{package_s3_key}"
                 })
-                print(f"[OK] Uploaded 12-lead ECG data to S3: {ecg_s3_key}")
+                print(f"[OK] Uploaded report package JSON to S3: {package_s3_key}")
+            finally:
+                try:
+                    os.remove(package_file_path)
+                except:
+                    pass
             
             # Log the upload
             if upload_results["uploads"]:
-                self._log_upload(pdf_path or ecg_data_file, upload_results, {
+                self._log_upload(pdf_path or "package.json", upload_results, {
                     "type": "complete_report_package",
-                    "timestamp": timestamp,
-                    "uploads_count": len(upload_results["uploads"])
+                    "timestamp": now.strftime("%Y%m%d_%H%M%S"),
+                    "report_id": report_id,
+                    "report_type": report_type
                 })
-            
+                
             return upload_results
             
         except ImportError as e:
-            import traceback
-            error_details = traceback.format_exc()
-            print(f"  DEBUG: ImportError details: {e}")
-            print(f"  DEBUG: Full traceback:\n{error_details}")
-            return {"status": "error", "message": f"boto3 not installed or import failed: {str(e)}. Run: pip install boto3"}
+            return {"status": "error", "message": f"boto3 not installed: {str(e)}"}
         except ClientError as e:
             return {"status": "error", "message": f"S3 upload failed: {str(e)}"}
         except Exception as e:
             import traceback
-            error_details = traceback.format_exc()
-            print(f"  DEBUG: Unexpected error during S3 upload: {e}")
-            print(f"  DEBUG: Full traceback:\n{error_details}")
-            return {"status": "error", "message": f"S3 upload failed: {str(e)}"}
-        except Exception as e:
-            import traceback
-            return {"status": "error", "message": f"Upload failed: {str(e)}", "traceback": traceback.format_exc()}
+            print(f"[ERR] S3 unified package upload error: {e}")
+            traceback.print_exc()
+            return {"status": "error", "message": f"Upload failed: {str(e)}"}
 
     def list_reports(self, prefix: str = "reports/"):
         """List report objects in S3 (PDF and JSON under prefix)."""

@@ -4176,37 +4176,43 @@ def generate_ecg_report(
         
         cloud_uploader = get_cloud_uploader()
         if cloud_uploader.is_configured():
-            print(f"  Uploading report to cloud ({cloud_uploader.cloud_service})...")
+            print(f"  Uploading report package to cloud ({cloud_uploader.cloud_service})...")
+            
+            # Prepare clinical measurements
+            clinical_measurements = {
+                "heart_rate": HR,
+                "pr_interval": PR,
+                "qrs_duration": QRS,
+                "qt_interval": QT,
+                "qtc": QTc,
+                "p_axis": p_mm,
+                "qrs_axis": qrs_mm,
+                "t_axis": t_mm
+            }
             
             # Prepare metadata
-            upload_metadata = {
+            report_metadata = {
                 "patient_name": data.get('patient', {}).get('name', 'Unknown'),
                 "patient_age": str(data.get('patient', {}).get('age', '')),
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "master_phone": master_phone,
-                "heart_rate": str(data.get('Heart_Rate', '')),
-                "report_type": "12_lead_ecg",
             }
             
-            # Upload the report PDF
-            result = cloud_uploader.upload_report(filename, metadata=upload_metadata)
+            # Upload the complete report package
+            result = cloud_uploader.upload_complete_report_package(
+                pdf_path=filename,
+                patient_data=patient if isinstance(patient, dict) else {},
+                ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else None,
+                report_metadata=report_metadata,
+                report_type="12_LEAD_ECG",
+                clinical_measurements=clinical_measurements
+            )
             
             if result.get('status') == 'success':
-                print(f" Report PDF uploaded successfully to {cloud_uploader.cloud_service}")
-                if 'url' in result:
-                    print(f"  URL: {result['url']}")
+                print(f"✓ Report package uploaded successfully to {cloud_uploader.cloud_service}")
             else:
-                print(f"  Cloud upload failed for PDF: {result.get('message', 'Unknown error')}")
-            
-            # ALSO upload the unified JSON data file if it exists
-            if 'saved_data_file_path' in locals() and saved_data_file_path and os.path.exists(saved_data_file_path):
-                print(f"  Uploading unified JSON data to cloud...")
-                json_result = cloud_uploader.upload_report(saved_data_file_path, metadata=upload_metadata)
-                if json_result.get('status') == 'success':
-                    print(f"  Unified JSON data uploaded successfully")
-                else:
-                    print(f"  Cloud upload failed for JSON: {json_result.get('message', 'Unknown error')}")
+                print(f"  Cloud upload failed: {result.get('message', 'Unknown error')}")
         else:
             print("  Cloud upload not configured (see cloud_config_template.txt)")
             

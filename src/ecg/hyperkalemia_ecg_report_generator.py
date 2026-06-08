@@ -2909,35 +2909,41 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         
         cloud_uploader = get_cloud_uploader()
         if cloud_uploader.is_configured():
-            print(f"  Uploading report to cloud ({cloud_uploader.cloud_service})...")
+            print(f"  Uploading report package to cloud ({cloud_uploader.cloud_service})...")
+            
+            # Prepare clinical measurements
+            clinical_measurements = {
+                "heart_rate": HR,
+                "pr_interval": PR,
+                "qrs_duration": QRS,
+                "qt_interval": QT,
+                "qtc": QTc,
+                "p_axis": p_mm if 'p_mm' in locals() else None,
+                "qrs_axis": qrs_mm if 'qrs_mm' in locals() else None,
+                "t_axis": t_mm if 't_mm' in locals() else None
+            }
             
             # Prepare metadata
-            upload_metadata = {
+            report_metadata = {
                 "patient_name": data.get('patient', {}).get('name', 'Unknown'),
                 "patient_age": str(data.get('patient', {}).get('age', '')),
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "master_phone": str((patient or {}).get("phone") or (patient or {}).get("mobile_no") or backend_username or ""),
-                "heart_rate": str(data.get('Heart_Rate', '')),
-                "report_type": "hyperkalemia",
             }
             
-            # Upload the report
-            result = cloud_uploader.upload_report(filename, metadata=upload_metadata)
-            
-            # Upload companion ECG JSON (if generated for this report flow)
-            if 'saved_data_file_path' in locals() and saved_data_file_path and os.path.exists(saved_data_file_path):
-                print("  Uploading ECG JSON data to cloud...")
-                json_result = cloud_uploader.upload_report(saved_data_file_path, metadata=upload_metadata)
-                if json_result.get('status') == 'success':
-                    print("  ECG JSON data uploaded successfully")
-                else:
-                    print(f"  Cloud upload failed for JSON: {json_result.get('message', 'Unknown error')}")
+            # Upload the complete package
+            result = cloud_uploader.upload_complete_report_package(
+                pdf_path=filename,
+                patient_data=patient if isinstance(patient, dict) else {},
+                ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else None,
+                report_metadata=report_metadata,
+                report_type="HYPERKALEMIA_ANALYSIS",
+                clinical_measurements=clinical_measurements
+            )
             
             if result.get('status') == 'success':
-                print(f"✓ Report uploaded successfully to {cloud_uploader.cloud_service}")
-                if 'url' in result:
-                    print(f"  URL: {result['url']}")
+                print(f"✓ Report package uploaded successfully to {cloud_uploader.cloud_service}")
             else:
                 print(f"  Cloud upload failed: {result.get('message', 'Unknown error')}")
         else:

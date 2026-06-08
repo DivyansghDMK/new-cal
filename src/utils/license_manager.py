@@ -861,7 +861,69 @@ def register_device(
     }
     result = _post_json("register", body)
     _verify_server_sig(result)
+
+    if result.get("valid") or result.get("success") or result.get("authorized"):
+        try:
+            from datetime import datetime
+            profile_path = _TOKEN_DIR / "registration_profile.json"
+            _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+            
+            seat_number = result.get("seat_number") or result.get("seat") or 1
+            license_id = result.get("license_id") or result.get("id") or ""
+            
+            token_str = result.get("token")
+            if token_str:
+                try:
+                    if isinstance(token_str, dict):
+                        payload = token_str.get("payload", token_str)
+                    elif isinstance(token_str, str) and token_str.count(".") == 2:
+                        parts = token_str.split(".")
+                        payload_b64 = parts[1]
+                        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+                        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                        payload = json.loads(payload_bytes.decode("utf-8"))
+                    else:
+                        payload = {}
+                    
+                    if payload:
+                        if not license_id:
+                            license_id = payload.get("license_id") or payload.get("id") or ""
+                        if seat_number == 1:
+                            seat_number = payload.get("seat_number") or payload.get("seat") or 1
+                except Exception as pe:
+                    print(f"[License] Could not extract from token: {pe}")
+            
+            profile = {
+                "doctor_name": doctor_name,
+                "hospital_name": org_name,
+                "hospital_address": org_address,
+                "phone": phone,
+                "license_id": license_id,
+                "seat_number": seat_number,
+                "rhythmultra_serial": RhythmUltra_serial,
+                "machine_serial_id": machine_serial,
+                "registered_at": datetime.utcnow().isoformat()
+            }
+            with open(profile_path, "w", encoding="utf-8") as f:
+                json.dump(profile, f, indent=2)
+            print(f"[License] Saved registration profile to {profile_path}")
+        except Exception as e:
+            print(f"[License] Failed to save registration profile: {e}")
+
     return result
+
+
+def load_registration_profile() -> Dict:
+    """Load registration profile from %APPDATA%\\Deckmount\\registration_profile.json."""
+    profile_path = _TOKEN_DIR / "registration_profile.json"
+    try:
+        if profile_path.exists():
+            with open(profile_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[License] Error loading registration profile: {e}")
+    return {}
+
 
 
 def load_raw_token() -> str:

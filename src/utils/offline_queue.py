@@ -383,6 +383,8 @@ class OfflineQueue:
                 patient_data = item['data'].get('patient_data', {})
                 ecg_data_file = item['data'].get('ecg_data_file')
                 report_metadata = item['data'].get('report_metadata', {})
+                report_type = item['data'].get('report_type', '12_LEAD_ECG')
+                clinical_measurements = item['data'].get('clinical_measurements')
                 
                 if pdf_path and os.path.exists(pdf_path):
                     # Temporarily disable offline queue check to force upload
@@ -391,7 +393,12 @@ class OfflineQueue:
                     
                     try:
                         result = cloud_uploader.upload_complete_report_package(
-                            pdf_path, patient_data, ecg_data_file, report_metadata
+                            pdf_path=pdf_path,
+                            patient_data=patient_data,
+                            ecg_data_file=ecg_data_file,
+                            report_metadata=report_metadata,
+                            report_type=report_type,
+                            clinical_measurements=clinical_measurements
                         )
                     finally:
                         cloud_uploader.offline_queue = original_offline_queue  # Restore
