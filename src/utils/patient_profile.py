@@ -8,7 +8,7 @@ from utils.app_paths import data_file
 SRC_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = SRC_ROOT.parent
 USERS_FILE = data_file("users.json")
-ALL_PATIENTS_FILE = PROJECT_ROOT / "all_patients.json"
+ALL_PATIENTS_FILE = data_file("all_patients.json")
 FALLBACK_USERS_FILE = SRC_ROOT / "users.json"
 
 

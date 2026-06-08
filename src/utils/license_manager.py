@@ -875,6 +875,20 @@ def heartbeat(token_data: Dict) -> Dict:
     """
     machine_ctx = get_machine_context()
     current_fp = get_hardware_fingerprint()
+    current_stable_fp = _stable_hardware_fingerprint()
+
+    # Tolerant hardware checking: if core machine matches, reuse registered fingerprint
+    # to prevent mismatch errors on server side due to dynamic MAC/Disk changes.
+    raw_token = load_token_file()
+    if raw_token:
+        stored_fp = raw_token.get("fingerprint", "")
+        meta = _load_license_meta()
+        stored_stable_fp = raw_token.get("stable_fingerprint", meta.get("stable_fingerprint", ""))
+        if stored_fp and stored_stable_fp:
+            if hmac.compare_digest(current_stable_fp, stored_stable_fp):
+                current_fp = stored_fp
+                print("[License] Stable hardware match. Using registered fingerprint for heartbeat check.")
+
     current_RhythmUltra_serial = get_rhythmultra_serial() or token_data.get(
         "rhythmultra_serial", token_data.get("RhythmUltra_serial", token_data.get("rhythmulta_serial", ""))
     )
@@ -1681,6 +1695,15 @@ def deactivate(license_key: str) -> bool:
     """Deactivate this machine — clears token and contacts server."""
     token = load_token_file()
     fingerprint = get_hardware_fingerprint()
+    if token:
+        stored_fp = token.get("fingerprint", "")
+        meta = _load_license_meta()
+        stored_stable_fp = token.get("stable_fingerprint", meta.get("stable_fingerprint", ""))
+        current_stable_fp = _stable_hardware_fingerprint()
+        if stored_fp and stored_stable_fp and hmac.compare_digest(current_stable_fp, stored_stable_fp):
+            fingerprint = stored_fp
+            print("[License] Stable hardware match. Using registered fingerprint for deactivation check.")
+
     body = {
         "license_key": license_key,
         "hardware_fingerprint": fingerprint,

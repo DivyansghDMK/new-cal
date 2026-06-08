@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 import os
 from datetime import datetime
+from utils.app_paths import data_file
 
 class HistoryDialog(QDialog):
     def __init__(self, parent=None):
@@ -40,7 +41,7 @@ class HistoryDialog(QDialog):
         self.load_reports()
 
     def load_reports(self):
-        reports_dir = "reports"
+        reports_dir = str(data_file("reports"))
         if not os.path.exists(reports_dir):
             return
 

@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from utils.settings_manager import SettingsManager
 from utils.localization import translate_text
 from utils.patient_profile import resolve_patient_profile
+from utils.app_paths import data_file
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -1089,8 +1090,7 @@ class ECGMenu(QGroupBox):
             if prefill is None:
                 try:
                     # Get path to centralized database (in modularecg folder)
-                    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-                    patients_db_file = os.path.join(base_dir, "all_patients.json")
+                    patients_db_file = str(data_file("all_patients.json"))
                     
                     if os.path.exists(patients_db_file):
                         with open(patients_db_file, "r") as jf:
@@ -1193,8 +1193,7 @@ class ECGMenu(QGroupBox):
             # Persist to centralized all_patients.json database
             try:
                 # Get path to centralized database (in modularecg folder)
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-                patients_db_file = os.path.join(base_dir, "all_patients.json")
+                patients_db_file = str(data_file("all_patients.json"))
                 
                 # Load existing patients database
                 all_patients = {"patients": []}

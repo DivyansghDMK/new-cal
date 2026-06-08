@@ -4831,8 +4831,7 @@ class Dashboard(QWidget):
             )
 
             if not prefill:
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-                patients_db_file = os.path.join(base_dir, "all_patients.json")
+                patients_db_file = str(data_file("all_patients.json"))
                 if os.path.exists(patients_db_file):
                     with open(patients_db_file, "r") as jf:
                         all_patients = json.load(jf) or {}
@@ -4931,8 +4930,7 @@ class Dashboard(QWidget):
             setattr(self, "patient_details", patient_details)
 
             # Persist to centralized all_patients.json database
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            patients_db_file = os.path.join(base_dir, "all_patients.json")
+            patients_db_file = str(data_file("all_patients.json"))
 
             if os.path.exists(patients_db_file):
                 try:

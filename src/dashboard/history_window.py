@@ -34,6 +34,12 @@ except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     from utils.cloud_uploader import get_cloud_uploader
 
+try:
+    from utils.app_paths import data_file
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    from utils.app_paths import data_file
+
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
 from PyQt5.QtGui import QFont, QPixmap, QColor, QImage
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -49,10 +55,10 @@ if load_dotenv is not None:
         if os.path.exists(candidate):
             load_dotenv(candidate, override=False)
             break
-HISTORY_FILE = os.path.join(BASE_DIR, "ecg_history.json")
-ECG_DATA_FILE = os.path.join(BASE_DIR, "ecg_data.txt")
-REPORTS_INDEX_FILE = os.path.join(BASE_DIR, "reports", "index.json")
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+HISTORY_FILE = str(data_file("ecg_history.json"))
+ECG_DATA_FILE = str(data_file("ecg_data.txt"))
+REPORTS_DIR = str(data_file("reports"))
+REPORTS_INDEX_FILE = os.path.join(REPORTS_DIR, "index.json")
 BACKEND_API_URL = "https://your-backend-api.com/api/reports"
 API_TIMEOUT = 30
 PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
@@ -1195,7 +1201,7 @@ class HistoryWindow(QDialog):
     def _collect_json_reports(self):
         reports = []
         seen = set()
-        for root_dir in (REPORTS_DIR, os.path.join(BASE_DIR, "recordings")):
+        for root_dir in (REPORTS_DIR, str(data_file("recordings"))):
             if not os.path.exists(root_dir):
                 continue
             for root, _dirs, files in os.walk(root_dir):
@@ -1794,7 +1800,7 @@ class HistoryWindow(QDialog):
                 pass
 
         # Also scan reports directory for any stray PDFs that might not be in index
-        RECORDINGS_DIR = os.path.join(BASE_DIR, "recordings")
+        RECORDINGS_DIR = str(data_file("recordings"))
         scan_dirs = [REPORTS_DIR, RECORDINGS_DIR]
         try:
             from PyQt5.QtCore import QStandardPaths
@@ -1820,7 +1826,7 @@ class HistoryWindow(QDialog):
 
         # Fallback
         if not history_entries:
-            pf = os.path.join(BASE_DIR, "all_patients.json")
+            pf = str(data_file("all_patients.json"))
             if os.path.exists(pf):
                 try:
                     with open(pf, "r", encoding="utf-8") as f:
@@ -2117,7 +2123,7 @@ class HistoryWindow(QDialog):
             return normalized
 
         base_name = os.path.basename(candidate)
-        for root_dir in (REPORTS_DIR, os.path.join(BASE_DIR, "recordings")):
+        for root_dir in (REPORTS_DIR, str(data_file("recordings"))):
             if not os.path.exists(root_dir):
                 continue
             for root, _dirs, files in os.walk(root_dir):
