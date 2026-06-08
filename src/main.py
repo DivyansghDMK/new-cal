@@ -1669,21 +1669,66 @@ class LoginRegisterDialog(QDialog):
                     result.step_failed == 5
                     and getattr(result, "error_code", "") == "LICENSE_REVOKED"
                 )
-                QMessageBox.critical(
-                    self,
-                    {
-                        1: "License Missing",
-                        2: "License Integrity Failed",
-                        3: "Fingerprint Mismatch",
-                        4: "RhythmUltra Device Required",
-                        5: "License Verification Required",
-                    }.get(result.step_failed, "License Blocked"),
-                    result.reason,
+
+                # ── Seat-missing: offer re-registration ───────────────────────
+                reason_lower = result.reason.lower()
+                error_code_upper = getattr(result, "error_code", "").upper()
+                _seat_missing_phrases = (
+                    "seat not found",
+                    "not registered under this license",
+                    "please register first",
+                    "seat has been flagged",
+                    "seat unavailable",
                 )
-                if result.step_failed in {1, 2} or is_explicit_revocation:
-                    clear_stored_key()
-                    clear_license_cache()
-                return
+                is_seat_missing = (
+                    result.step_failed == 5
+                    and not is_explicit_revocation
+                    and (
+                        error_code_upper in ("SEAT_NOT_FOUND", "LICENSE_BLOCKED")
+                        or any(p in reason_lower for p in _seat_missing_phrases)
+                    )
+                )
+
+                if is_seat_missing:
+                    reply = QMessageBox.question(
+                        self,
+                        "Re-register Device",
+                        f"Your device seat was not found on the license server.\n\n"
+                        f"License key on file: {stored_key}\n\n"
+                        "This usually happens after a server update or account reset.\n"
+                        "Click Yes to clear the stale license and open the Sign Up screen, "
+                        "or No to cancel login.",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if reply == QMessageBox.Yes:
+                        clear_stored_key()
+                        clear_license_cache()
+                        logger.info(
+                            "Login: cleared stale seat after seat-not-found; redirecting to Sign Up tab."
+                        )
+                        # Switch to Sign Up tab (index 1)
+                        try:
+                            self.stacked.setCurrentIndex(1)
+                        except Exception:
+                            pass
+                    return
+                else:
+                    QMessageBox.critical(
+                        self,
+                        {
+                            1: "License Missing",
+                            2: "License Integrity Failed",
+                            3: "Fingerprint Mismatch",
+                            4: "RhythmUltra Device Required",
+                            5: "License Verification Required",
+                        }.get(result.step_failed, "License Blocked"),
+                        result.reason,
+                    )
+                    if result.step_failed in {1, 2} or is_explicit_revocation:
+                        clear_stored_key()
+                        clear_license_cache()
+                    return
         except Exception as le:
             logger.warning(f"Failed to check license during login: {le}")
         # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
@@ -2390,21 +2435,78 @@ def main():
                         result.step_failed == 5
                         and getattr(result, "error_code", "") == "LICENSE_REVOKED"
                     )
-                    QMessageBox.critical(
-                        None,
-                        {
-                            1: "License Missing",
-                            2: "License Integrity Failed",
-                            3: "Fingerprint Mismatch",
-                            4: "RhythmUltra Device Required",
-                            5: "License Verification Required",
-                        }.get(result.step_failed, "License Blocked"),
-                        result.reason,
+
+                    # ── Detect "Seat not found" / seat-missing errors ─────────
+                    # This happens when the server DB was reset or the seat was
+                    # deleted server-side.  The fix is to clear the stale local
+                    # token and let the user re-register.
+                    reason_lower = result.reason.lower()
+                    error_code_upper = getattr(result, "error_code", "").upper()
+                    _seat_missing_phrases = (
+                        "seat not found",
+                        "not registered under this license",
+                        "please register first",
+                        "seat has been flagged",
+                        "seat unavailable",
                     )
-                    if result.step_failed in {1, 2} or is_explicit_revocation:
-                        clear_stored_key()
-                        clear_license_cache()
-                    return
+                    is_seat_missing = (
+                        result.step_failed == 5
+                        and not is_explicit_revocation
+                        and (
+                            error_code_upper in ("SEAT_NOT_FOUND", "LICENSE_BLOCKED")
+                            or any(p in reason_lower for p in _seat_missing_phrases)
+                        )
+                    )
+
+                    if is_seat_missing:
+                        # Offer the user a choice: Re-register or Exit
+                        reregister_box = QMessageBox(None)
+                        reregister_box.setWindowTitle("License — Seat Not Found")
+                        reregister_box.setIcon(QMessageBox.Warning)
+                        reregister_box.setText(
+                            "<b>Your device seat was not found on the license server.</b><br><br>"
+                            "This usually happens after a server update or account reset.<br>"
+                            "You can re-register this device using your existing license key."
+                        )
+                        reregister_box.setInformativeText(
+                            f"License key on file: <b>{stored_key}</b><br><br>"
+                            "Click <b>Re-register Device</b> to open the registration screen, "
+                            "or <b>Exit</b> to close the application."
+                        )
+                        reregister_btn = reregister_box.addButton(
+                            "Re-register Device", QMessageBox.AcceptRole
+                        )
+                        reregister_box.addButton("Exit", QMessageBox.RejectRole)
+                        reregister_box.exec_()
+
+                        if reregister_box.clickedButton() is reregister_btn:
+                            # Clear stale token/key so the app opens on Sign Up tab
+                            logger.info(
+                                "User chose re-registration after seat-not-found error. "
+                                "Clearing stale token and key."
+                            )
+                            clear_stored_key()
+                            clear_license_cache()
+                            # Fall through — login dialog will show on signup tab below
+                        else:
+                            return  # User chose Exit
+                    else:
+                        # All other failures → show error and block/return
+                        QMessageBox.critical(
+                            None,
+                            {
+                                1: "License Missing",
+                                2: "License Integrity Failed",
+                                3: "Fingerprint Mismatch",
+                                4: "RhythmUltra Device Required",
+                                5: "License Verification Required",
+                            }.get(result.step_failed, "License Blocked"),
+                            result.reason,
+                        )
+                        if result.step_failed in {1, 2} or is_explicit_revocation:
+                            clear_stored_key()
+                            clear_license_cache()
+                        return
             else:
                 logger.info("No license key found. Redirecting directly to signup page.")
         except Exception as e:
