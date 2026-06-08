@@ -356,6 +356,13 @@ def get_hardware_fingerprint() -> str:
 
 
 _detected_device_serial: Optional[str] = None
+_restricted_mode: bool = False
+
+
+def is_license_restricted() -> bool:
+    """Return True if the license is currently in restricted mode (offline stable mismatch)."""
+    global _restricted_mode
+    return _restricted_mode
 
 
 def set_detected_device_serial(serial: Optional[str]):
@@ -1079,6 +1086,7 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
     Returns a StartupCheckResult.  If .ok is False, .step_failed and
     .reason describe the first failing check.
     """
+    global _restricted_mode
     res = StartupCheckResult()
     now = _current_unix_time()
     debug_enabled = os.getenv("CARDIOX_LICENSE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -1191,6 +1199,19 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
             hb_result = heartbeat(token)
             if debug_enabled:
                 print(f"[License][DEBUG] heartbeat={hb_result}")
+            
+            if hb_result.get("offline"):
+                _restricted_mode = True
+                res.ok = True
+                res.restricted_mode = True
+                res.offline_mode = True
+                res.reason = (
+                    "Hardware change detected.\n\n"
+                    "Internet connection required to reverify license.\n\n"
+                    "ECG acquisition disabled until verification completes."
+                )
+                return res
+
             hb_message = str(hb_result.get("message", "")).lower()
             hb_error = str(hb_result.get("error", "")).lower()
             server_token_failure = any(
@@ -1304,11 +1325,14 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                     "accepting local machine identity fallback."
                 )
             else:
-                res.step_failed = 3
-                res.error_code = "MACHINE_MISMATCH"
+                _restricted_mode = True
+                res.ok = True
+                res.restricted_mode = True
+                res.offline_mode = True
                 res.reason = (
-                    "This license is registered to a different machine.\n"
-                    "Contact Deckmount support if your hardware has changed."
+                    "Hardware change detected.\n\n"
+                    "Internet connection required to reverify license.\n\n"
+                    "ECG acquisition disabled until verification completes."
                 )
                 return res
     elif stable_matches and not fingerprint_matches:
@@ -1325,34 +1349,17 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
         token["stable_fingerprint"] = current_stable_fp
         token["last_local_time"] = now
 
-    # ── Check 4: RhythmUltra connected and serial matches (platform-dependent) ─
+    # ── Check 4: RhythmUltra connected (informational only during startup) ──
     usb_serial = get_rhythmultra_serial()
     res.RhythmUltra_serial = usb_serial
-    enforce_device_lock = _enforce_rhythmultra_lock()
-    if enforce_device_lock:
-        if usb_serial is None:
-            res.step_failed = 4
-            res.error_code = "RHYTHMULTRA_REQUIRED"
-            res.reason = "Unauthorized RhythmUltra device connected."
-            return res
-
-        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
-        # If stored_serial is empty the device was never bound — allow first use.
-        if stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
-            res.step_failed = 4
-            res.error_code = "RHYTHMULTRA_MISMATCH"
-            res.reason = "Unauthorized RhythmUltra device connected."
-            return res
-    else:
-        # Development / non-Windows runs can proceed without the hardware lock.
-        stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
-        if usb_serial and stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
-            _append_audit_event(
-                "DUPLICATE_ACTIVATION_ATTEMPT",
-                license_key=token.get("license_key", ""),
-                RhythmUltra_serial=usb_serial,
-                machine_serial_id=token.get("machine_serial_id", ""),
-            )
+    stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
+    if usb_serial and stored_serial and not hmac.compare_digest(usb_serial, stored_serial):
+        _append_audit_event(
+            "DUPLICATE_ACTIVATION_ATTEMPT",
+            license_key=token.get("license_key", ""),
+            RhythmUltra_serial=usb_serial,
+            machine_serial_id=token.get("machine_serial_id", ""),
+        )
 
     # ── Check 5: Server heartbeat ─────────────────────────────────────────────
     hb_result = heartbeat(token)
@@ -1725,3 +1732,212 @@ TIER_NAMES = {0: "Trial", 1: "Standard", 2: "Professional", 3: "Enterprise"}
 
 def tier_name(tier: int) -> str:
     return TIER_NAMES.get(tier, "Unknown")
+
+
+def verify_authorized_device(parent=None) -> bool:
+    """
+    Verify if the current setup and connected device are authorized for acquisition.
+    Shows QMessageBox and returns False if blocked, returns True if authorized.
+    """
+    from PyQt5.QtWidgets import QMessageBox
+
+    # 1. Check if license is in restricted mode (fingerprint mismatch offline)
+    if is_license_restricted():
+        QMessageBox.critical(
+            parent,
+            "Reverification Required",
+            "<b>Hardware change detected.</b><br><br>"
+            "An internet connection is required to reverify your license before acquiring ECG data."
+        )
+        return False
+
+    # 2. Check RhythmUltra device lock
+    enforce_device_lock = _enforce_rhythmultra_lock()
+    if not enforce_device_lock:
+        return True
+
+    usb_serial = None
+    if parent is not None:
+        # Check if parent is running in demo mode
+        if hasattr(parent, 'serial_reader') and parent.serial_reader is not None:
+            if parent.serial_reader.__class__.__name__ == 'DemoSerialReader':
+                print("[License] Demo mode detected via serial reader. Bypassing serial check.")
+                return True
+        
+        # Try to retrieve serial from parent's serial_reader
+        if hasattr(parent, 'serial_reader') and parent.serial_reader is not None:
+            if hasattr(parent.serial_reader, 'device_serial_number') and parent.serial_reader.device_serial_number:
+                usb_serial = parent.serial_reader.device_serial_number
+                print(f"[License] Retrieved serial from parent serial_reader: {usb_serial}")
+        
+        # Try to retrieve from settings_manager
+        if not usb_serial and hasattr(parent, 'settings_manager') and parent.settings_manager is not None:
+            try:
+                usb_serial = parent.settings_manager.get_setting("machine_serial_number")
+                if usb_serial:
+                    print(f"[License] Retrieved serial from parent settings_manager: {usb_serial}")
+            except Exception:
+                pass
+
+    if not usb_serial:
+        # Fallback to scanning ports
+        usb_serial = get_rhythmultra_serial()
+
+    token = load_token_file()
+    if not token:
+        QMessageBox.critical(
+            parent,
+            "License Missing",
+            "<b>License not found.</b><br><br>"
+            "Please register or activate your license before acquiring ECG data."
+        )
+        return False
+
+    stored_serial = token.get("rhythmultra_serial", token.get("RhythmUltra_serial", token.get("rhythmulta_serial", "")))
+
+    # Clean up and normalize serials before comparison
+    stored_serial_clean = str(stored_serial).strip()
+    usb_serial_clean = str(usb_serial or "").strip()
+
+    # Check if mismatch or missing
+    is_mismatched = stored_serial_clean and (not usb_serial_clean or usb_serial_clean.lower() != stored_serial_clean.lower())
+    is_missing = not usb_serial_clean
+
+    if is_mismatched or is_missing:
+        QMessageBox.critical(
+            parent,
+            "Unauthorized RhythmUltra Device",
+            "<b>Unauthorized RhythmUltra device connected.</b><br><br>"
+            "A valid, registered RhythmUltra device must be connected to acquire ECG data."
+        )
+        return False
+
+    return True
+
+
+def is_ecg_acquisition_allowed(parent=None) -> bool:
+    """
+    Central authorization check for ECG acquisition screens.
+    Verifies both licensing state (restricted mode) and hardware device matching.
+    Displays QMessageBox popup and returns False if unauthorized, otherwise True.
+    """
+    return verify_authorized_device(parent)
+
+
+def export_license_diagnostics(output_path: Optional[str] = None) -> str:
+    """
+    Collect all license and fingerprint diagnostics, and export to a file.
+    Returns the path to the written diagnostics file.
+    """
+    import datetime
+    if output_path is None:
+        output_path = str(_TOKEN_DIR / "license_diagnostics.txt")
+
+    now_dt = datetime.datetime.now()
+    now_utc = datetime.datetime.utcnow()
+
+    # Platform context
+    ctx = get_machine_context()
+    wmi = _collect_wmi_fields()
+
+    lines = [
+        "============================================================",
+        "CARDIOX LICENSE DIAGNOSTICS EXPORT",
+        "============================================================",
+        f"Export Time (Local): {now_dt.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Export Time (UTC):   {now_utc.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Software Version:    {SOFTWARE_VERSION}",
+        "",
+        "── SYSTEM CONTEXT ──────────────────────────────────────────",
+        f"PC Name:             {ctx.get('machine_name', '')}",
+        f"OS Info:             {ctx.get('machine_os', '')}",
+        f"Windows Version:     {ctx.get('windows_version', '')}",
+        f"Platform Processor:  {platform.processor()}",
+        "",
+        "── HARDWARE IDENTIFIERS (WMI) ──────────────────────────────",
+        f"BIOS Serial:         {wmi.get('bios_serial', '')}",
+        f"Motherboard UUID:    {wmi.get('mb_uuid', '')}",
+        f"CPU ID:              {wmi.get('cpu_id', '')}",
+        f"Disk Serial:         {wmi.get('disk_serial', '')}",
+        f"MAC Node:            {wmi.get('mac', '')}",
+        "",
+        "── COMPUTED FINGERPRINTS ───────────────────────────────────",
+        f"Exact SHA-256 FP:    {get_hardware_fingerprint()}",
+        f"Stable SHA-256 FP:   {_stable_hardware_fingerprint()}",
+        "",
+        "── USB & RhythmUltra SCAN ──────────────────────────────────",
+        f"Configured VID:      0x{RHYTHMULTRA_VID:04X}",
+        f"Configured PID:      0x{RHYTHMULTRA_PID:04X}",
+        f"RhythmUltra Serial:  {get_rhythmultra_serial() or 'NOT DETECTED'}",
+    ]
+
+    try:
+        ports = _list_usb_ports()
+        lines.append("Active USB/COM Ports enumerated:")
+        for idx, (vid, pid, serial) in enumerate(ports):
+            vid_s = f"0x{vid:04X}" if vid is not None else "None"
+            pid_s = f"0x{pid:04X}" if pid is not None else "None"
+            lines.append(f"  [{idx}] VID={vid_s} PID={pid_s} Serial='{serial}'")
+    except Exception as e:
+        lines.append(f"Failed to list USB/COM ports: {e}")
+
+    lines.append("")
+    lines.append("── LICENSE FILE PROPERTIES ─────────────────────────────────")
+    lines.append(f"Token File Path:     {_TOKEN_FILE}")
+    lines.append(f"Token File Exists:   {_TOKEN_FILE.exists()}")
+    if _TOKEN_FILE.exists():
+        try:
+            lines.append(f"Token File Size:     {_TOKEN_FILE.stat().st_size} bytes")
+            raw_t = load_token_file()
+            if raw_t:
+                key = raw_t.get("license_key", "")
+                parts = key.split("-")
+                masked_key = f"CRDX-***-***-{parts[-1]}" if len(parts) == 4 else "CRDX-MASKED"
+                lines.append(f"  License Key:       {masked_key}")
+                lines.append(f"  Bound Fingerprint: {raw_t.get('fingerprint', '')}")
+                lines.append(f"  Bound stable FP:   {raw_t.get('stable_fingerprint', '')}")
+                lines.append(f"  Bound device serial:{raw_t.get('rhythmultra_serial', raw_t.get('RhythmUltra_serial', ''))}")
+                lines.append(f"  Seat Number:       {raw_t.get('seat_number', 1)}")
+                lines.append(f"  Expires (Epoch):   {raw_t.get('expires', 0)}")
+                lines.append(f"  Last Server Check: {raw_t.get('last_server_check', 0)}")
+                lines.append(f"  Last Local Time:   {raw_t.get('last_local_time', 0)}")
+        except Exception as e:
+            lines.append(f"Error reading token: {e}")
+
+    lines.append("")
+    lines.append("── METADATA SIDECAR PROPERTIES ──────────────────────────────")
+    lines.append(f"Meta File Path:      {_META_FILE}")
+    lines.append(f"Meta File Exists:    {_META_FILE.exists()}")
+    if _META_FILE.exists():
+        try:
+            meta = _load_license_meta()
+            for k, v in meta.items():
+                lines.append(f"  {k}: {v}")
+        except Exception as e:
+            lines.append(f"Error reading metadata: {e}")
+
+    lines.append("")
+    lines.append("── RUNTIME VALIDATION STATUS ───────────────────────────────")
+    try:
+        startup_res = run_startup_checks()
+        lines.append(f"Check 1-5 Success:   {startup_res.ok}")
+        lines.append(f"Failing Check Step:  {startup_res.step_failed}")
+        lines.append(f"Error Code:          {startup_res.error_code}")
+        lines.append(f"Failure Reason:      {startup_res.reason}")
+        lines.append(f"Offline Mode:        {startup_res.offline_mode}")
+    except Exception as e:
+        lines.append(f"Error running validation: {e}")
+
+    lines.append(f"Restricted Mode:     {is_license_restricted()}")
+    lines.append("============================================================")
+
+    content = "\n".join(lines)
+
+    try:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text(content, encoding="utf-8")
+        print(f"[License] Diagnostics exported to {output_path}")
+    except Exception as e:
+        print(f"[License] Diagnostics write failed: {e}")
+
+    return output_path

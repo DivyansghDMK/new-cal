@@ -6606,6 +6606,32 @@ class ECGTestPage(QWidget):
         # ── Connection successful: pull the now-started reader from the manager ──
         from ecg.serial.serial_reader import GlobalHardwareManager
         self.serial_reader = GlobalHardwareManager().get_reader(port_to_use, baud_int)
+
+        # Centralized authorization check
+        from utils.license_manager import is_ecg_acquisition_allowed
+        if not is_ecg_acquisition_allowed(self):
+            # Block and reset UI
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText("Start")
+            self.start_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #4CAF50, stop:1 #45a049);
+                    color: white;
+                    border: 2px solid #4CAF50;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                }
+            """)
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                self.dashboard_instance.update_test_state("12_lead_test", False)
+            if self.serial_reader:
+                self.serial_reader.stop()
+            return
+
         if self.serial_reader and hasattr(self, 'user_details'):
             self.serial_reader.user_details = self.user_details
 

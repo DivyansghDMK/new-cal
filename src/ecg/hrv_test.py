@@ -142,7 +142,7 @@ class HRVTestWindow(QWidget):
         
         # Data storage - use circular buffer like 12-lead test
         HISTORY_LENGTH = 10000
-        self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)  # Circular buffer for selected lead
+        self.data = np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32)  # Circular buffer for selected lead
         self.captured_data = []  # Store all captured data with timestamps
         self.start_time = None
         try:
@@ -630,10 +630,18 @@ class HRVTestWindow(QWidget):
         try:
             # Start/Resume acquisition.
             self.serial_reader.start()
+
+            # Centralized authorization check
+            from utils.license_manager import is_ecg_acquisition_allowed
+            if not is_ecg_acquisition_allowed(self):
+                self.stop_capture()
+                self.status_label.setText("Status: Unauthorized Device")
+                self.status_label.setStyleSheet("color: #EF5350; padding: 5px;")
+                return
             
             # Reset data
             HISTORY_LENGTH = 10000
-            self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)
+            self.data = np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32)
             self.captured_data = []
             self.sample_index = 0
             self.active_samples = 0
@@ -648,7 +656,7 @@ class HRVTestWindow(QWidget):
                 if hasattr(self.ecg_calculator, 'smoothing_buffers'):
                     self.ecg_calculator.smoothing_buffers = {}
                 if not hasattr(self.ecg_calculator, 'data') or len(self.ecg_calculator.data) < 12:
-                    self.ecg_calculator.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+                    self.ecg_calculator.data = [np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32) for _ in range(12)]
             
             # Update UI
             self.start_btn.setEnabled(False)
@@ -1112,11 +1120,8 @@ class HRVTestWindow(QWidget):
                 self.plot_curve.setData(x_axis, y_display, connect='finite')
 
                 # Layer 3 — black eraser gap (solid black block covers gap zone)
-                gap_indices = np.array([(pos + k) % SWEEP_N for k in range(gap)])
-                gap_indices.sort()
-                # Find contiguous runs for efficient rendering
-                gap_y = np.full(gap, 2048.0)  # mid-screen black line
-                self.sweep_gap_curve.setData(gap_indices, np.full(len(gap_indices), 2048.0))
+                # Set empty to prevent erasing/cropping the center line or grid lines
+                self.sweep_gap_curve.setData([], [])
 
                 # Layer 4 — glowing dot at exact sweep head
                 head_pos = (pos - 1) % SWEEP_N

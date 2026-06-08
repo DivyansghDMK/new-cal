@@ -146,7 +146,7 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Data storage - use circular buffer like 12-lead test
         HISTORY_LENGTH = 10000
-        self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)  # Circular buffer for Lead II
+        self.data = np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32)  # Circular buffer for Lead II
         self.lead_ii_data = []  # Store all captured data with timestamps
         
         # Add data storage for V1-V6 leads (indices 6-11 in ecg_calculator.data)
@@ -234,7 +234,7 @@ class HyperkalemiaTestWindow(QWidget):
                         print(f" Synced sampling rate from dashboard: {self.sampling_rate} Hz")
                 
                 if not hasattr(self.ecg_calculator, 'data') or len(self.ecg_calculator.data) < 12:
-                    self.ecg_calculator.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+                    self.ecg_calculator.data = [np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32) for _ in range(12)]
                 
                 if not hasattr(self.ecg_calculator, 'sampler'):
                     self.ecg_calculator.sampler = SamplingRateCalculator()
@@ -745,9 +745,17 @@ class HyperkalemiaTestWindow(QWidget):
             # Start/Resume acquisition. The start() method now handles
             # skipping hardware commands if already running.
             self.serial_reader.start()
+
+            # Centralized authorization check
+            from utils.license_manager import is_ecg_acquisition_allowed
+            if not is_ecg_acquisition_allowed(self):
+                self.stop_capture()
+                self.status_label.setText("Status: Unauthorized Device")
+                self.status_label.setStyleSheet("color: #EF5350; padding: 5px;")
+                return
             
             # Reset data for all leads
-            self.data = np.zeros(10000, dtype=np.float32)  # Reset circular buffer
+            self.data = np.full(10000, 2048.0, dtype=np.float32)  # Reset circular buffer
             self.lead_ii_data = []
             for lead_name in self.lead_data.keys():
                 self.lead_data[lead_name] = []
@@ -1288,9 +1296,8 @@ class HyperkalemiaTestWindow(QWidget):
                     self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
 
                     # Layer 3 — black eraser
-                    gap_indices = np.array([(pos + k) % sweep_n for k in range(gap)], dtype=float)
-                    gap_indices_sorted = np.sort(gap_indices)
-                    self.sweep_gap_curves[lead_name].setData(gap_indices_sorted, np.full(len(gap_indices_sorted), 2048.0))
+                    # Set empty to prevent erasing/cropping the center line or grid lines
+                    self.sweep_gap_curves[lead_name].setData([], [])
 
                     # Layer 4 — sweep head dot
                     head_pos = (pos - 1) % sweep_n

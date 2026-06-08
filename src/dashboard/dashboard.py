@@ -1412,6 +1412,44 @@ class Dashboard(QWidget):
         self.setLayout(main_layout)
         self.page_stack.setCurrentWidget(self.dashboard_page)
 
+        # Check if the license is restricted (offline stable mismatch)
+        from utils.license_manager import is_license_restricted
+        if is_license_restricted():
+            self.set_read_only_license_mode(True, "Hardware change detected. Internet connection required to reverify.")
+            
+            # Create a prominent warning banner widget inside the dashboard page
+            warning_banner = QFrame()
+            warning_banner.setStyleSheet("""
+                QFrame {
+                    background-color: #ffebee;
+                    border: 2px solid #ffcdd2;
+                    border-radius: 12px;
+                }
+                QLabel {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            wb_layout = QHBoxLayout(warning_banner)
+            wb_layout.setContentsMargins(20, 15, 20, 15)
+            wb_layout.setSpacing(15)
+            
+            warning_icon = QLabel("⚠️")
+            warning_icon.setFont(QFont("Arial", 22))
+            wb_layout.addWidget(warning_icon)
+            
+            warning_text = QLabel(
+                "<b>LICENSE REVERIFICATION REQUIRED</b><br><br>"
+                "Hardware change detected. Internet connection required to reverify this license.<br>"
+                "ECG acquisition is temporarily disabled. Reports and settings remain available."
+            )
+            warning_text.setFont(QFont("Segoe UI", 11))
+            warning_text.setStyleSheet("color: #c62828;")
+            warning_text.setWordWrap(True)
+            wb_layout.addWidget(warning_text, 1)
+            
+            dashboard_layout.insertWidget(2, warning_banner)
+
     # Calendar date selection
     
     def update_calendar_labels(self):
@@ -6490,18 +6528,30 @@ class Dashboard(QWidget):
             self.device_status_label.setText("RhythmUltra Connected")
             self.device_status_label.setStyleSheet("color: green; margin-right: 10px; font-weight: bold;")
             
-            # Enable test buttons
-            if hasattr(self, 'hrv_test_btn'):
-                self.hrv_test_btn.setEnabled(True)
-                self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
+            # Enable test buttons only if license is not read-only
+            if not getattr(self, "_license_read_only", False):
+                if hasattr(self, 'hrv_test_btn'):
+                    self.hrv_test_btn.setEnabled(True)
+                    self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
 
-            if hasattr(self, 'hyperkalemia_test_btn'):
-                self.hyperkalemia_test_btn.setEnabled(True)
-                self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
+                if hasattr(self, 'hyperkalemia_test_btn'):
+                    self.hyperkalemia_test_btn.setEnabled(True)
+                    self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
 
-            if hasattr(self, 'date_btn'): # ECG Lead Test 12
-                self.date_btn.setEnabled(True)
-                self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
+                if hasattr(self, 'date_btn'): # ECG Lead Test 12
+                    self.date_btn.setEnabled(True)
+                    self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
+            else:
+                grey_style = "background: #cccccc; color: #666666; border-radius: 16px; padding: 8px 24px;"
+                if hasattr(self, 'hrv_test_btn'):
+                    self.hrv_test_btn.setEnabled(False)
+                    self.hrv_test_btn.setStyleSheet(grey_style)
+                if hasattr(self, 'hyperkalemia_test_btn'):
+                    self.hyperkalemia_test_btn.setEnabled(False)
+                    self.hyperkalemia_test_btn.setStyleSheet(grey_style)
+                if hasattr(self, 'date_btn'):
+                    self.date_btn.setEnabled(False)
+                    self.date_btn.setStyleSheet(grey_style)
         else:
             if getattr(self, "_had_device_connected", False):
                 self.device_status_label.setText("RhythmUltra Disconnected. Please reconnect your RhythmUltra device")
@@ -6513,12 +6563,10 @@ class Dashboard(QWidget):
             if hasattr(self, 'settings_manager'):
                 self.settings_manager.set_setting("hardware_version", "")
                 self.settings_manager.set_setting("machine_serial_number", "")
-                # set_setting already calls save_settings()
             self.device_version = None
             self.machine_serial_number = None
             
             # Disable test buttons
-            
             grey_style = "background: #cccccc; color: #666666; border-radius: 16px; padding: 8px 24px;"
 
             if hasattr(self, 'hrv_test_btn'):
@@ -6549,26 +6597,45 @@ class Dashboard(QWidget):
         """Disable acquisition controls while keeping history/report access available."""
         try:
             self._license_read_only = bool(enabled)
+            grey_style = "background: #cccccc; color: #666666; border-radius: 16px; padding: 8px 24px;"
             if enabled:
                 if hasattr(self, 'date_btn'):
                     self.date_btn.setEnabled(False)
+                    self.date_btn.setStyleSheet(grey_style)
                     self.date_btn.setToolTip(reason or "New ECG acquisition is disabled in read-only mode.")
                 if hasattr(self, 'hrv_test_btn'):
                     self.hrv_test_btn.setEnabled(False)
+                    self.hrv_test_btn.setStyleSheet(grey_style)
                     self.hrv_test_btn.setToolTip(reason or "HRV acquisition is disabled in read-only mode.")
                 if hasattr(self, 'hyperkalemia_test_btn'):
                     self.hyperkalemia_test_btn.setEnabled(False)
+                    self.hyperkalemia_test_btn.setStyleSheet(grey_style)
                     self.hyperkalemia_test_btn.setToolTip(reason or "Hyperkalemia acquisition is disabled in read-only mode.")
                 if hasattr(self, 'analysis_btn'):
                     self.analysis_btn.setEnabled(True)
-                self.set_license_banner("OFFLINE", reason or "Read-only mode", color="#e65100", background="#ffe0b2")
+                self.set_license_banner("VERIFICATION REQUIRED", reason or "Restricted mode", color="#c62828", background="#ffebee")
             else:
                 if hasattr(self, 'date_btn') and not self.device_connected:
                     self.date_btn.setEnabled(False)
+                    self.date_btn.setStyleSheet(grey_style)
+                elif hasattr(self, 'date_btn') and self.device_connected:
+                    self.date_btn.setEnabled(True)
+                    self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
+
                 if hasattr(self, 'hrv_test_btn') and not self.device_connected:
                     self.hrv_test_btn.setEnabled(False)
+                    self.hrv_test_btn.setStyleSheet(grey_style)
+                elif hasattr(self, 'hrv_test_btn') and self.device_connected:
+                    self.hrv_test_btn.setEnabled(True)
+                    self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
+
                 if hasattr(self, 'hyperkalemia_test_btn') and not self.device_connected:
                     self.hyperkalemia_test_btn.setEnabled(False)
+                    self.hyperkalemia_test_btn.setStyleSheet(grey_style)
+                elif hasattr(self, 'hyperkalemia_test_btn') and self.device_connected:
+                    self.hyperkalemia_test_btn.setEnabled(True)
+                    self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
+
                 if hasattr(self, 'analysis_btn'):
                     self.analysis_btn.setEnabled(True)
                 self.set_license_banner("ONLINE", "", color="#1b5e20", background="#dcedc8")
