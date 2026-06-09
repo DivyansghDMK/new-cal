@@ -1268,7 +1268,25 @@ class HRVTestWindow(QWidget):
 
         reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
-        filepath = os.path.join(reports_dir, f"HRV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+
+        # Resolve machine serial — check all sources in priority order
+        machine_serial = (
+            getattr(self.dashboard_instance, "machine_serial_number", "") or ""
+        ).strip() if self.dashboard_instance else ""
+        if not machine_serial and hasattr(self, "settings_manager") and self.settings_manager:
+            machine_serial = (self.settings_manager.get_setting("machine_serial_number", "") or "").strip()
+        if not machine_serial and self.dashboard_instance and hasattr(self.dashboard_instance, "settings_manager"):
+            machine_serial = (self.dashboard_instance.settings_manager.get_setting("machine_serial_number", "") or "").strip()
+        if not machine_serial:
+            try:
+                from utils.crash_logger import get_crash_logger
+                machine_serial = (get_crash_logger().machine_serial_id or "").strip()
+            except Exception:
+                pass
+
+        serial_part = f"_{machine_serial}" if machine_serial and machine_serial not in ("Not Detected", "") else ""
+        report_stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filepath = os.path.join(reports_dir, f"HRV_Report{serial_part}_{report_stamp}.pdf")
 
         # Snapshots — safe to pass to a worker thread
         _patient_snap = patient.copy()
