@@ -4309,9 +4309,11 @@ class ECGTestPage(QWidget):
                 paused_duration = getattr(self, 'paused_duration', 0)
                 elapsed = max(0, current_time - self.start_time - paused_duration)
                 
-                # Calculate minutes and seconds
-                minutes = int(elapsed // 60)
-                seconds = int(elapsed % 60)
+                # Calculate hours, minutes and seconds
+                total_seconds = int(elapsed)
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
                 
                 # Store last displayed time to prevent skipping/duplicate updates
                 if not hasattr(self, '_last_displayed_elapsed'):
@@ -4319,9 +4321,12 @@ class ECGTestPage(QWidget):
                 
                 # Only update if time actually changed (prevents unnecessary UI updates)
                 # Update every second (rounded down to prevent flicker)
-                current_elapsed_int = int(elapsed)
+                current_elapsed_int = total_seconds
                 if current_elapsed_int != self._last_displayed_elapsed:
-                    self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+                    if hours > 0:
+                        self.metric_labels['time_elapsed'].setText(f"{hours}:{minutes:02d}:{seconds:02d}")
+                    else:
+                        self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
                     self._last_displayed_elapsed = current_elapsed_int
         except Exception as e:
             print(f" Error updating elapsed time: {e}")

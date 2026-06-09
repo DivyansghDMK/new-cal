@@ -4960,9 +4960,11 @@ class ECGTestPage(QWidget):
                 paused_duration = getattr(self, 'paused_duration', 0)
                 elapsed = max(0, current_time - self.start_time - paused_duration)
                 
-                # Calculate minutes and seconds
-                minutes = int(elapsed // 60)
-                seconds = int(elapsed % 60)
+                # Calculate hours, minutes and seconds
+                total_seconds = int(elapsed)
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
                 
                 # Store last displayed time to prevent skipping/duplicate updates
                 if not hasattr(self, '_last_displayed_elapsed'):
@@ -4970,12 +4972,15 @@ class ECGTestPage(QWidget):
                 
                 # Only update if time actually changed (prevents unnecessary UI updates)
                 # Update every second (rounded down to prevent flicker)
-                current_elapsed_int = int(elapsed)
+                current_elapsed_int = total_seconds
                 if current_elapsed_int != self._last_displayed_elapsed:
                     # FREEZE GUARD: keep counting internally but do not repaint
                     # the Time label while the display is frozen.
                     if not getattr(self, '_grid_frozen', False):
-                        self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
+                        if hours > 0:
+                            self.metric_labels['time_elapsed'].setText(f"{hours}:{minutes:02d}:{seconds:02d}")
+                        else:
+                            self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
                     self._last_displayed_elapsed = current_elapsed_int
         except Exception as e:
             print(f" Error updating elapsed time: {e}")
@@ -7447,7 +7452,24 @@ class ECGTestPage(QWidget):
         stamp   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         rpt_dir = str(data_file("reports"))
         os.makedirs(rpt_dir, exist_ok=True)
-        filename = os.path.join(rpt_dir, f"ECG_Report_{fmt}_{stamp}.pdf")
+
+        # Resolve machine serial — check all sources in priority order
+        machine_serial = (
+            getattr(self, "machine_serial_number", "") or ""
+        ).strip()
+        if not machine_serial and hasattr(self, "settings_manager") and self.settings_manager:
+            machine_serial = (self.settings_manager.get_setting("machine_serial_number", "") or "").strip()
+        if not machine_serial:
+            try:
+                from utils.crash_logger import get_crash_logger
+                machine_serial = (get_crash_logger().machine_serial_id or "").strip()
+            except Exception:
+                pass
+        if not machine_serial:
+            machine_serial = (os.getenv("MACHINE_SERIAL_ID", "") or "").strip()
+
+        serial_part = f"_{machine_serial}" if machine_serial and machine_serial not in ("Not Detected", "") else ""
+        filename = os.path.join(rpt_dir, f"ECG_Report_{fmt}{serial_part}_{stamp}.pdf")
 
         # Worker thread
         class _Worker(QObject):

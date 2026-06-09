@@ -3657,7 +3657,23 @@ class Dashboard(QWidget):
             return
 
         report_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"ECG_Report_12_1_{report_stamp}.pdf"
+        # Resolve machine serial — check all sources in priority order
+        machine_serial = (
+            getattr(self, "machine_serial_number", "") or ""
+        ).strip()
+        if not machine_serial and hasattr(self, "settings_manager") and self.settings_manager:
+            machine_serial = (self.settings_manager.get_setting("machine_serial_number", "") or "").strip()
+        if not machine_serial:
+            try:
+                from utils.crash_logger import get_crash_logger
+                machine_serial = (get_crash_logger().machine_serial_id or "").strip()
+            except Exception:
+                pass
+        if not machine_serial:
+            machine_serial = (os.getenv("MACHINE_SERIAL_ID", "") or "").strip()
+
+        serial_part = f"_{machine_serial}" if machine_serial and machine_serial not in ("Not Detected", "") else ""
+        default_name = f"ECG_Report_12_1{serial_part}_{report_stamp}.pdf"
         downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         if not os.path.isdir(downloads_dir):
             downloads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "reports"))
