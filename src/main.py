@@ -2,6 +2,18 @@ import sys
 import os
 import shutil
 
+# Ensure the main src directory is at the absolute front of sys.path
+# to prevent subdirectories (like src/ecg) from shadowing root modules (like utils)
+_src_dir = os.path.dirname(os.path.abspath(__file__))
+if _src_dir in sys.path:
+    sys.path.remove(_src_dir)
+sys.path.insert(0, _src_dir)
+
+for _p in list(sys.path):
+    if _p.startswith(_src_dir + os.sep) and _p != _src_dir:
+        sys.path.remove(_p)
+        sys.path.append(_p)
+
 # Ensure stdout/stderr replace unencodable characters instead of crashing
 for _stream in (sys.stdout, sys.stderr):
     if _stream is not None and hasattr(_stream, 'reconfigure'):
