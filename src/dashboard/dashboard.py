@@ -222,6 +222,48 @@ class SignInDialog(QDialog):
         layout.addWidget(self.signin_btn)
     def get_user_info(self):
         return self.role_combo.currentText(), self.name_edit.text()
+
+class StyledMessageBox(QDialog):
+    @staticmethod
+    def show_message(parent, title, message, is_critical=False):
+        dialog = QDialog(parent)
+        dialog.setWindowTitle(title)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setFixedSize(400, 200)
+        dialog.setStyleSheet("""
+            QDialog { background: #fff; border-radius: 18px; }
+            QLabel { font-size: 16px; color: #222; }
+            QPushButton { background: #ff6600; color: white; border-radius: 10px; padding: 8px 24px; font-size: 16px; font-weight: bold; }
+            QPushButton:hover { background: #ff8800; }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(18)
+        layout.setContentsMargins(28, 24, 28, 24)
+        
+        title_lbl = QLabel(title)
+        title_lbl.setFont(QFont("Arial", 18, QFont.Bold))
+        title_lbl.setAlignment(Qt.AlignCenter)
+        if is_critical:
+            title_lbl.setStyleSheet("color: #e74c3c;")
+        else:
+            title_lbl.setStyleSheet("color: #ff6600;")
+        layout.addWidget(title_lbl)
+        
+        msg_lbl = QLabel(message)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(msg_lbl)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.setFixedWidth(100)
+        ok_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addStretch()
+        
+        layout.addLayout(btn_layout)
+        dialog.exec_()
     
 class DashboardHomeWidget(QWidget):
     def __init__(self):
@@ -524,7 +566,7 @@ class Dashboard(QWidget):
         # Patient registration moved from ECG menu ("Save ECG") to outer dashboard header.
         self.doctor_profile_btn = QPushButton("Doctor Profile")
         self.doctor_profile_btn.setStyleSheet(
-            "background: #444; color: white; border-radius: 10px; padding: 4px 12px; margin-right: 8px;"
+            "background: #2a2a2a; color: white; border-radius: 10px; padding: 4px 12px; margin-right: 8px;"
         )
         self.doctor_profile_btn.setToolTip("Edit doctor profile (name, organisation, password)")
         self.doctor_profile_btn.clicked.connect(self.show_doctor_profile_dialog)
@@ -533,7 +575,7 @@ class Dashboard(QWidget):
 
         self.new_registration_btn = QPushButton("Patient registration")
         self.new_registration_btn.setStyleSheet(
-            "background: #ff6600; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
+            "background: #E8650A; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
         )
         self.new_registration_btn.clicked.connect(self.show_new_registration_dialog)
         self.new_registration_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -614,7 +656,7 @@ class Dashboard(QWidget):
         
         # History button (orange dark suede, left of Hyperkalemia)
         self.history_btn = QPushButton("History")
-        self.history_btn.setStyleSheet("background: #b35900; color: white; border-radius: 16px; padding: 8px 24px;")
+        self.history_btn.setStyleSheet("background: #2a2a2a; color: white; border-radius: 16px; padding: 8px 24px;")
         self.history_btn.clicked.connect(self.open_history_window)
         self.history_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.history_btn)
@@ -658,7 +700,7 @@ class Dashboard(QWidget):
         
         # --- Add Waveform Analysis Button ---
         self.analysis_btn = QPushButton("Waveform Analysis")
-        self.analysis_btn.setStyleSheet("background: #e65c00; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
+        self.analysis_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.analysis_btn.clicked.connect(self.open_analysis_window)
         self.analysis_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.analysis_btn)
@@ -6382,7 +6424,7 @@ class Dashboard(QWidget):
                     hyper_active = hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and self.hyperkalemia_window.isVisible()
                     
                     if is_on_dashboard and not hrv_active and not hyper_active:
-                        QMessageBox.warning(self, "Connection Status", "RhythmUltra connection lost. Please ensure the device is properly connected")
+                        StyledMessageBox.show_message(self, "Connection Status", "RhythmUltra connection lost. Please ensure the device is properly connected")
 
                     # If HRV or Hyperkalemia test window is open, show "Test Failed" and close it
                     if hasattr(self, 'hrv_window') and self.hrv_window and self.hrv_window.isVisible():
@@ -6391,7 +6433,7 @@ class Dashboard(QWidget):
                                 self.hrv_window.stop_capture(device_disconnected=True)
                             except TypeError:
                                 self.hrv_window.stop_capture()
-                        QMessageBox.critical(self.hrv_window, "Test Failed", "RhythmUltra disconnected. Test failed.")
+                        StyledMessageBox.show_message(self.hrv_window, "Test Failed", "RhythmUltra disconnected. Test failed.", is_critical=True)
                         self.hrv_window.close()
                     elif hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and self.hyperkalemia_window.isVisible():
                         if hasattr(self.hyperkalemia_window, 'stop_capture'):
@@ -6399,7 +6441,7 @@ class Dashboard(QWidget):
                                 self.hyperkalemia_window.stop_capture(device_disconnected=True)
                             except TypeError:
                                 self.hyperkalemia_window.stop_capture()
-                        QMessageBox.critical(self.hyperkalemia_window, "Test Failed", "RhythmUltra disconnected. Test failed.")
+                        StyledMessageBox.show_message(self.hyperkalemia_window, "Test Failed", "RhythmUltra disconnected. Test failed.", is_critical=True)
                         self.hyperkalemia_window.close()
                     # If ECG 12 lead test is running (on the stacked widget), show "Test Failed" and go back to dashboard
                     elif self.page_stack.currentWidget() == getattr(self, 'ecg_test_page', None):
@@ -6414,7 +6456,7 @@ class Dashboard(QWidget):
                         except Exception as e:
                             print(f"Error closing expanded views: {e}")
 
-                        QMessageBox.critical(self, "Test Failed", "RhythmUltra disconnected. Test failed.")
+                        StyledMessageBox.show_message(self, "Test Failed", "RhythmUltra disconnected. Test failed.", is_critical=True)
                         self.page_stack.setCurrentWidget(self.dashboard_page)
                 return # Already connected and port exists, or just disconnected
 
@@ -6477,6 +6519,7 @@ class Dashboard(QWidget):
 
     def on_scan_finished(self, success, port, version, serial_num):
         """Callback for background device scan"""
+        was_initial_scan = not getattr(self, '_initial_scan_completed', False)
         self._device_scan_in_progress = False
         self._initial_scan_completed = True
 
@@ -6493,10 +6536,11 @@ class Dashboard(QWidget):
             self._had_device_connected = True
             self._last_device_scan_time = time.time()
             # Inform user if not the initial scan
-            if getattr(self, '_initial_scan_completed', False):
+            if not was_initial_scan:
                 msg = QMessageBox(self)
                 msg.setWindowTitle("Connection Status")
                 msg.setText("Device connected")
+                msg.setStandardButtons(QMessageBox.NoButton)
                 try:
                     icon_path = get_asset_path("connection_icon_tick.png")
                     pix = QPixmap(icon_path)
@@ -6506,9 +6550,9 @@ class Dashboard(QWidget):
                         msg.setIcon(QMessageBox.Information)
                 except Exception:
                     msg.setIcon(QMessageBox.Information)
-                # Auto-close after 2 seconds — no need for user to press OK
+                # Auto-close after 0.5 seconds — no need for user to press OK
                 from PyQt5.QtCore import QTimer
-                QTimer.singleShot(2000, msg.accept)
+                QTimer.singleShot(500, msg.accept)
                 msg.exec_()
 
             # Update hardware version if it's different from current
@@ -6548,11 +6592,11 @@ class Dashboard(QWidget):
             if not getattr(self, "_license_read_only", False):
                 if hasattr(self, 'hrv_test_btn'):
                     self.hrv_test_btn.setEnabled(True)
-                    self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
+                    self.hrv_test_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
 
                 if hasattr(self, 'hyperkalemia_test_btn'):
                     self.hyperkalemia_test_btn.setEnabled(True)
-                    self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
+                    self.hyperkalemia_test_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
 
                 if hasattr(self, 'date_btn'): # ECG Lead Test 12
                     self.date_btn.setEnabled(True)
@@ -6570,7 +6614,7 @@ class Dashboard(QWidget):
                     self.date_btn.setStyleSheet(grey_style)
         else:
             if getattr(self, "_had_device_connected", False):
-                self.device_status_label.setText("RhythmUltra Disconnected. Please reconnect your RhythmUltra device")
+                self.device_status_label.setText("RhythmUltra Disconnected")
             else:
                 self.device_status_label.setText("RhythmUltra Disconnected")
             self.device_status_label.setStyleSheet("color: red; margin-right: 10px; font-weight: bold;")

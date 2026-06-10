@@ -552,7 +552,7 @@ class RegistrationDialog(QDialog):
         else:
             if getattr(self, "_had_device_connected", False):
                 msg = (
-                    "RhythmUltra disconnected. Please reconnect your RhythmUltra device"
+                    "RhythmUltra disconnected"
                 )
             else:
                 msg = (
