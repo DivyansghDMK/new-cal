@@ -757,18 +757,11 @@ class Dashboard(QWidget):
         heart_img.setAlignment(Qt.AlignCenter)
         heart_img.setPixmap(self.heart_pixmap.scaled(self.heart_base_size, self.heart_base_size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         heart_img.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        heart_layout.addWidget(heart_img)
+        heart_layout.addWidget(heart_img, alignment=Qt.AlignCenter)
         
-        # Live stress and HRV labels
-        self.stress_label = QLabel("Stress Level: --")
-        self.stress_label.setStyleSheet("font-size: 13px; color: #666;")
-        self.stress_label.setAlignment(Qt.AlignCenter)
-        heart_layout.addWidget(self.stress_label)
+        # Live stress and HRV labels removed per request
         
-        self.hrv_label = QLabel("Average Variability: --")
-        self.hrv_label.setStyleSheet("font-size: 13px; color: #666;")
-        self.hrv_label.setAlignment(Qt.AlignCenter)
-        heart_layout.addWidget(self.hrv_label)
+
         
         grid.addWidget(heart_card, 0, 0, 2, 1)
         
