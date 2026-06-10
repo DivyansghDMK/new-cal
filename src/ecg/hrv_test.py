@@ -1051,11 +1051,11 @@ class HRVTestWindow(QWidget):
                 emg_val = "25"
                 dft_val = "0.5"
 
-                # Pad with edge values so startup filtering begins cleanly instead of
+                # Pad with enough values so startup filtering begins cleanly instead of
                 # showing a raw transient while the display buffer is still warming up.
-                pad_len = min(50, max(0, len(buffer_data) - 1))
+                pad_len = min(int(fs * 1.5), max(0, len(buffer_data) - 1))
                 if pad_len > 0:
-                    padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='edge')
+                    padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='reflect')
                 else:
                     padded_data = buffer_data
                     

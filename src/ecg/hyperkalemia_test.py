@@ -1236,9 +1236,9 @@ class HyperkalemiaTestWindow(QWidget):
 
                 # Same filter + smooth pipeline as HRV test (clean display)
                 if len(buffer_data) > 5 and not lead_is_off:
-                    pad_len = min(50, max(0, len(buffer_data) - 1))
+                    pad_len = min(int(fs * 1.5), max(0, len(buffer_data) - 1))
                     if pad_len > 0:
-                        padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='edge')
+                        padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='reflect')
                     else:
                         padded_data = buffer_data
 
