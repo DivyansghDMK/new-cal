@@ -867,6 +867,7 @@ class HistoryWindow(QDialog):
     def __init__(self, parent=None, username=None, owner_full_name=None):
         super().__init__(parent)
         self.setWindowTitle("ECG Report History")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.username = username
         self.owner_full_name = owner_full_name or username
         self.all_history_entries = []

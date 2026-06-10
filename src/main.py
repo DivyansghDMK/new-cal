@@ -2571,24 +2571,13 @@ def main():
                         # After admin dialog closes, show login again
                         login = LoginRegisterDialog()
                         continue
-                    # ── Show splash while Dashboard imports + constructs ──────
-                    # On first run / slow disk, matplotlib+scipy imports take 2-5s
-                    # Without splash: window appears frozen → user thinks crash
+                    # ── Show Medical Compliance Loader ──────
                     try:
-                        from PyQt5.QtWidgets import QSplashScreen
-                        from PyQt5.QtGui import QPixmap, QColor
-                        from PyQt5.QtCore import Qt
-                        _splash_pix = QPixmap(420, 180)
-                        _splash_pix.fill(QColor("#1a1a2e"))
-                        _splash = QSplashScreen(_splash_pix,
-                                                Qt.WindowStaysOnTopHint)
-                        _splash.showMessage(
-                            "  Loading ECG Monitor…  Please wait",
-                            Qt.AlignCenter | Qt.AlignBottom,
-                            QColor("#ff6600"))
-                        _splash.show()
-                        app.processEvents()
-                    except Exception:
+                        from utils.medical_loader import show_medical_loader
+                        show_medical_loader()
+                        _splash = None
+                    except Exception as e:
+                        print(f"Failed to show medical loader: {e}")
                         _splash = None
 
                     # Create and show dashboard with user details
