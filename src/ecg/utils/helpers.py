@@ -26,6 +26,46 @@ def get_display_gain(wave_gain_mm: float) -> float:
         return 1.0  # Default to 10mm/mV baseline
 
 
+def build_raster_sweep_frame(
+    buf: np.ndarray,
+    write_pos: int,
+    gap: int,
+    baseline: float = 2048.0,
+) -> Tuple[np.ndarray, int, np.ndarray, np.ndarray]:
+    """
+    Build a left-to-right raster (CRT-style) sweep frame.
+
+    Buffer index maps directly to screen X. The write head advances left→right;
+    a NaN gap plus baseline overlay sits just ahead of the head (erase bar).
+
+    Returns:
+        y_display, head_pos, gap_x, gap_y
+    """
+    sweep_n = int(len(buf))
+    if sweep_n <= 0:
+        empty = np.array([], dtype=float)
+        return empty, 0, empty, empty
+
+    write_pos = int(write_pos) % sweep_n
+    gap = max(1, int(gap))
+    y_display = np.asarray(buf, dtype=float).copy()
+
+    if write_pos <= 0:
+        y_display[:] = baseline
+        return y_display, 0, np.array([], dtype=float), np.array([], dtype=float)
+
+    head_pos = (write_pos - 1) % sweep_n
+
+    # Erase bar ahead of the write head (classic raster flyback zone)
+    gap_indices = np.array([(write_pos + k) % sweep_n for k in range(gap)], dtype=int)
+    y_display[gap_indices] = np.nan
+
+    gap_x = gap_indices.astype(float)
+    gap_y = np.full(len(gap_x), float(baseline))
+
+    return y_display, head_pos, gap_x, gap_y
+
+
 def generate_realistic_ecg_waveform(duration_seconds=10, sampling_rate=500, heart_rate=72, lead_name="II"):
     """
     Generate realistic ECG waveform with proper PQRST complexes

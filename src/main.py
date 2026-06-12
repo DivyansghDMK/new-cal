@@ -2397,7 +2397,16 @@ def main():
         crash_logger = get_crash_logger()
         crash_logger.log_info("Application starting", "APP_START")
         
-        logger.info("Starting ECG Monitor Application")
+        # Enable High-DPI scaling for Retina displays (e.g. MacBook) and high-res screens
+        if hasattr(Qt, "AA_EnableHighDpiScaling"):
+            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        if hasattr(Qt, "AA_UseHighDpiPixmaps"):
+            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        if hasattr(Qt, "HighDpiScaleFactorRoundingPolicy"):
+            try:
+                QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+            except Exception:
+                pass
 
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")

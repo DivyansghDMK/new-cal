@@ -3769,14 +3769,18 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 strokeLineCap=1,
                 strokeLineJoin=0,
             )
-            # Start at baseline
-            notch_path.moveTo(notch_x, center_y)
+            # Start at baseline (beginning of grid)
+            notch_path.moveTo(x_pos, center_y)
+            # Left tail to notch start
+            notch_path.lineTo(notch_x, center_y)
             # Vertical up
             notch_path.lineTo(notch_x, center_y + notch_height)
             # Horizontal top
             notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
             # Vertical down back to baseline
             notch_path.lineTo(notch_x + notch_width, center_y)
+            # Small forward tick to the right (to trace start) for continuous baseline
+            notch_path.lineTo(notch_x + notch_width + (1.0 * mm_unit), center_y)
             
             # Update trace start to avoid overlap
             trace_start_x = notch_x + notch_width + (1.0 * mm_unit)

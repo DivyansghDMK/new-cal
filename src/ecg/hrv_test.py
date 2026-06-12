@@ -56,7 +56,7 @@ from ecg.ecg_filters import (
     apply_dft_filter,
     apply_baseline_wander_median_mean,
 )
-from ecg.utils.helpers import get_display_gain
+from ecg.utils.helpers import get_display_gain, build_raster_sweep_frame
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 
@@ -656,7 +656,8 @@ class HRVTestWindow(QWidget):
                 del self._hrv_display_anchor
             # Baseline/DFT filters need ~1.2 s of real samples before output is stable
             self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
-            self._display_warmed_up = False
+            self._display_anchor_locked = False
+            self._last_sweep_y = 2048.0
 
             # Discard stale serial packets so the trace does not start mid-stream
             if self.serial_reader:
@@ -1095,59 +1096,48 @@ class HRVTestWindow(QWidget):
             if len(buffer_data) > 0 and display_ready:
                 # Center the waveform in the middle of the plot so it stays visually stable
                 # across devices with different ADC offsets.
-                if not getattr(self, "_display_warmed_up", False):
-                    self._display_warmed_up = True
+                if not getattr(self, "_display_anchor_locked", False):
                     self._hrv_display_anchor = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
+                    self._display_anchor_locked = True
                 elif not hasattr(self, "_hrv_display_anchor"):
                     self._hrv_display_anchor = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
-
-                baseline_estimate = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
-                self._hrv_display_anchor = (
-                    0.98 * self._hrv_display_anchor + 0.02 * baseline_estimate
-                )
+                    self._display_anchor_locked = True
 
                 gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
                 centered = (buffer_data - self._hrv_display_anchor) * gain_factor
                 display_values = np.clip(2048.0 + centered, 0, 4096)
 
-                # ── Medical monitor sweep render ──────────────────────────────
+                # ── Medical monitor raster sweep render ───────────────────────
                 SWEEP_N = 2500
-                x_axis = np.arange(SWEEP_N, dtype=float)
 
-                # CORRECT: Push only n_new raw samples per frame
-                # display_values has resampled data — take last n_new points only
                 if n_new > 0 and len(display_values) > 0:
-                    # Take exactly n_new samples from end of filtered buffer
                     samples_to_push = min(n_new, len(display_values))
                     new_vals = display_values[-samples_to_push:]
+                    max_step = 180.0  # reject single-sample spikes from packet glitches
                     for v in new_vals:
-                        self._sweep_buf[self._sweep_pos] = float(np.clip(v, 0, 4096))
+                        y = float(np.clip(v, 0, 4096))
+                        if abs(y - self._last_sweep_y) > max_step:
+                            y = self._last_sweep_y + float(np.clip(y - self._last_sweep_y, -max_step, max_step))
+                        self._sweep_buf[self._sweep_pos] = y
+                        self._last_sweep_y = y
                         self._sweep_pos = (self._sweep_pos + 1) % SWEEP_N
 
                 pos = self._sweep_pos
                 buf = self._sweep_buf
+                gap = self._sweep_gap
+                x_axis = np.arange(SWEEP_N, dtype=float)
 
-                # Build y array with NaN gap eraser ahead of sweep head
-                gap  = self._sweep_gap
-                y_display = buf.copy().astype(float)
+                y_display, head_pos, gap_x, gap_y = build_raster_sweep_frame(
+                    buf, pos, gap, baseline=2048.0
+                )
 
-                # Erase the gap slots immediately AFTER the write head (oldest data zone)
-                for k in range(gap):
-                    y_display[(pos + k) % SWEEP_N] = np.nan
-
-                # Layer 1 — phosphor glow (same data, thick dark green)
                 self.plot_curve_glow.setData(x_axis, y_display)
-
-                # Layer 2 — bright trace
                 self.plot_curve.setData(x_axis, y_display, connect='finite')
-
-                # Layer 3 — black eraser gap (solid black block covers gap zone)
-                # Set empty to prevent erasing/cropping the center line or grid lines
-                self.sweep_gap_curve.setData([], [])
-
-                # Layer 4 — glowing dot at exact sweep head
-                head_pos = (pos - 1) % SWEEP_N
-                self.sweep_dot.setData([float(head_pos)], [float(buf[head_pos])])
+                self.sweep_gap_curve.setData(gap_x, gap_y)
+                dot_y = float(y_display[head_pos]) if head_pos < len(y_display) else 2048.0
+                if not np.isfinite(dot_y):
+                    dot_y = 2048.0
+                self.sweep_dot.setData([float(head_pos)], [dot_y])
 
                 self.plot_widget.setXRange(0, SWEEP_N, padding=0)
                 self.plot_widget.setYRange(0, 4096, padding=0)

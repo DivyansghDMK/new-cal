@@ -3484,13 +3484,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             strokeLineCap=1,
             strokeLineJoin=0,
         )
-        # Draw full notch in "_| |_ " style (both tails present)
-        notch_path.moveTo(notch_x - notch_tail, center_y) # Left tail
+        # Draw full notch in "_| |_ " style (both tails present, extending fully to cover gaps)
+        notch_path.moveTo(strip_x, center_y) # Start at grid boundary
         notch_path.lineTo(notch_x, center_y)
         notch_path.lineTo(notch_x, center_y + notch_height)
         notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
         notch_path.lineTo(notch_x + notch_width, center_y)
-        notch_path.lineTo(notch_x + notch_width + notch_tail, center_y) # Right tail
+        notch_path.lineTo(notch_x + notch_width + notch_tail + (1.0 * mm_unit), center_y) # End at wave start
 
         if values is None or len(values) < 2:
             baseline_path = Path(

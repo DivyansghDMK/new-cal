@@ -320,6 +320,7 @@ class HyperkalemiaTestWindow(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         import pyqtgraph as pg
+        pg.setConfigOptions(antialias=True)
         
         self.setStyleSheet("""
             QWidget { background: #0D1117; color: #F9FAFB; }
@@ -545,7 +546,8 @@ class HyperkalemiaTestWindow(QWidget):
             seconds = 5.0 if lead_name == 'II' else 2.0
             sweep_n = int(seconds * 500)  # 500Hz pe map karo — real time speed
             self._sweep_ns[lead_name] = sweep_n
-            self._sweep_bufs[lead_name] = np.full(sweep_n, 2048.0, dtype=float)
+            center_val = -2048.0 if lead_name == 'aVR' else 2048.0
+            self._sweep_bufs[lead_name] = np.full(sweep_n, center_val, dtype=float)
             self._sweep_poses[lead_name] = 0
             self._sweep_gaps[lead_name] = 50 if lead_name == 'II' else 20
 
@@ -776,6 +778,13 @@ class HyperkalemiaTestWindow(QWidget):
             if hasattr(self, "_display_anchors"):
                 del self._display_anchors
             self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
+            self._display_anchors_locked = set()
+            self._last_sweep_y = {lead: (-2048.0 if lead == 'aVR' else 2048.0) for lead in self.lead_data.keys()}
+            for lead in self.lead_data.keys():
+                center_val = -2048.0 if lead == 'aVR' else 2048.0
+                if lead in self._sweep_bufs:
+                    self._sweep_bufs[lead][:] = center_val
+                self._sweep_poses[lead] = 0
 
             # Discard stale serial packets so the trace does not start mid-stream
             if self.serial_reader:
@@ -1191,7 +1200,7 @@ class HyperkalemiaTestWindow(QWidget):
                 apply_dft_filter,
                 apply_baseline_wander_median_mean,
             )
-            from ecg.utils.helpers import get_display_gain
+            from ecg.utils.helpers import get_display_gain, build_raster_sweep_frame
 
             ac_val = "50"
             emg_val = "25"
@@ -1269,43 +1278,59 @@ class HyperkalemiaTestWindow(QWidget):
                 if len(buffer_data) <= 0:
                     continue
 
+                locked = getattr(self, "_display_anchors_locked", set())
                 if lead_name not in self._display_anchors:
                     self._display_anchors[lead_name] = float(np.nanmedian(buffer_data))
+                    locked.add(lead_name)
+                    self._display_anchors_locked = locked
 
-                baseline_estimate = float(np.nanmedian(buffer_data))
-                self._display_anchors[lead_name] = (
-                    0.98 * self._display_anchors[lead_name] + 0.02 * baseline_estimate
-                )
-
+                center_val = -2048.0 if lead_name == 'aVR' else 2048.0
                 if lead_is_off:
-                    display_values = np.full(len(buffer_data), self._adc_center)
+                    display_values = np.full(len(buffer_data), center_val)
                 else:
                     centered = (buffer_data - self._display_anchors[lead_name]) * gain_factor
-                    display_values = np.clip(2048.0 + centered, 0, 4096)
+                    if lead_name == 'aVR':
+                        display_values = np.clip(-2048.0 + centered, -4096, 0)
+                    else:
+                        display_values = np.clip(2048.0 + centered, 0, 4096)
 
                 sweep_n = self._sweep_ns[lead_name]
                 if n_new > 0 and len(display_values) > 0:
                     samples_to_push = min(n_new, len(display_values))
                     new_vals = display_values[-samples_to_push:]
+                    max_step = 180.0
+                    last_y = self._last_sweep_y.get(lead_name, center_val)
                     for v in new_vals:
+                        y = float(v)
+                        if lead_name == 'aVR':
+                            y = np.clip(y, -4096, 0)
+                        else:
+                            y = np.clip(y, 0, 4096)
+                        if abs(y - last_y) > max_step:
+                            y = last_y + float(np.clip(y - last_y, -max_step, max_step))
                         pos = self._sweep_poses[lead_name]
-                        self._sweep_bufs[lead_name][pos] = float(v)
+                        self._sweep_bufs[lead_name][pos] = y
                         self._sweep_poses[lead_name] = (pos + 1) % sweep_n
+                        last_y = y
+                    self._last_sweep_y[lead_name] = last_y
 
                 pos = self._sweep_poses[lead_name]
                 s_buf = self._sweep_bufs[lead_name]
                 gap = self._sweep_gaps[lead_name]
-                y_display = s_buf.copy().astype(float)
-                for k in range(gap):
-                    y_display[(pos + k) % sweep_n] = np.nan
+
+                y_display, head_pos, gap_x, gap_y = build_raster_sweep_frame(
+                    s_buf, pos, gap, baseline=center_val
+                )
 
                 x_axis = np.arange(sweep_n, dtype=float)
                 self.plot_curves_glow[lead_name].setData(x_axis, y_display)
                 self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
-                self.sweep_gap_curves[lead_name].setData([], [])
+                self.sweep_gap_curves[lead_name].setData(gap_x, gap_y)
 
-                head_pos = (pos - 1) % sweep_n
-                self.sweep_dots[lead_name].setData([float(head_pos)], [float(s_buf[head_pos])])
+                dot_y = float(y_display[head_pos]) if head_pos < len(y_display) else center_val
+                if not np.isfinite(dot_y):
+                    dot_y = center_val
+                self.sweep_dots[lead_name].setData([float(head_pos)], [dot_y])
                 self.plot_widgets[lead_name].setXRange(0, sweep_n, padding=0)
                 if lead_name == 'aVR':
                     self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
