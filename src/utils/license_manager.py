@@ -59,7 +59,7 @@ def _load_hmac_secret() -> bytes:
     """Load the shared HMAC secret from env as UTF-8 bytes."""
     raw = os.getenv(
         "LICENSE_HMAC_SECRET",
-        "949d13007c30ce16e1609c590ef31866d7f68010127c9c514e840de6b02ea1fb",
+        "535ebf0647a740dd37633abc3692cd2a01dfe2e13b77738192b7d7bc0bb48df1",
     ).strip()
     return raw.encode("utf-8")
 
@@ -859,7 +859,47 @@ def register_device(
         "windows_version": machine_ctx["windows_version"],
         "app_version": SOFTWARE_VERSION,
     }
+    # ── DEBUG: Print request body to diagnose "Missing required fields" from AWS ──
+    print("=" * 60)
+    print("REGISTER BODY (DEBUG - sent to server):")
+    print(json.dumps(body, indent=2, default=str))
+    print(f"  >> URL will be: {LICENSE_SERVER_URL.rstrip('/')}/register")
+    print("=" * 60)
+    try:
+        import pathlib as _pl2
+        _body_file = _pl2.Path(__file__).parents[2] / "register_debug.txt"
+        _existing = _body_file.read_text(encoding="utf-8") if _body_file.exists() else ""
+        _body_file.write_text(
+            _existing + "\n\nREGISTER BODY:\n" + json.dumps(body, indent=2, default=str),
+            encoding="utf-8"
+        )
+    except Exception:
+        pass
+
     result = _post_json("register", body)
+
+    # ── DEBUG: Print full server response to diagnose missing cardiox.lic ──────
+    import pprint as _pprint
+    _debug_lines = [
+        "=" * 60,
+        "REGISTER RESPONSE (DEBUG):",
+        _pprint.pformat(result),
+        f"  >> 'token' key present: {'token' in result}",
+        f"  >> token value: {result.get('token')}",
+        f"  >> valid/success/authorized: {result.get('valid')} / {result.get('success')} / {result.get('authorized')}",
+        "=" * 60,
+    ]
+    for _line in _debug_lines:
+        print(_line)
+    # Also write to file so GUI users can read it
+    try:
+        import pathlib as _pl
+        _dbg_file = _pl.Path(__file__).parents[2] / "register_debug.txt"
+        _dbg_file.write_text("\n".join(_debug_lines), encoding="utf-8")
+        print(f"[License][DEBUG] Response also written to: {_dbg_file}")
+    except Exception as _de:
+        print(f"[License][DEBUG] Could not write debug file: {_de}")
+
     _verify_server_sig(result)
 
     if result.get("valid") or result.get("success") or result.get("authorized"):

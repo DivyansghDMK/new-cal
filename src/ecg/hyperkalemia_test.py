@@ -320,6 +320,7 @@ class HyperkalemiaTestWindow(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         import pyqtgraph as pg
+        # Antialiasing: ON to ensure smooth waves without stair-step jagged edges.
         pg.setConfigOptions(antialias=True)
         
         self.setStyleSheet("""
@@ -522,6 +523,9 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.setMenuEnabled(False)
             plot_widget.setStyleSheet("border: none;")
             plot_widget.showGrid(x=False, y=False)
+            plot_widget.setClipToView(True)
+            plot_widget.setDownsampling(auto=True, mode='peak')
+            plot_widget.setMouseEnabled(x=False, y=False)
             
             # Hide Y-axis numeric labels (clean clinical look)
             plot_widget.getAxis('left').setPen(pg.mkPen(None))

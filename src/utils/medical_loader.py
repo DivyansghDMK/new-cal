@@ -1,67 +1,133 @@
 import sys
 import math
+import time as _time
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QWidget
 from PyQt5.QtCore import Qt, QTimer, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPainterPath
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QLinearGradient
+
 
 class AnimatedECG(QWidget):
+    """Smooth, time-based ECG scrolling animation.
+
+    The wave offset is derived from ``time.monotonic()`` so the position is
+    always mathematically correct for the real elapsed time — even when the
+    main thread is blocked constructing the Dashboard and timer callbacks are
+    delayed or dropped.  The animation will never appear to *stutter*; it may
+    skip frames, but each rendered frame is always in the right position.
+    """
+
+    # Pixels per second the wave scrolls across the widget
+    SCROLL_SPEED = 120          # px / s
+    SEGMENT_WIDTH = 140         # px  — one complete PQRST cycle
+    TIMER_INTERVAL_MS = 16      # ~60 fps target; fine even at lower actual fps
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(80)
-        self.offset = 0
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_animation)
-        self.timer.start(30)
+        self.setFixedHeight(88)
         self.setStyleSheet("background: transparent;")
+        self._start_time = _time.monotonic()
 
-    def update_animation(self):
-        self.offset += 5
-        if self.offset > 200:
-            self.offset = 0
-        self.update()
+        # Repaint trigger — we don't accumulate offset here; paintEvent does it.
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.update)
+        self._timer.start(self.TIMER_INTERVAL_MS)
 
+    # ------------------------------------------------------------------
+    def _compute_offset(self):
+        """Return the current scroll offset in pixels based on wall-clock time."""
+        elapsed = _time.monotonic() - self._start_time
+        total_px = elapsed * self.SCROLL_SPEED
+        return total_px % self.SEGMENT_WIDTH   # wrap within one cycle
+
+    # ------------------------------------------------------------------
+    def _build_ecg_path(self, offset, width, mid_y):
+        """Return a QPainterPath for the scrolling ECG wave."""
+        sw = self.SEGMENT_WIDTH
+        # How many full segments do we need to cover the widget + 1 extra on each side
+        num_segments = int(width / sw) + 3
+        # Starting segment so that `offset` creates the illusion of continuous scroll
+        start_x = -offset - sw   # one segment to the left so the wave enters smoothly
+
+        path = QPainterPath()
+        first = True
+
+        for i in range(num_segments):
+            x = start_x + i * sw
+
+            # Each segment: baseline → P → PR → Q → R → S → ST → T → baseline
+            pts = [
+                (x,          mid_y),           # start baseline
+                (x + 12,     mid_y),           # pre-P flat
+                # P wave (smooth bump)
+                (x + 18,     mid_y - 9),
+                (x + 22,     mid_y - 12),
+                (x + 26,     mid_y - 9),
+                (x + 32,     mid_y),           # post-P flat
+                (x + 42,     mid_y),           # PR segment
+                # Q dip
+                (x + 47,     mid_y + 8),
+                # R peak  (tall spike)
+                (x + 56,     mid_y - 42),
+                # S trough
+                (x + 64,     mid_y + 14),
+                # ST segment
+                (x + 72,     mid_y),
+                (x + 82,     mid_y),
+                # T wave (smooth hump)
+                (x + 92,     mid_y - 7),
+                (x + 102,    mid_y - 14),
+                (x + 112,    mid_y - 7),
+                (x + sw,     mid_y),           # back to baseline
+            ]
+
+            if first:
+                path.moveTo(pts[0][0], pts[0][1])
+                first = False
+            else:
+                path.lineTo(pts[0][0], pts[0][1])
+
+            # Draw each segment — use quadTo for smooth P and T waves
+            path.lineTo(pts[1][0], pts[1][1])
+            path.quadTo(pts[2][0], pts[2][1], pts[3][0], pts[3][1])
+            path.quadTo(pts[4][0], pts[4][1], pts[5][0], pts[5][1])
+            path.lineTo(pts[6][0], pts[6][1])   # PR flat
+            path.lineTo(pts[7][0], pts[7][1])   # Q
+            path.lineTo(pts[8][0], pts[8][1])   # R peak
+            path.lineTo(pts[9][0], pts[9][1])   # S
+            path.lineTo(pts[10][0], pts[10][1]) # ST
+            path.lineTo(pts[11][0], pts[11][1])
+            path.quadTo(pts[12][0], pts[12][1], pts[13][0], pts[13][1])
+            path.quadTo(pts[14][0], pts[14][1], pts[15][0], pts[15][1])
+
+        return path
+
+    # ------------------------------------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
-        pen = QPen(QColor("#E8650A"))
-        pen.setWidth(2)
-        painter.setPen(pen)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        width = self.width()
-        height = self.height()
-        mid_y = height / 2
+        w = self.width()
+        h = self.height()
+        mid_y = h / 2
+        offset = self._compute_offset()
 
-        path = QPainterPath()
-        path.moveTo(0, mid_y)
-        
-        # Draw a simulated ECG wave
-        # Just repeat a standard PQRST-like pattern
-        segment_width = 120
-        num_segments = int(width / segment_width) + 2
-        
-        for i in range(num_segments):
-            x_base = i * segment_width - self.offset
-            
-            # Straight line
-            path.lineTo(x_base + 10, mid_y)
-            # P wave
-            path.quadTo(x_base + 20, mid_y - 10, x_base + 30, mid_y)
-            # PR segment
-            path.lineTo(x_base + 40, mid_y)
-            # Q wave
-            path.lineTo(x_base + 45, mid_y + 15)
-            # R wave
-            path.lineTo(x_base + 55, mid_y - 35)
-            # S wave
-            path.lineTo(x_base + 65, mid_y + 20)
-            # ST segment
-            path.lineTo(x_base + 70, mid_y)
-            path.lineTo(x_base + 80, mid_y)
-            # T wave
-            path.quadTo(x_base + 95, mid_y - 15, x_base + 110, mid_y)
-            path.lineTo(x_base + 120, mid_y)
+        path = self._build_ecg_path(offset, w, mid_y)
 
+        # ── Glow / shadow pass (wider, semi-transparent) ──
+        glow_pen = QPen(QColor(232, 101, 10, 60))   # orange, very transparent
+        glow_pen.setWidth(6)
+        glow_pen.setCapStyle(Qt.RoundCap)
+        glow_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(glow_pen)
+        painter.drawPath(path)
+
+        # ── Main line pass ──
+        main_pen = QPen(QColor("#E8650A"))
+        main_pen.setWidthF(2.2)
+        main_pen.setCapStyle(Qt.RoundCap)
+        main_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(main_pen)
         painter.drawPath(path)
 
 class MedicalLoader(QDialog):
@@ -184,9 +250,53 @@ class MedicalLoader(QDialog):
             self.status_lbl.setText("Ready. Launching dashboard...")
             QTimer.singleShot(500, self.accept)
 
+    def finish_and_close(self, target_window=None):
+        """Mark all steps complete, show 'Ready' status, then close after a short delay.
+        Call this right before showing the dashboard to give a clean hand-off."""
+        try:
+            if hasattr(self, 'timer') and self.timer is not None:
+                self.timer.stop()
+        except Exception:
+            pass
+        # Mark all remaining steps as done instantly
+        for idx in range(self.current_step, len(self.steps)):
+            try:
+                icon, text = self.labels[idx]
+                icon.setText("✓")
+                icon.setStyleSheet("color: #2ecc71; font-size: 16px; font-weight: bold; background: transparent; border: none;")
+                text.setStyleSheet("color: #dddddd; font-size: 13px; background: transparent; border: none;")
+            except Exception:
+                pass
+        try:
+            self.status_lbl.setText("Dashboard ready — opening now...")
+        except Exception:
+            pass
+        from PyQt5.QtWidgets import QApplication
+        QApplication.processEvents()
+        # Small delay so user can read the "ready" message, then close
+        QTimer.singleShot(300, self.close)
+
 def show_medical_loader():
+    """Blocking loader — shows and waits for all steps to complete."""
     loader = MedicalLoader()
     loader.show()
     loader.start_loading()
     loader.exec_()
     return True
+
+
+def show_medical_loader_nonblocking():
+    """Non-blocking loader — returns the loader instance immediately while it animates.
+    
+    The caller is responsible for calling ``loader.finish_and_close()`` once the
+    dashboard (or whatever heavy work) is ready to be shown.  This keeps the
+    loading screen visible during the entire construction window so there is no
+    blank-screen gap between login and the dashboard.
+    """
+    from PyQt5.QtWidgets import QApplication
+    loader = MedicalLoader()
+    loader.show()
+    loader.start_loading()
+    # Let the UI paint before returning so the window is visible immediately
+    QApplication.processEvents()
+    return loader

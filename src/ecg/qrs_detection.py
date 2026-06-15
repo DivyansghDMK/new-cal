@@ -953,10 +953,10 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
         )
         # Use amplitude-based measurement ONLY for already-wide complexes.
         # This avoids inflating normal QRS (80-120ms) with P-wave/T-wave contamination.
-        # Condition: slope-based must already be >= 110ms (suggesting real wide QRS/BBB)
+        # Condition: slope-based must already be >= 120ms (suggesting real wide QRS/BBB)
         # AND amplitude result must be within physiological limits (≤ 180ms).
         # This preserves LBBB/RBBB detection while rejecting false wide measurements.
-        if qrs_ms >= 110.0 and amp_qrs_ms > qrs_ms and amp_qrs_ms <= 180.0:
+        if qrs_ms >= 120.0 and amp_qrs_ms > qrs_ms and amp_qrs_ms <= 180.0:
             qrs_ms = amp_qrs_ms
             global_onset = amp_onset if amp_onset is not None else global_onset
             global_offset = amp_offset if amp_offset is not None else global_offset
@@ -1061,7 +1061,9 @@ def qrs_duration_from_raw_signal(lead_data: np.ndarray,
         sp_loc = remove_peak_outliers_by_spacing(sp_loc, fs)
         if not sp_loc:
             return 0.0, seg, None
-        on, off = delineate_channel_borders(seg, sp_loc, rp, 0, len(seg), fs, adc_per_mv * slope_mul)
+        r_peak_amp = abs(seg[rp])
+        effective_adc = max(r_peak_amp, adc_per_mv / 5.0)
+        on, off = delineate_channel_borders(seg, sp_loc, rp, 0, len(seg), fs, effective_adc * slope_mul)
         if on is None or off is None:
             return 0.0, seg, None
         ms = (off - on) / fs * 1000.0

@@ -8,6 +8,7 @@ import logging
 import traceback
 from collections import deque
 from utils.crash_logger import get_crash_logger
+from utils.platform_compat import is_low_spec_mode
 from PyQt5.QtWidgets import QMessageBox
 # Serial communication now handled by ecg.serial module
 try:
@@ -782,7 +783,8 @@ class ECGTestPage(QWidget):
         self.page_stack.addWidget(self.detailed_widget)
         self.setLayout(self.page_stack)
 
-        # Enable antialiasing for smoother lines (matches standalone script)
+        # Antialiasing: ON to ensure smooth waves without stair-step jagged edges.
+        # We use QOpenGLWidget viewport to offload rendering to the GPU to prevent lag.
         pg.setConfigOptions(antialias=True)
 
         self.test_name = test_name
@@ -2697,8 +2699,16 @@ class ECGTestPage(QWidget):
             median_beat_ii, time_axis, fs, tp_baseline_ii
         ) or 0
         
-        if median_beat_qrs > 120 and user_metrics_qrs > 0:
-            qrs_duration_raw = int(0.4 * user_metrics_qrs + 0.6 * median_beat_qrs)
+        if user_metrics_qrs > 0 and median_beat_qrs > 0:
+            # If they disagree significantly and user_metrics shows a normal narrow QRS,
+            # trust user_metrics to prevent false Wide QRS alerts from median T-wave contamination.
+            # We check for a significant discrepancy (>= 25 ms) to allow true borderline/wide QRS to blend.
+            if user_metrics_qrs < 115 and median_beat_qrs > 120 and (median_beat_qrs - user_metrics_qrs) >= 25:
+                qrs_duration_raw = user_metrics_qrs
+            elif median_beat_qrs > 120:
+                qrs_duration_raw = int(0.4 * user_metrics_qrs + 0.6 * median_beat_qrs)
+            else:
+                qrs_duration_raw = int(0.5 * user_metrics_qrs + 0.5 * median_beat_qrs)
         else:
             qrs_duration_raw = median_beat_qrs or user_metrics_qrs
 
@@ -2706,8 +2716,10 @@ class ECGTestPage(QWidget):
             self._qrs_print_count = 0
         self._qrs_print_count += 1
         if self._qrs_print_count % 30 == 0:
-            src = "user_metrics" if (user_metrics["qrs_duration"] is not None and user_metrics["qrs_duration"] > 0) else "median_beat"
-            print(f" ✓ QRS ({src}): {qrs_duration_raw} ms")
+            src = "blended"
+            if user_metrics_qrs > 0 and median_beat_qrs > 0 and user_metrics_qrs < 115 and median_beat_qrs > 120 and (median_beat_qrs - user_metrics_qrs) >= 25:
+                src = "user_metrics (median rejected)"
+            print(f" ✓ QRS ({src}): {qrs_duration_raw} ms (raw={user_metrics_qrs}, median={median_beat_qrs})")
         
         # FIX-TL2: Hold last good QRS. Do NOT use hardcoded 85 ms default:
         # it poisons the median buffer and shows wrong values for several beats.

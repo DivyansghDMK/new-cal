@@ -32,6 +32,14 @@ os.environ['QT_SCALE_FACTOR'] = '1'
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── MPLBACKEND: Force Agg (non-GUI) matplotlib backend for all child processes ─
+# Belt-and-suspenders: .env sets MPLBACKEND=Agg, but enforce it here too so
+# any subprocess or import that happens before dotenv loads uses the right backend.
+# Agg is ~2x faster than Qt5Agg for off-screen PDF rendering.
+if not os.environ.get('MPLBACKEND'):
+    os.environ['MPLBACKEND'] = 'Agg'
+# ─────────────────────────────────────────────────────────────────────────────
+
 import json
 from dotenv import load_dotenv
 from utils.app_paths import data_file
@@ -2592,21 +2600,46 @@ def main():
                         # After admin dialog closes, show login again
                         login = LoginRegisterDialog()
                         continue
-                    # ── Show Medical Compliance Loader ──────
+                    # ── Show Medical Compliance Loader (non-blocking) ──────
+                    # Show the loader first, then build the dashboard while it
+                    # animates so there is NO blank-screen gap between login
+                    # and the dashboard appearing.
+                    _loader = None
                     try:
-                        from utils.medical_loader import show_medical_loader
-                        show_medical_loader()
-                        _splash = None
+                        from utils.medical_loader import show_medical_loader_nonblocking
+                        _loader = show_medical_loader_nonblocking()
                     except Exception as e:
                         print(f"Failed to show medical loader: {e}")
-                        _splash = None
 
-                    # Create and show dashboard with user details
+                    # ── Dashboard construction with live animation ─────────
+                    # Dashboard MUST be built on the main thread (Qt rule), but
+                    # we still want the ECG animation to keep painting.
+                    # We call processEvents() right before and right after the
+                    # constructor so the repaint timer gets at least one shot.
                     Dashboard = get_dashboard_module()
                     if Dashboard is None:
+                        if _loader is not None:
+                            try:
+                                _loader.close()
+                            except Exception:
+                                pass
                         QMessageBox.critical(None, "Error", "Failed to load Dashboard module. Please check logs.")
                         break
-                    dashboard = Dashboard(username=login.username, role=None, user_details=login.user_details)
+
+                    from PyQt5.QtWidgets import QApplication as _QApp
+                    import time as _time
+
+                    # Let the loader paint at least one clean frame before the heavy build
+                    _QApp.processEvents()
+                    dashboard = Dashboard(
+                        username=login.username,
+                        role=None,
+                        user_details=login.user_details,
+                    )
+                    # Let the animation catch up after the blocking constructor
+                    _QApp.processEvents()
+
+
                     # Attach a session recorder for this user
                     try:
                         user_record = None
@@ -2624,14 +2657,31 @@ def main():
                         dashboard._session_recorder = SessionRecorder(username=login.username, user_record=user_record or {})
                     except Exception as e:
                         logger.warning(f"Session recorder init failed: {e}")
-                    # Close splash and show dashboard
-                    if _splash is not None:
+
+                    # Close the loader smoothly, then show dashboard
+                    # finish_and_close() marks all steps done, shows "ready",
+                    # waits 300 ms, then calls close() — at that point
+                    # dashboard.show() fires via QTimer to avoid a blank frame.
+                    _splash = None
+                    if _loader is not None:
                         try:
-                            _splash.finish(dashboard)
-                        except Exception:
-                            pass
+                            _loader.finish_and_close(dashboard)
+                            # Pump events so the loader's singleShot 300ms close fires
+                            # and the ECG animation plays through the handoff.
+                            _deadline = _time.monotonic() + 0.45
+                            while _time.monotonic() < _deadline:
+                                _QApp.processEvents()
+                                _time.sleep(0.010)
+                        except Exception as e:
+                            print(f"Loader close failed: {e}")
+                            try:
+                                _loader.close()
+                            except Exception:
+                                pass
 
                     dashboard.show()
+
+
 
                     # Periodic license re-validation so revocations take effect during runtime.
                     # The check (HTTP heartbeat + WMI fingerprint) runs on a background thread

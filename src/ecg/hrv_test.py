@@ -250,6 +250,7 @@ class HRVTestWindow(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         import pyqtgraph as pg
+        # Antialiasing: ON to ensure smooth waves without stair-step jagged edges.
         pg.setConfigOptions(antialias=True)
         
         self.setStyleSheet("""
