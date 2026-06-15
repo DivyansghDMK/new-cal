@@ -279,7 +279,7 @@ class HyperkalemiaTestWindow(QWidget):
         self._plot_seconds = {}
         self._plot_buffers = {}
         for lead_name in self.lead_data.keys():
-            seconds = 5.0 if lead_name == 'II' else 2.0
+            seconds = 6.0
             self._plot_seconds[lead_name] = float(seconds)
             max_seconds = seconds + 2.0  # margin for filtering
             maxlen = int(max_seconds * fs)
@@ -540,8 +540,8 @@ class HyperkalemiaTestWindow(QWidget):
             center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#003300', width=1.0, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
-            # Display window matches 4:3 report strip duration (no raster sweep)
-            self._display_window_sec[lead_name] = 10.0 if lead_name == 'II' else 3.2
+            # Display window matches 6.0 second display duration for all leads
+            self._display_window_sec[lead_name] = 6.0
 
             vb = plot_widget.getViewBox()
             if vb is not None:
@@ -826,7 +826,7 @@ class HyperkalemiaTestWindow(QWidget):
                 print(f"[HyperkalemiaTestWindow] BPM controller start error: {_bpm_err}")
             
             # Start timers
-            self.capture_timer.start(30)  # Update plot every 30ms
+            self.capture_timer.start(50 if is_low_spec_mode() else 30)  # 20 FPS on low-spec, 33 FPS on normal
             self.duration_timer.start(1000)  # Check duration every second
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
@@ -920,7 +920,7 @@ class HyperkalemiaTestWindow(QWidget):
         try:
             if hasattr(self, "plot_widgets"):
                 for lead_name, widget in self.plot_widgets.items():
-                    win_sec = self._display_window_sec.get(lead_name, 3.2)
+                    win_sec = self._display_window_sec.get(lead_name, 6.0)
                     widget.setXRange(0, win_sec, padding=0)
                     if lead_name == 'aVR':
                         widget.setYRange(0, -4096, padding=0)
@@ -1198,7 +1198,7 @@ class HyperkalemiaTestWindow(QWidget):
                     continue
 
                 window_seconds = self._display_window_sec.get(
-                    lead_name, 10.0 if lead_name == 'II' else 3.2
+                    lead_name, 6.0
                 )
                 window_samples = max(50, int(window_seconds * fs))
                 window_samples = min(window_samples, valid_count)

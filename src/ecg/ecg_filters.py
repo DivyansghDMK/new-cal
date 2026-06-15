@@ -312,6 +312,11 @@ def apply_dft_filter(signal: np.ndarray, sampling_rate: float, dft_filter: str) 
         return signal
     
     try:
+        if str(dft_filter).strip() == "0.5":
+            # Gold Standard: use median+mean filter for 0.5 Hz baseline removal
+            # This is extremely stable and prevents baseline drift/wander entirely.
+            return apply_baseline_wander_median_mean(signal, sampling_rate)
+
         cutoff_freq = float(dft_filter)  # Low cutoff frequency (0.05 or 0.5 Hz)
         
         # Design high-pass Butterworth filter for baseline wander removal

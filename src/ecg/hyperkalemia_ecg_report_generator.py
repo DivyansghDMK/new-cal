@@ -3113,7 +3113,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     beats_27_at_60 = beats_in_boxes(60.0, 27)
     complete_rr = int(beats_27_at_60)
     r_peaks = complete_rr + 1
-    print(f" 27 boxes @60 bpm: beats={beats_27_at_60:.2f}, complete RR={complete_rr}, R peaks≈{r_peaks}")
+    print(f" 27 boxes @60 bpm: beats={beats_27_at_60:.2f}, complete RR={complete_rr}, R peaks~={r_peaks}")
     
     def _safe_int(value, default=0):
         try:
@@ -3298,17 +3298,17 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         
         print(f" Hyperkalemia-Specific Heart Rate Calculation (NEW METHOD - 300000 / sum of avg RR per minute):")
         print(f"   Original HR_bpm from hyper_metric.json: {original_hr_bpm_from_metrics} bpm (NOT CHANGED)")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"   Average RR per minute: {[round(r, 1) for r in avg_rr_per_minute[:5]]} ms")
         print(f"   Sum of 5 average RR values: {sum_of_avg_rr:.2f} ms")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"   NEW Formula: HR = 300000 / sum_of_avg_rr_per_minute")
         print(f"   Calculation: 300000 / {sum_of_avg_rr:.2f} = {avg_hr_from_5_minutes:.2f} bpm")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"   Per-minute HR values (for reference):")
         for i, hr_val in enumerate(hr_per_minute_for_report):
             print(f"   Min {i+1}: {hr_val:.2f} bpm")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"    Hyperkalemia-Specific BPM: {round(avg_hr_from_5_minutes)} bpm")
         print(f"    Original HR_bpm from hyper_metric.json: {original_hr_bpm_from_metrics} bpm (saved as Original_HR_bpm for reference)\n")
     else:
@@ -3320,13 +3320,13 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             avg_hr_from_5_minutes = np.mean(hr_per_minute_for_report) if len(hr_per_minute_for_report) > 0 else 0
         print(f" Using fallback method: {avg_hr_from_5_minutes:.2f} bpm")
         print(f"   Original HR_bpm from hyper_metric.json: {original_hr_bpm_from_metrics} bpm (NOT CHANGED)")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         for i, hr_val in enumerate(hr_per_minute_for_report):
             print(f"   Min {i+1}: {hr_val:.2f} bpm")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"   Hyperkalemia Average HR (fallback): {avg_hr_from_5_minutes:.2f} bpm")
         print(f"   Calculation: ({hr_per_minute_for_report[0]:.1f} + {hr_per_minute_for_report[1]:.1f} + {hr_per_minute_for_report[2]:.1f} + {hr_per_minute_for_report[3]:.1f} + {hr_per_minute_for_report[4]:.1f}) / 5 = {avg_hr_from_5_minutes:.2f} bpm")
-        print(f"   ─────────────────────────────────────────────────────────────")
+        print(f"   -------------------------------------------------------------")
         print(f"    Hyperkalemia-Specific BPM: {round(avg_hr_from_5_minutes)} bpm")
         print(f"    Original HR_bpm from hyper_metric.json: {original_hr_bpm_from_metrics} bpm (saved as Original_HR_bpm for reference)\n")
     
@@ -3817,18 +3817,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     rhythm_y = 140
 
     # Vertical dotted divider between precordial columns (same as 6:2 report)
-    divider_x = right_column_x - (2.0 * mm_unit)
-    divider_top = row_y_positions[0] + strip_height + 8
-    divider_bottom = rhythm_y + strip_height + 4
-    dot_spacing = 3.0
-    dot_len = 2.0
-    dot_y = divider_top
-    while dot_y > divider_bottom:
-        seg_end = max(dot_y - dot_len, divider_bottom)
-        master_drawing.add(
-            Line(divider_x, dot_y, divider_x, seg_end, strokeColor=colors.black, strokeWidth=0.5)
-        )
-        dot_y = seg_end - dot_spacing
+    # (Removed to avoid duplicate middle divider lines - now drawn as a single grey line at the center)
 
     successful_graphs = 0
     for row_index, (left_lead, right_lead) in enumerate(chest_lead_rows):
@@ -4140,8 +4129,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     # Grey divider line between columns
     divider_x = total_width / 2.0
-    # Stop line ABOVE Lead II rhythm strip (V-leads start at y=250)
-    master_drawing.add(Line(divider_x, 250, divider_x, 480, 
+    divider_top = row_y_positions[0] + strip_height + 8
+    divider_bottom = rhythm_y + strip_height + 4
+    # Stop line ABOVE Lead II rhythm strip
+    master_drawing.add(Line(divider_x, divider_bottom, divider_x, divider_top, 
                            strokeColor=colors.grey, strokeWidth=0.5, strokeDashArray=[2, 2]))
 
     # ==================== DOCTOR INFO (LANDSCAPE MODE - POSITIONED INSIDE DRAWING) ====================

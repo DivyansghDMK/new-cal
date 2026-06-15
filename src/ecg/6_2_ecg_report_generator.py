@@ -759,7 +759,12 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     if len(ecg_mv) > 0:
         dc_offset = np.nanmean(ecg_mv)
         ecg_mv = ecg_mv - dc_offset
-        if len(ecg_mv) > 20:
+        # Skip linear detrending if the robust median-mean baseline filter (0.5 Hz) was applied,
+        # because linear fitting on short asymmetric ECG segments can introduce artificial slants/drift.
+        dft_val_clean = str(settings_manager.get_setting("filter_dft", "0.5")).strip() if settings_manager else "0.5"
+        if dft_val_clean in ("off", ""):
+            dft_val_clean = "0.5"
+        if dft_val_clean != "0.5" and len(ecg_mv) > 20:
             x_idx = np.arange(len(ecg_mv))
             coeffs = np.polyfit(x_idx, ecg_mv, 1)
             ecg_mv = ecg_mv - np.polyval(coeffs, x_idx)

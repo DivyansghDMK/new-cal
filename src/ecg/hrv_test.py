@@ -721,7 +721,7 @@ class HRVTestWindow(QWidget):
             self._silent_data_warned = False
             
             # Start timers
-            self.capture_timer.start(30)
+            self.capture_timer.start(50 if is_low_spec_mode() else 30)  # 20 FPS on low-spec, 33 FPS on normal
             self.duration_timer.start(1000)
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)

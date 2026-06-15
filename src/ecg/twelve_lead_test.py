@@ -820,7 +820,7 @@ class ECGTestPage(QWidget):
         self.memory_check_interval = 2000  # Check memory every 2000 updates (reduced frequency for better performance)
         self.update_count = 0
         self._plot_update_in_progress = False
-        self._plot_render_stride = 2
+        self._plot_render_stride = 4 if is_low_spec_mode() else 2
         self._display_mode = "live"
         self._grid_frozen = False
         self._frozen_metric_texts = {}   # populated by _freeze_current_view, cleared by _resume_live_view
@@ -854,10 +854,12 @@ class ECGTestPage(QWidget):
 
 
         self.timer = QTimer()
-        self.timer.setTimerType(Qt.PreciseTimer)
+        # Use CoarseTimer on weak machines: allows Qt to coalesce wake-ups saving ~5-10% CPU.
+        # PreciseTimer is only needed on high-spec machines for tightest timing accuracy.
+        self.timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
         self.timer.timeout.connect(self.update_plots)
         self._replay_timer = QTimer(self)
-        self._replay_timer.setTimerType(Qt.PreciseTimer)
+        self._replay_timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
         self._replay_timer.timeout.connect(self._update_replay_plots)
         self.serial_reader = None
         self.stacked_widget = stacked_widget
@@ -1673,7 +1675,7 @@ class ECGTestPage(QWidget):
 
             emg_setting = None
             if hasattr(self, "settings_manager"):
-                emg_setting = str(self.settings_manager.get_setting("filter_emg", "25")).strip()
+                emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
             if emg_setting and emg_setting.lower() != "off" and data.size >= 10:
                 data = apply_emg_filter(data, float(sampling_rate), emg_setting)
 
@@ -8202,7 +8204,7 @@ class ECGTestPage(QWidget):
                         # EMG Filter
                         emg_applied = False
                         emg_suppresses_ac = False
-                        emg_setting = self.settings_manager.get_setting("filter_emg", "25") if hasattr(self, "settings_manager") else "25"
+                        emg_setting = self.settings_manager.get_setting("filter_emg", "150") if hasattr(self, "settings_manager") else "150"
                         if emg_setting and emg_setting.lower() != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_emg_filter
                             filtered_segment = apply_emg_filter(filtered_segment, sampling_rate, emg_setting)
@@ -9068,7 +9070,7 @@ class ECGTestPage(QWidget):
                         # EMG Filter
                         emg_applied = False
                         emg_suppresses_ac = False
-                        emg_setting = self.settings_manager.get_setting("filter_emg", "25") if hasattr(self, "settings_manager") else "25"
+                        emg_setting = self.settings_manager.get_setting("filter_emg", "150") if hasattr(self, "settings_manager") else "150"
                         if emg_setting and emg_setting.lower() != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_emg_filter
                             filtered_segment = apply_emg_filter(filtered_segment, sampling_rate, emg_setting)
@@ -10218,7 +10220,7 @@ class ECGTestPage(QWidget):
                                 from ecg.ecg_filters import apply_emg_filter
                                 emg_setting = None
                                 if hasattr(self, "settings_manager"):
-                                    emg_setting = str(self.settings_manager.get_setting("filter_emg", "25")).strip()
+                                    emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
                                 if emg_setting and emg_setting.lower() != "off" and len(filtered_slice) >= 10:
                                     filtered_slice = apply_emg_filter(filtered_slice, float(sampling_rate), emg_setting)
                                     emg_applied = True

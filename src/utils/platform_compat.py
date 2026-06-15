@@ -22,9 +22,17 @@ def is_linux() -> bool:
 
 def is_low_spec_mode() -> bool:
     """
-    Optional low-spec mode for older Windows machines and development laptops.
+    Auto-detects weak machines and enables lightweight rendering mode.
 
-    Enable with ECG_LOW_SPEC_MODE=1 or by setting ECG_UI_LIGHTWEIGHT=1.
+    A machine is considered "low-spec" if ANY of the following is true:
+      - ECG_LOW_SPEC_MODE=1 / ECG_UI_LIGHTWEIGHT=1 environment variable is set
+      - Total RAM is <= 8 GB  (covers older 8 GB i3 machines)
+      - Logical CPU count is <= 4  AND  RAM is <= 12 GB
+        (catches budget i3-1xxx / i3-12xxx chips with 4 threads)
+
+    Your DESKTOP-DF1G898 (i3-14100, 8-thread, 8 GB) would normally trigger
+    the RAM check, but it runs fine — so we add a CPU-thread exclusion for
+    CPUs with >= 8 logical cores to avoid throttling your dev machine.
     """
     flag = str(os.getenv("ECG_LOW_SPEC_MODE", "")).strip().lower()
     if flag in {"1", "true", "yes", "on"}:
@@ -34,8 +42,6 @@ def is_low_spec_mode() -> bool:
         return True
 
     try:
-        # Auto-enable on genuinely low-memory machines so Windows users
-        # do not need to know about the environment flag.
         if is_windows():
             import ctypes
 
@@ -55,7 +61,34 @@ def is_low_spec_mode() -> bool:
             status = _MemoryStatusEx()
             status.dwLength = ctypes.sizeof(status)
             if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                return status.ullTotalPhys < 8 * 1024 * 1024 * 1024
+                total_ram = status.ullTotalPhys
+                _6gb  = 6  * 1024 * 1024 * 1024
+                _10gb = 10 * 1024 * 1024 * 1024
+                _12gb = 12 * 1024 * 1024 * 1024
+
+                # Get logical CPU count (fast — uses GetSystemInfo or os.cpu_count)
+                cpu_count = 0
+                try:
+                    cpu_count = os.cpu_count() or 0
+                except Exception:
+                    pass
+
+                # Rule 1: Genuine low-RAM machine (< 6 GB, e.g., 4 GB RAM)
+                # Such machines will always struggle, regardless of CPU.
+                if total_ram < _6gb:
+                    return True
+
+                # Rule 2: <=10 GB RAM (typically 8 GB systems) but with < 8 CPU threads.
+                # If they have a strong CPU (>= 8 logical cores, like the user's i3-14100 with 8 threads),
+                # they can run the full app fine, so they are not flagged as low-spec.
+                # But budget/older i3 systems with < 8 threads (like 2-core/4-thread or 4-core/4-thread chips)
+                # will be flagged as low-spec.
+                if total_ram <= _10gb and 0 < cpu_count < 8:
+                    return True
+
+                # Rule 3: Medium RAM (10–12 GB) but very few CPU threads (<= 4).
+                if total_ram <= _12gb and 0 < cpu_count <= 4:
+                    return True
     except Exception:
         pass
 

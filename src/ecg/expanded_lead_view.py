@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
+from utils.platform_compat import is_low_spec_mode
 from scipy.signal import find_peaks, butter, filtfilt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -1250,9 +1251,9 @@ class ExpandedLeadView(QDialog):
     def start_live_mode(self):
         """Start live data updates"""
         self.is_live = True
-        # ~30 FPS (33 ms) to match the smooth scrolling of the 12-lead grid.
-        # The previous 100 ms (10 FPS) made the expanded waveform look slow/choppy.
-        self.timer.start(33)  # Update every ~33ms (~30 FPS)
+        # 30 FPS on normal machines; drop to 20 FPS on low-spec to halve paint cost.
+        _interval = 50 if is_low_spec_mode() else 33
+        self.timer.start(_interval)  # Update every ~33ms (~30 FPS) or ~50ms (20 FPS) on low-spec
 
     def resizeEvent(self, event):
         """Respond to window resizing by scaling fonts and components."""

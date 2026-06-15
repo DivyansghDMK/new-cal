@@ -785,7 +785,12 @@ def create_report_strip_paths(
             centered_adc = adc_data.copy()
         centered_adc = centered_adc - float(np.mean(centered_adc))
 
-    if centered_adc.size > 20:
+    # Skip linear detrending if the robust median-mean baseline filter (0.5 Hz) was applied,
+    # because linear fitting on short asymmetric ECG segments can introduce artificial slants/drift.
+    dft_val_clean = str(settings_manager.get_setting("filter_dft", "0.5")).strip() if settings_manager else "0.5"
+    if dft_val_clean in ("off", ""):
+        dft_val_clean = "0.5"
+    if dft_val_clean != "0.5" and centered_adc.size > 20:
         x_idx = np.arange(centered_adc.size, dtype=float)
         trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
         centered_adc = centered_adc - trend

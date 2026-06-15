@@ -63,6 +63,14 @@ except ImportError:
     import pyqtgraph as pg
     PYQT_VERSION = 6
 
+# Detect low-spec mode once at import time so every SmoothECGDisplay instance
+# uses the same threshold without repeated syscalls.
+try:
+    from utils.platform_compat import is_low_spec_mode as _is_low_spec
+    _LOW_SPEC = _is_low_spec()
+except Exception:
+    _LOW_SPEC = False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODULE-LEVEL PYQTGRAPH CONFIGURATION
@@ -582,8 +590,10 @@ class SmoothECGDisplay:
         self.ecg_display.stop()
     """
 
-    # Render rate: 20 FPS = 50ms. Smooth enough for ECG, not CPU-heavy.
-    RENDER_INTERVAL_MS = 50
+    # Render rate:
+    #   Normal machines  → 50 ms = 20 FPS (smooth, low CPU)
+    #   Low-spec machines → 66 ms = 15 FPS (reduces paint work by 25%)
+    RENDER_INTERVAL_MS = 66 if _LOW_SPEC else 50
 
     def __init__(self,
                  plot_widgets: dict,
@@ -635,6 +645,10 @@ class SmoothECGDisplay:
 
         # ── Render timer (decoupled from data arrival) ────────────────────────
         self._render_timer = QTimer()
+        # CoarseTimer on low-spec: Qt may batch wake-ups → fewer context switches
+        self._render_timer.setTimerType(
+            Qt.CoarseTimer if _LOW_SPEC else Qt.PreciseTimer
+        )
         self._render_timer.timeout.connect(self._render_frame)
         self._render_timer.start(self.RENDER_INTERVAL_MS)
 

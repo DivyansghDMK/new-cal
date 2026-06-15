@@ -773,7 +773,7 @@ class Dashboard(QWidget):
         self.beat_interval = 1000  # Default 1 second between beats (60 BPM)
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.timeout.connect(self.animate_heartbeat)
-        self.heartbeat_timer.start(100)  # 10 FPS (reduced from 33 FPS for performance)
+        self.heartbeat_timer.start(150 if is_low_spec_mode() else 100)  # 6-7 FPS on low-spec, 10 FPS normal
         
         # --- Heartbeat Sound ---
         try:
@@ -3623,7 +3623,7 @@ class Dashboard(QWidget):
             self.metrics_timer.start(2000 if is_low_spec_mode() else 1000)
             print("  Dashboard metrics timer started.")
         if hasattr(self, 'heartbeat_timer') and not self.heartbeat_timer.isActive():
-            self.heartbeat_timer.start(100)
+            self.heartbeat_timer.start(150 if is_low_spec_mode() else 100)
             print("  Dashboard heartbeat timer started.")
         if hasattr(self, 'anim') and self.anim is not None:
             try:
