@@ -613,13 +613,45 @@ class CloudUploader:
             timestamp = datetime.now().strftime("%Y/%m/%d")
             s3_key = f"ecg-reports/{timestamp}/{filename}"
             
-            # Upload file
-            s3_client.upload_file(
-                file_path,
-                self.s3_bucket,
-                s3_key,
-                ExtraArgs={'Metadata': {k: str(v) for k, v in metadata.items()}}
-            )
+            # Compress JSON files using gzip to reduce size (MB -> KB)
+            temp_gzipped_path = None
+            if file_path.lower().endswith('.json'):
+                try:
+                    import gzip
+                    import tempfile
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        json_content = f.read()
+                    json_bytes = json_content.encode('utf-8')
+                    with tempfile.NamedTemporaryFile(suffix='.json.gz', delete=False) as tf:
+                        with gzip.GzipFile(fileobj=tf, mode='wb') as gz:
+                            gz.write(json_bytes)
+                        temp_gzipped_path = tf.name
+                except Exception as e:
+                    print(f"[WARN] Failed to compress JSON file {file_path}: {e}")
+                    temp_gzipped_path = None
+
+            extra_args = {'Metadata': {k: str(v) for k, v in metadata.items()}}
+            if temp_gzipped_path:
+                upload_src = temp_gzipped_path
+                extra_args['ContentType'] = 'application/json'
+                extra_args['ContentEncoding'] = 'gzip'
+            else:
+                upload_src = file_path
+
+            try:
+                # Upload file
+                s3_client.upload_file(
+                    upload_src,
+                    self.s3_bucket,
+                    s3_key,
+                    ExtraArgs=extra_args
+                )
+            finally:
+                if temp_gzipped_path:
+                    try:
+                        os.remove(temp_gzipped_path)
+                    except Exception:
+                        pass
             
             # Generate presigned URL (optional)
             url = f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{s3_key}"

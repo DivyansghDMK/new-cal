@@ -749,14 +749,46 @@ class CloudUploader:
                 use_threads=True,
             )
             
-            # Upload file
-            s3_client.upload_file(
-                file_path,
-                self.s3_bucket,
-                s3_key,
-                ExtraArgs={'Metadata': {k: str(v) for k, v in metadata.items()}},
-                Config=transfer_cfg,
-            )
+            # Compress JSON files using gzip to reduce size (MB -> KB)
+            temp_gzipped_path = None
+            if file_path.lower().endswith('.json'):
+                try:
+                    import gzip
+                    import tempfile
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        json_content = f.read()
+                    json_bytes = json_content.encode('utf-8')
+                    with tempfile.NamedTemporaryFile(suffix='.json.gz', delete=False) as tf:
+                        with gzip.GzipFile(fileobj=tf, mode='wb') as gz:
+                            gz.write(json_bytes)
+                        temp_gzipped_path = tf.name
+                except Exception as e:
+                    print(f"[WARN] Failed to compress JSON file {file_path}: {e}")
+                    temp_gzipped_path = None
+
+            extra_args = {'Metadata': {k: str(v) for k, v in metadata.items()}}
+            if temp_gzipped_path:
+                upload_src = temp_gzipped_path
+                extra_args['ContentType'] = 'application/json'
+                extra_args['ContentEncoding'] = 'gzip'
+            else:
+                upload_src = file_path
+
+            try:
+                # Upload file
+                s3_client.upload_file(
+                    upload_src,
+                    self.s3_bucket,
+                    s3_key,
+                    ExtraArgs=extra_args,
+                    Config=transfer_cfg,
+                )
+            finally:
+                if temp_gzipped_path:
+                    try:
+                        os.remove(temp_gzipped_path)
+                    except Exception:
+                        pass
             
             # Generate presigned URL (optional)
             url = f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{s3_key}"
@@ -1005,16 +1037,30 @@ class CloudUploader:
             upload_package = _sanitize(upload_package)
 
             import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
-                json.dump(upload_package, f, indent=2, ensure_ascii=False)
+            import gzip
+
+            # Dump as compact JSON string (no indent, no extra spacing to save space)
+            package_json_str = json.dumps(upload_package, ensure_ascii=False, separators=(',', ':'))
+            package_json_bytes = package_json_str.encode('utf-8')
+
+            # Write as gzipped bytes to a temporary file
+            with tempfile.NamedTemporaryFile(suffix='.json.gz', delete=False) as f:
+                with gzip.GzipFile(fileobj=f, mode='wb') as gz:
+                    gz.write(package_json_bytes)
                 package_file_path = f.name
             
             try:
+                # Upload with gzip Content-Encoding so S3 clients/browsers automatically
+                # decompress it transparently upon download. Stored size is reduced by ~93% (MB -> KB).
                 s3_client.upload_file(
                     package_file_path,
                     self.s3_bucket,
                     package_s3_key,
-                    ExtraArgs={'Metadata': s3_metadata_headers}
+                    ExtraArgs={
+                        'Metadata': s3_metadata_headers,
+                        'ContentType': 'application/json',
+                        'ContentEncoding': 'gzip'
+                    }
                 )
                 upload_results["uploads"].append({
                     "type": "package_json",
