@@ -355,6 +355,24 @@ class LoginRegisterDialog(QDialog):
         self.init_ui()
         self.result = False
         self.username = None
+        self.user_details = {}
+
+    def exec_(self):
+        # Auto-login bypass with username 'cardiomac' / phone '9560350477'
+        try:
+            print("🔑 Bypassing login screen for user: cardiomac (9560350477)")
+            found = self.sign_in_logic._find_user_record("cardiomac")
+            if found:
+                username, record = found
+                self.result = True
+                self.username = username
+                self.user_details = record
+                return QDialog.Accepted
+            else:
+                print("⚠️ User 'cardiomac' not found in users.json! Showing login dialog...")
+        except Exception as e:
+            print(f"⚠️ Bypass login error: {e}")
+        return super().exec_()
 
     def init_ui(self):
         from PyQt5.QtWidgets import QSizePolicy

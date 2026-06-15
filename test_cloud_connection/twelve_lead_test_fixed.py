@@ -7283,7 +7283,7 @@ class ECGTestPage(QWidget):
                         # EMG Filter
                         emg_applied = False
                         emg_suppresses_ac = False
-                        emg_setting = self.settings_manager.get_setting("filter_emg", "150") if hasattr(self, "settings_manager") else "150"
+                        emg_setting = self.settings_manager.get_setting("filter_emg", "25") if hasattr(self, "settings_manager") else "25"
                         if emg_setting and emg_setting.lower() != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_emg_filter
                             filtered_segment = apply_emg_filter(filtered_segment, sampling_rate, emg_setting)
@@ -8064,7 +8064,7 @@ class ECGTestPage(QWidget):
                         # EMG Filter
                         emg_applied = False
                         emg_suppresses_ac = False
-                        emg_setting = self.settings_manager.get_setting("filter_emg", "150") if hasattr(self, "settings_manager") else "150"
+                        emg_setting = self.settings_manager.get_setting("filter_emg", "25") if hasattr(self, "settings_manager") else "25"
                         if emg_setting and emg_setting.lower() != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_emg_filter
                             filtered_segment = apply_emg_filter(filtered_segment, sampling_rate, emg_setting)
@@ -8723,7 +8723,7 @@ class ECGTestPage(QWidget):
                                 from ecg.ecg_filters import apply_emg_filter
                                 emg_setting = None
                                 if hasattr(self, "settings_manager"):
-                                    emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
+                                    emg_setting = str(self.settings_manager.get_setting("filter_emg", "25")).strip()
                                 if emg_setting and emg_setting.lower() != "off" and len(filtered_slice) >= 10:
                                     filtered_slice = apply_emg_filter(filtered_slice, float(sampling_rate), emg_setting)
                                     emg_applied = True

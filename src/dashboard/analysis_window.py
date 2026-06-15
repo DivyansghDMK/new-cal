@@ -1081,7 +1081,7 @@ class ECGAnalysisWindow(QDialog):
         self.sampling_rate       = 500.0
         # Filter settings
         self.filter_ac = "50"
-        self.filter_emg = "150"
+        self.filter_emg = "25"
         self.filter_dft = "off"
         try:
             from utils.settings_manager import SettingsManager
@@ -3062,7 +3062,7 @@ class ECGAnalysisWindow(QDialog):
 
             # Read current filter settings
             filter_ac = getattr(self, "filter_ac", "50")
-            filter_emg = getattr(self, "filter_emg", "150")
+            filter_emg = getattr(self, "filter_emg", "25")
             filter_dft = getattr(self, "filter_dft", "off")
             try:
                 from utils.settings_manager import SettingsManager

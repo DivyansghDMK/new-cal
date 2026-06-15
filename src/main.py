@@ -1029,10 +1029,41 @@ class LoginRegisterDialog(QDialog):
         except Exception:
             pass
         
-        self.init_ui()
+        self.ui_initialized = False
         self.result = False
         self.username = None
         self.user_details = {}
+
+    def __getattr__(self, name):
+        # Lazy initialize UI if someone accesses a widget/attribute before exec_
+        if name in ("stacked", "bg_label") and not getattr(self, "ui_initialized", False):
+            self.init_ui()
+            self.ui_initialized = True
+            return getattr(self, name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def exec_(self):
+        # Auto-login bypass with username 'cardiomac' / phone '9560350477'
+        try:
+            print("🔑 Bypassing login screen for user: cardiomac (9560350477)")
+            found = self.sign_in_logic._find_user_record("cardiomac")
+            if found:
+                username, record = found
+                self.result = True
+                self.username = username
+                self.user_details = record
+                return QDialog.Accepted
+            else:
+                print("⚠️ User 'cardiomac' not found in users.json! Showing login dialog...")
+        except Exception as e:
+            print(f"⚠️ Bypass login error: {e}")
+        
+        # If not bypassed, initialize UI now before showing dialog
+        if not getattr(self, "ui_initialized", False):
+            self.init_ui()
+            self.ui_initialized = True
+            
+        return super().exec_()
 
     def init_ui(self):
         # Set up GIF background

@@ -51,7 +51,7 @@ LEAD_SEQUENCES = {
     "Standard": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
     "Cabrera": ["aVL", "I", "-aVR", "II", "aVF", "III", "V1", "V2", "V3", "V4", "V5", "V6"]
 }
-Y_POSITIONS_MM = [263.2, 242.6, 222.1, 201.5, 180.9, 160.3, 139.8, 119.2, 98.6, 78.0, 57.5, 36.9]
+Y_POSITIONS_MM = [247.0625, 227.0625, 207.0625, 187.0625, 167.0625, 147.0625, 127.0625, 107.0625, 87.0625, 67.0625, 47.0625, 27.0625]
 def _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str, data, settings_manager):
     from reportlab.graphics.shapes import String
     from reportlab.lib.units import mm
@@ -601,7 +601,7 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     
     return calculated_time_window, num_samples
 
-def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target_samples=None):
+def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target_samples=None, emg_override=None, dft_override=None):
     """Prepare the visible report strip using a stable segment-local pipeline."""
     arr = np.asarray(signal, dtype=float)
     if arr.size < 2:
@@ -636,10 +636,15 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
 
         if settings_manager is not None:
             ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
-            emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
             dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
         else:
-            ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
+            ac_setting, emg_setting, dft_setting = "50", "25", "0.5"
+
+        if emg_override is not None:
+            emg_setting = emg_override
+        if dft_override is not None:
+            dft_setting = dft_override
 
         if ac_setting in ("50", "60"):
             required_fs = float(ac_setting) * 2.0 + 1.0
@@ -692,6 +697,170 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
         pass
 
     return np.asarray(work, dtype=float)
+
+
+def create_report_strip_paths(
+    values,
+    strip_x,
+    strip_y,
+    strip_width,
+    strip_height,
+    sampling_rate,
+    settings_manager,
+    wave_speed_mm_s=25.0,
+    wave_gain_mm_mv=10.0,
+    lead_name="II",
+    adc_per_box_multiplier=6400.0,
+    fill_strip=False,
+):
+    """
+    Draw one ECG strip aligned box-by-box to standard landscape grid paper.
+    Uses time-based horizontal scaling (25 mm/s × speed scale) and ADC-per-box
+    vertical scaling — same algorithm as the HRV Lead II report strips.
+    """
+    from reportlab.graphics.shapes import Path
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm as mm_unit
+
+    center_y = strip_y + (strip_height / 2.0)
+    notch_path = None
+    notch_x = strip_x + (3.0 * mm_unit)
+
+    try:
+        notch_boxes = settings_manager.get_calibration_notch_boxes()
+    except Exception:
+        notch_boxes = 2.0
+
+    notch_width = 5.0 * mm_unit
+    notch_tail = 2.0 * mm_unit
+    notch_height = (notch_boxes * 5.0) * mm_unit
+
+    notch_path = Path(
+        fillColor=None,
+        strokeColor=colors.HexColor("#000000"),
+        strokeWidth=0.8,
+        strokeLineCap=1,
+        strokeLineJoin=0,
+    )
+    notch_path.moveTo(strip_x, center_y)
+    notch_path.lineTo(notch_x, center_y)
+    notch_path.lineTo(notch_x, center_y + notch_height)
+    notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
+    notch_path.lineTo(notch_x + notch_width, center_y)
+    notch_path.lineTo(notch_x + notch_width + notch_tail + (1.0 * mm_unit), center_y)
+
+    if values is None or len(values) < 2:
+        baseline_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.4,
+            strokeLineCap=1,
+            strokeLineJoin=1,
+        )
+        baseline_path.moveTo(strip_x, center_y)
+        baseline_path.lineTo(strip_x + strip_width, center_y)
+        return baseline_path, notch_path, None
+
+    adc_data = np.asarray(values, dtype=float)
+    fs = _safe_float(sampling_rate, 500.0) or 500.0
+
+    try:
+        emg_val = str(settings_manager.get_setting("filter_emg", "25")).strip() if settings_manager else "25"
+        dft_val = str(settings_manager.get_setting("filter_dft", "0.5")).strip() if settings_manager else "0.5"
+        if dft_val in ("off", ""):
+            dft_val = "0.5"
+        centered_adc = _prepare_report_strip_signal(
+            adc_data,
+            float(fs),
+            settings_manager,
+            target_samples=adc_data.size,
+            emg_override=emg_val,
+            dft_override=dft_val,
+        )
+    except Exception:
+        data_mean = float(np.mean(adc_data))
+        if abs(data_mean - 2000.0) < 500:
+            centered_adc = adc_data - 2000.0
+        else:
+            centered_adc = adc_data.copy()
+        centered_adc = centered_adc - float(np.mean(centered_adc))
+
+    if centered_adc.size > 20:
+        x_idx = np.arange(centered_adc.size, dtype=float)
+        trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
+        centered_adc = centered_adc - trend
+
+    try:
+        from ecg.ecg_filters import stabilize_report_edges
+        centered_adc = stabilize_report_edges(centered_adc, float(fs), edge_ms=140.0)
+    except Exception:
+        pass
+
+    grid_box_mm = 5.0
+    box_height_points = grid_box_mm * mm_unit
+    mm_per_sample = float(wave_speed_mm_s) / max(1e-6, float(fs))
+    strip_end_x = strip_x + strip_width
+    wave_start_x = notch_x + notch_width + notch_tail + (1.0 * mm_unit)
+
+    if not fill_strip:
+        strip_width_mm = float(strip_width) / mm_unit
+        visible_n = max(2, int(strip_width_mm / mm_per_sample) + 1)
+        if centered_adc.size > visible_n:
+            centered_adc = centered_adc[-visible_n:]
+
+    adc_per_box = float(adc_per_box_multiplier) / max(1e-6, float(wave_gain_mm_mv))
+    boxes_offset = centered_adc / adc_per_box
+    ecg_normalized = center_y + (boxes_offset * box_height_points)
+
+    if fill_strip:
+        # Legacy 4:3 / hyperkalemia: map every sample across full strip width
+        t = np.linspace(wave_start_x, strip_end_x, len(centered_adc))
+        visible_mask = np.ones(len(centered_adc), dtype=bool)
+    else:
+        t = wave_start_x + (np.arange(centered_adc.size, dtype=float) * mm_per_sample * mm_unit)
+        visible_mask = t <= strip_end_x
+
+    if not np.any(visible_mask):
+        baseline_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.4,
+            strokeLineCap=1,
+            strokeLineJoin=1,
+        )
+        baseline_path.moveTo(strip_x, center_y)
+        baseline_path.lineTo(strip_x + strip_width, center_y)
+        return baseline_path, notch_path, None
+
+    t = t[visible_mask]
+    ecg_normalized = ecg_normalized[visible_mask]
+
+    trace_path = Path(
+        fillColor=None,
+        strokeColor=colors.HexColor("#000000"),
+        strokeWidth=0.4,
+        strokeLineCap=1,
+        strokeLineJoin=1,
+    )
+    trace_path.moveTo(t[0], ecg_normalized[0])
+    for i in range(1, len(t)):
+        trace_path.lineTo(t[i], ecg_normalized[i])
+
+    dotted_path = None
+    gap_mm = (strip_end_x - float(t[-1])) / mm_unit
+    if not fill_strip and gap_mm > 3.0:
+        dotted_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.4,
+            strokeLineCap=1,
+            strokeLineJoin=1,
+            strokeDashArray=[2, 3],
+        )
+        dotted_path.moveTo(t[-1], center_y)
+        dotted_path.lineTo(strip_end_x, center_y)
+
+    return trace_path, notch_path, dotted_path
 
 
 def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
@@ -2607,7 +2776,17 @@ def generate_ecg_report(
                 if len(adc_data) < 2:
                     continue
 
-                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
+                # Calculate physical dimensions and samples that fit
+                ecg_width_mm = graph_boxes * ECG_LARGE_BOX_MM  # 37.0 * 5.0 = 185.0 mm
+                visible_seconds = ecg_width_mm / 25.0  # 185.0 / 25.0 = 7.4 seconds
+                visible_samples = int(round(visible_seconds * computed_sampling_rate))
+                
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                if len(adc_data) > visible_samples:
+                    adc_data = adc_data[-visible_samples:]
+                
+                t_sec = np.arange(len(adc_data)) / computed_sampling_rate
+                t = x_pos + t_sec * 25.0 * mm
 
                 adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
                 adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
@@ -3003,7 +3182,17 @@ def generate_ecg_report(
                 if len(adc_data) < 2:
                     continue
 
-                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
+                # Calculate physical dimensions and samples that fit
+                ecg_width_mm = graph_boxes * ECG_LARGE_BOX_MM  # 37.0 * 5.0 = 185.0 mm
+                visible_seconds = ecg_width_mm / 25.0  # 185.0 / 25.0 = 7.4 seconds
+                visible_samples = int(round(visible_seconds * computed_sampling_rate))
+                
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                if len(adc_data) > visible_samples:
+                    adc_data = adc_data[-visible_samples:]
+                
+                t_sec = np.arange(len(adc_data)) / computed_sampling_rate
+                t = x_pos + t_sec * 25.0 * mm
 
                 adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
                 adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
@@ -3818,60 +4007,57 @@ def generate_ecg_report(
         import os
         from reportlab.lib.units import mm
         
-        # STEP 1: Draw ECG grid across full A4 with 40×56 major boxes
+        # STEP 1: Draw ECG grid across full A4 with standard 5mm boxes
         if canvas.getPageNumber() == 1:  # Changed from 3 to 2
             a4_width, a4_height = canvas._pagesize
-            grid_x = 0
-            grid_y = 0
-            grid_width = a4_width
-            grid_height = a4_height
+            grid_x = 5.0 * mm
+            grid_y = 6.0 * mm
+            grid_width = 190.0 * mm
+            grid_height = 265.0 * mm
             
-            # Fill full page with pink background
+            # Fill exact grid area with pink background
             canvas.setFillColor(colors.HexColor("#ffe6e6"))
-            canvas.rect(0, 0, a4_width, a4_height, fill=1, stroke=0)
+            canvas.rect(grid_x, grid_y, grid_width, grid_height, fill=1, stroke=0)
             
             # ECG grid colors - darker for better visibility
             light_grid_color = colors.HexColor("#ffd1d1")  
-            
             major_grid_color = colors.HexColor("#ffb3b3")   
             
-            # Box sizes based on full-page fit: 40×56 major boxes
-            major_spacing_x = grid_width / 40.0
-            major_spacing_y = grid_height / 56.0
-            minor_spacing_x = major_spacing_x / 5.0
-            minor_spacing_y = major_spacing_y / 5.0
+            # Exact physical spacings
+            minor_spacing = 1.0 * mm
+            major_spacing = 5.0 * mm
             
-            # Draw minor grid lines (1mm) FIRST - bottom layer
+            # Draw minor grid lines FIRST - bottom layer
             canvas.setStrokeColor(light_grid_color)
-            canvas.setLineWidth(0.6)
+            canvas.setLineWidth(0.4)
             
             # Vertical minor lines
-            x_minor = grid_x
-            while x_minor <= a4_width:
-                canvas.line(x_minor, 0, x_minor, a4_height)
-                x_minor += minor_spacing_x
+            x = grid_x
+            while x <= grid_x + grid_width + 0.01:
+                canvas.line(x, grid_y, x, grid_y + grid_height)
+                x += minor_spacing
             
             # Horizontal minor lines
-            y_minor = grid_y
-            while y_minor <= a4_height:
-                canvas.line(0, y_minor, a4_width, y_minor)
-                y_minor += minor_spacing_y
+            y = grid_y
+            while y <= grid_y + grid_height + 0.01:
+                canvas.line(grid_x, y, grid_x + grid_width, y)
+                y += minor_spacing
             
             # Draw major grid lines ON TOP - standard 5mm spacing
             canvas.setStrokeColor(major_grid_color)
-            canvas.setLineWidth(0.6)
+            canvas.setLineWidth(0.8)
             
             # Vertical major lines
-            x_major = grid_x
-            while x_major <= a4_width:
-                canvas.line(x_major, 0, x_major, a4_height)
-                x_major += major_spacing_x
+            x = grid_x
+            while x <= grid_x + grid_width + 0.01:
+                canvas.line(x, grid_y, x, grid_y + grid_height)
+                x += major_spacing
             
             # Horizontal major lines
-            y_major = grid_y
-            while y_major <= a4_height:
-                canvas.line(0, y_major, a4_width, y_major)
-                y_major += major_spacing_y
+            y = grid_y
+            while y <= grid_y + grid_height + 0.01:
+                canvas.line(grid_x, y, grid_x + grid_width, y)
+                y += major_spacing
             
 
         

@@ -655,9 +655,11 @@ class HRVTestWindow(QWidget):
             # Reset display baseline anchor so centering adapts fresh for this session
             if hasattr(self, "_hrv_display_anchor"):
                 del self._hrv_display_anchor
-            # Baseline/DFT filters need ~1.2 s of real samples before output is stable
-            self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
+            # Baseline/DFT + 25 Hz EMG filters need ~2.5 s before output is stable
+            self._display_warmup_samples = int(max(600, self.sampling_rate * 2.5))
+            self._display_settle_samples = int(max(250, self.sampling_rate * 0.5))
             self._display_anchor_locked = False
+            self._display_ready_announced = False
             self._last_sweep_y = 2048.0
 
             # Discard stale serial packets so the trace does not start mid-stream
@@ -1044,18 +1046,19 @@ class HRVTestWindow(QWidget):
 
             buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-            warmup_needed = getattr(self, "_display_warmup_samples", int(1.2 * fs))
-            display_ready = valid_count >= warmup_needed
+            warmup_needed = getattr(self, "_display_warmup_samples", int(2.5 * fs))
+            settle_needed = warmup_needed + getattr(self, "_display_settle_samples", int(0.5 * fs))
+            display_ready = valid_count >= settle_needed
 
             if len(buffer_data) > 5 and display_ready:
-                # Get filter settings from SettingsManager
+                # Default clinical filters: AC 50 Hz, EMG 25 Hz low-pass, 0.5 Hz baseline
                 ac_val = "50"
                 emg_val = "25"
                 dft_val = "0.5"
 
                 # Pad with enough values so startup filtering begins cleanly instead of
                 # showing a raw transient while the display buffer is still warming up.
-                pad_len = min(int(fs * 1.5), max(0, len(buffer_data) - 1))
+                pad_len = min(int(fs * 2.0), max(0, len(buffer_data) - 1))
                 if pad_len > 0:
                     padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='reflect')
                 else:
@@ -1081,7 +1084,7 @@ class HRVTestWindow(QWidget):
                     # This mirrors the 12-lead display behavior and prevents left/right
                     # wobble during the first and last few seconds of the visible window.
                     if dft_text == "0.5":
-                        edge_trim = int(0.5 * fs)
+                        edge_trim = int(0.75 * fs)
                         min_keep = max(50, pad_len * 2 + 20)
                         if edge_trim > 0 and len(padded_data) > (2 * edge_trim + min_keep):
                             padded_data = padded_data[edge_trim:-edge_trim]
@@ -1092,9 +1095,16 @@ class HRVTestWindow(QWidget):
                     buffer_data = padded_data
 
                 # Gentle smoothing for HRV display so the trace looks continuous.
-                buffer_data = gaussian_filter1d(buffer_data, sigma=1.2)
+                buffer_data = gaussian_filter1d(buffer_data, sigma=0.8)
 
             if len(buffer_data) > 0 and display_ready:
+                if not getattr(self, "_display_ready_announced", False):
+                    # Start sweep from a clean baseline once filters have fully settled
+                    self._sweep_buf[:] = 2048.0
+                    self._sweep_pos = 0
+                    self._last_sweep_y = 2048.0
+                    self._display_anchor_locked = False
+                    self._display_ready_announced = True
                 # Center the waveform in the middle of the plot so it stays visually stable
                 # across devices with different ADC offsets.
                 if not getattr(self, "_display_anchor_locked", False):
@@ -1866,9 +1876,39 @@ class HRVTestWindow(QWidget):
             )
             
             if reply == QMessageBox.Yes:
-                self.stop_capture()
+                try:
+                    self.stop_capture()
+                except Exception as e:
+                    print(f" Error stopping capture: {e}")
+                
+                # Explicitly stop BPM controller if it is running
+                if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                    try:
+                        self._bpm_ctrl.stop()
+                    except Exception as e:
+                        print(f" Error stopping BPM controller: {e}")
+                
+                # Resume dashboard timers
+                if hasattr(self, 'dashboard_instance') and self.dashboard_instance is not None:
+                    try:
+                        self.dashboard_instance.resume_dashboard_timers()
+                    except Exception as e:
+                        print(f" Error resuming dashboard timers: {e}")
                 event.accept()
             else:
                 event.ignore()
         else:
+            # Explicitly stop BPM controller if it is running
+            if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                try:
+                    self._bpm_ctrl.stop()
+                except Exception as e:
+                    print(f" Error stopping BPM controller: {e}")
+            
+            # Resume dashboard timers
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance is not None:
+                try:
+                    self.dashboard_instance.resume_dashboard_timers()
+                except Exception as e:
+                    print(f" Error resuming dashboard timers: {e}")
             event.accept()

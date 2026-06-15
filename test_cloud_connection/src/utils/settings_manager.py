@@ -20,7 +20,7 @@ class SettingsManager:
 
             # Filter settings
             "filter_ac": "50",
-            "filter_emg": "150",
+            "filter_emg": "25",
             "filter_dft": "off",
 
             # System Setup settings
@@ -34,6 +34,12 @@ class SettingsManager:
             "factory_reset": "cancel"
         }
         self.settings = self.load_settings()
+        if self.settings.get("filter_emg") == "150":
+            self.settings["filter_emg"] = "25"
+            try:
+                self.save_settings()
+            except Exception:
+                pass
     
     def load_settings(self):
         if os.path.exists(self.settings_file):

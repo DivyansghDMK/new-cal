@@ -43,11 +43,13 @@ import numpy as np
 
 
 # ------------------------ ECG grid scale constants ------------------------
-# 40 large boxes across A4 width (210mm) => 1 large box = 5.25mm
+# Clinical ECG standard: 1 large box = exactly 5.0 mm, 1 small box = exactly 1.0 mm
+# At 25 mm/s: 5 large boxes per second (100 samples/box at 500 Hz)
+# At 50 mm/s: 10 large boxes per second
 ECG_BASE_BOX_MM = 5.0
-ECG_LARGE_BOX_MM = 210.0 / 40.0  # = 5.25mm
-ECG_SMALL_BOX_MM = ECG_LARGE_BOX_MM / 5.0  # = 1.05mm
-ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM  # = 1.05
+ECG_LARGE_BOX_MM = 5.0   # Clinical standard: exactly 5.0 mm per large box
+ECG_SMALL_BOX_MM = 1.0   # Clinical standard: exactly 1.0 mm per small box
+ECG_SPEED_SCALE = 1.0    # No artificial scaling – waveform speed matches clinical paper exactly
 SIX_TWO_SAMPLES_COLUMN = 2500
 SIX_TWO_SAMPLES_EXTRA_II = 5000  # 5 seconds at 500Hz = 5000 samples for Lead II rhythm strip
 
@@ -303,7 +305,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     else:
         work = arr
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
     dft_param = dft_setting if dft_setting not in ("off", "") else None
     emg_param = emg_setting if emg_setting not in ("off", "") else None
@@ -2040,8 +2042,14 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 # 25mm/s speed, scaled by ECG_SPEED_SCALE (1.05) to match 5.25mm boxes
                 # result: 1 second = 5 boxes = 26.25mm (exactly aligned with grid)
                 # Create time array for ALL data (same approach as ecg_report_generator.py)
-                ecg_width = COLUMN_WIDTH_PTS
-                t = np.linspace(adjusted_x_pos, adjusted_x_pos + ecg_width, len(real_ecg_data))
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                visible_seconds = ecg_width / (25.0 * mm)
+                visible_samples = int(round(visible_seconds * computed_sampling_rate))
+                if len(adc_data) > visible_samples:
+                    adc_data = adc_data[-visible_samples:]
+                
+                t_sec = np.arange(len(adc_data)) / computed_sampling_rate
+                t = adjusted_x_pos + t_sec * 25.0 * mm
                 
                 adc_data = np.array(real_ecg_data, dtype=float)
 
@@ -2051,7 +2059,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                     from scipy.ndimage import gaussian_filter1d as _gf1d
                     
                     ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
                     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
@@ -2603,20 +2611,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                     # Column 2 leads keep original position
                     adjusted_x_pos = x_pos
                 
-                # NEW LOGIC: Use time * speed * scale to align with 5.25mm boxes
-                # 25mm/s speed, scaled by ECG_SPEED_SCALE (1.05) to match 5.25mm boxes
-                # result: 1 second = 5 boxes = 26.25mm (exactly aligned with grid)
+                # Clinical calibration: 1 second = 5 large boxes at 25 mm/s (exactly 25 mm)
                 fs = float(computed_sampling_rate)
-                t_sec = np.arange(len(real_ecg_data)) / fs
-                
-                # Calculate X points in points (1/72 inch)
-                # adjusted_x_pos is the starting point in the master drawing
-                # Add 1mm gap (same as 4:3 format)
-                gap_points = mm # 1mm gap
-                t = adjusted_x_pos + gap_points + (t_sec * wave_speed_mm_s * ECG_SPEED_SCALE * mm)
-                
-                print(f" Lead {lead}: Using diagnostic time scaling - {wave_speed_mm_s} mm/s * {ECG_SPEED_SCALE:.2f} scale")
-                print(f"   X range: {t[0]:.1f} to {t[-1]:.1f} (points)")
                 
                 
                 # Step 1: Convert ADC data to numpy array
@@ -2684,8 +2680,17 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 major_spacing_y = ecg_height / 3.0  # height/3 = 15.0 points per box (user's choice)
                 box_height_points = major_spacing_y  # Use actual grid spacing (height/3)
                 
-                # Convert boxes offset to Y position
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                visible_seconds = ecg_width / (25.0 * mm)
+                visible_samples = int(round(visible_seconds * fs))
+                if len(boxes_offset) > visible_samples:
+                    boxes_offset = boxes_offset[-visible_samples:]
+                
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
+                
+                gap_points = mm
+                t_sec = np.arange(len(boxes_offset)) / fs
+                t = adjusted_x_pos + gap_points + (t_sec * 25.0 * mm)
                 
                 
                 # Draw ALL REAL ECG data points
@@ -2970,20 +2975,21 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
         boxes_offset = centered_adc / adc_per_box
         
-        # Convert to Y position
-        # IMPORTANT: Use ECG_LARGE_BOX_MM (5.25mm) to match the grid
-        box_height_points = ECG_LARGE_BOX_MM * mm
-        center_y_notch = extra_lead_ii_y + (extra_lead_ii_height / 2.0)
-        center_y_wave = center_y_notch
+        # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+        visible_seconds = extra_lead_ii_width_points / (25.0 * mm)
+        visible_samples = int(round(visible_seconds * computed_sampling_rate))
+        if len(boxes_offset) > visible_samples:
+            boxes_offset = boxes_offset[-visible_samples:]
+            
         ecg_normalized = center_y_wave + (boxes_offset * box_height_points)
         
-        # NEW LOGIC: Use time * speed * scale for perfect R-R alignment
+        # Clinical calibration: exact time axis – 25 mm/s means 25 mm per second on paper
         fs = float(computed_sampling_rate)
-        t_sec = np.arange(len(extra_lead_ii_data)) / fs
+        t_sec = np.arange(len(boxes_offset)) / fs
         
-        # Calculate X points with 1mm gap
+        # Calculate X positions with 1mm gap
         gap_points = mm # 1mm gap
-        t = extra_lead_ii_adjusted_x_pos + gap_points + (t_sec * wave_speed_mm_s * ECG_SPEED_SCALE * mm)
+        t = extra_lead_ii_adjusted_x_pos + gap_points + (t_sec * 25.0 * mm)
         
         # Draw ECG strip
         from reportlab.graphics.shapes import Path

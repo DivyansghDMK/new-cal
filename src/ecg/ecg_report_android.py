@@ -40,7 +40,7 @@ FIXED_GAIN    = 10.0
 MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
 REPORT_STRIP_SECONDS = 7.0
 REPORT_AC_SETTING = "50"
-REPORT_EMG_SETTING = "150"
+REPORT_EMG_SETTING = "25"
 REPORT_DFT_SETTING = "0.5"
 REPORT_DEMO_MODE = False
 # ADC_PER_MM: ADC counts per 1mm at standard 10mm/mV gain.
@@ -137,7 +137,7 @@ def generate_report(
             return default
 
     ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
-    emg_setting = _get_filter_setting("filter_emg", "150")  # "25".."150" or "off"
+    emg_setting = _get_filter_setting("filter_emg", "25")  # "25".."150" or "off"
     dft_setting = _get_filter_setting("filter_dft", "off")  # "0.05", "0.5", or "off"
     REPORT_AC_SETTING = ac_setting
     REPORT_EMG_SETTING = emg_setting
@@ -1014,15 +1014,11 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         work = work[chosen_start:chosen_start + core_n]
 
     # If the selected window is longer than the strip can physically display,
-    # compress it to the strip width while keeping the newest samples.
+    # slice it to the strip width to preserve standard speed and calibration,
+    # cropping extra samples instead of stretching/compressing.
     visible_n = max(2, int(width_mm / MM_PER_SAMPLE) + 1)
     if work.size > visible_n:
-        try:
-            x_src = np.linspace(0.0, 1.0, work.size)
-            x_dst = np.linspace(0.0, 1.0, visible_n)
-            work = np.interp(x_dst, x_src, work)
-        except Exception:
-            work = work[-visible_n:]
+        work = work[-visible_n:]
 
     # Demo-only: remove residual baseline slope so the strip starts at the baseline.
     # This keeps demo PDFs from showing an initial drifting baseline even when the

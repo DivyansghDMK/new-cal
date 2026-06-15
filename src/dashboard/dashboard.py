@@ -1447,6 +1447,9 @@ class Dashboard(QWidget):
         self.setLayout(main_layout)
         self.page_stack.setCurrentWidget(self.dashboard_page)
 
+        # Connect page stack changes to pause/resume dashboard background timers/animations
+        self.page_stack.currentChanged.connect(self.on_page_changed)
+
         # Check if the license is restricted (offline stable mismatch)
         from utils.license_manager import is_license_restricted
         if is_license_restricted():
@@ -3598,6 +3601,47 @@ class Dashboard(QWidget):
                         self.metric_labels['st_interval'].setText("--")
         except Exception as e:
             print(f" Error updating dashboard metrics from ECG: {e}")
+            
+    def pause_dashboard_timers(self):
+        print("⏸️ Pausing dashboard timers and animations...")
+        if hasattr(self, 'metrics_timer') and self.metrics_timer.isActive():
+            self.metrics_timer.stop()
+            print("  Dashboard metrics timer stopped.")
+        if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+            self.heartbeat_timer.stop()
+            print("  Dashboard heartbeat timer stopped.")
+        if hasattr(self, 'anim') and self.anim is not None:
+            try:
+                self.anim.pause()
+                print("  Dashboard ECG animation paused.")
+            except Exception as e:
+                print(f"  Failed to pause dashboard ECG animation: {e}")
+
+    def resume_dashboard_timers(self):
+        print("▶️ Resuming dashboard timers and animations...")
+        if hasattr(self, 'metrics_timer') and not self.metrics_timer.isActive():
+            self.metrics_timer.start(2000 if is_low_spec_mode() else 1000)
+            print("  Dashboard metrics timer started.")
+        if hasattr(self, 'heartbeat_timer') and not self.heartbeat_timer.isActive():
+            self.heartbeat_timer.start(100)
+            print("  Dashboard heartbeat timer started.")
+        if hasattr(self, 'anim') and self.anim is not None:
+            try:
+                self.anim.resume()
+                print("  Dashboard ECG animation resumed.")
+            except Exception as e:
+                print(f"  Failed to resume dashboard ECG animation: {e}")
+
+    def on_page_changed(self, index):
+        """Handle page stack widget changes. Pause timers if moving away from main dashboard page."""
+        try:
+            current_widget = self.page_stack.widget(index)
+            if current_widget == self.dashboard_page:
+                self.resume_dashboard_timers()
+            else:
+                self.pause_dashboard_timers()
+        except Exception as e:
+            print(f" Error in on_page_changed: {e}")
     
     def generate_pdf_report(self):
         """Generate ECG PDF report in a separate process."""
@@ -6228,6 +6272,7 @@ class Dashboard(QWidget):
             print(f" Error stopping 12-lead test: {e}")
 
         try:
+            self.pause_dashboard_timers()
             from ecg.hyperkalemia_test import HyperkalemiaTestWindow
             self.hyperkalemia_window = HyperkalemiaTestWindow(parent=self, username=self.username)
             self.hyperkalemia_window.showMaximized()
@@ -6317,6 +6362,7 @@ class Dashboard(QWidget):
             return
 
         try:
+            self.pause_dashboard_timers()
             from ecg.hrv_test import HRVTestWindow
             self.hrv_window = HRVTestWindow(parent=self, username=self.username, duration_minutes=duration_minutes)
             self.hrv_window.showMaximized()
@@ -6380,14 +6426,21 @@ class Dashboard(QWidget):
         if not SERIAL_AVAILABLE:
             return
 
-        # Never let the dashboard probe the serial bus while the ECG page is
+        # Never let the dashboard probe the serial bus while any test page/window is
         # already streaming live data. Scanning the shared port here can steal
         # or stall the active reader and make the waveform appear frozen.
+        active_reader = None
         ecg_page = getattr(self, 'ecg_test_page', None)
-        live_reader = getattr(ecg_page, 'serial_reader', None) if ecg_page else None
-        if live_reader is not None and getattr(live_reader, 'running', False):
+        if ecg_page and getattr(getattr(ecg_page, 'serial_reader', None), 'running', False):
+            active_reader = ecg_page.serial_reader
+        elif hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and getattr(getattr(self.hyperkalemia_window, 'serial_reader', None), 'running', False):
+            active_reader = self.hyperkalemia_window.serial_reader
+        elif hasattr(self, 'hrv_window') and self.hrv_window and getattr(getattr(self.hrv_window, 'serial_reader', None), 'running', False):
+            active_reader = self.hrv_window.serial_reader
+
+        if active_reader is not None:
             try:
-                live_port = getattr(getattr(live_reader, 'ser', None), 'port', None)
+                live_port = getattr(getattr(active_reader, 'ser', None), 'port', None)
                 if live_port:
                     self.device_port = live_port
                 if not self.device_connected:
@@ -6396,6 +6449,7 @@ class Dashboard(QWidget):
             except Exception:
                 pass
             return
+
 
         try:
             # Get current available ports

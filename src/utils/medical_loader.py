@@ -233,7 +233,7 @@ class MedicalLoader(QDialog):
     def start_loading(self):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.progress_step)
-        self.timer.start(400) # 400ms per step
+        self.timer.start(60) # 60ms per step
 
     def progress_step(self):
         if self.current_step < len(self.steps):
@@ -248,7 +248,7 @@ class MedicalLoader(QDialog):
         else:
             self.timer.stop()
             self.status_lbl.setText("Ready. Launching dashboard...")
-            QTimer.singleShot(500, self.accept)
+            QTimer.singleShot(100, self.accept)
 
     def finish_and_close(self, target_window=None):
         """Mark all steps complete, show 'Ready' status, then close after a short delay.

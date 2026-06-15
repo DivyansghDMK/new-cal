@@ -733,7 +733,7 @@ def apply_ecg_filters_from_settings(
     
     # Get filter settings
     ac_filter = settings_manager.get_setting("filter_ac", "50")
-    emg_filter = settings_manager.get_setting("filter_emg", "150")
+    emg_filter = settings_manager.get_setting("filter_emg", "25")
     dft_filter = settings_manager.get_setting("filter_dft", "off")
     
     # Apply filters

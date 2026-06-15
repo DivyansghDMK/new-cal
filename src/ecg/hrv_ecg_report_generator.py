@@ -3506,33 +3506,24 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
         adc_data = np.array(values, dtype=float)
         try:
-            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+            from ecg.ecg_report_generator import _prepare_report_strip_signal
 
-            dft_setting = "0.5"
-            emg_setting = "25"
-            ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
-
-            pad_filt_n = min(max(12, int(0.35 * float(sampling_rate))), max(0, adc_data.size // 3))
-            if pad_filt_n > 0:
-                adc_data = np.pad(adc_data, (pad_filt_n, pad_filt_n), mode="reflect")
-            if dft_setting not in ("off", ""):
-                adc_data = apply_dft_filter(adc_data, float(sampling_rate), dft_setting)
-            if emg_setting not in ("off", ""):
-                adc_data = apply_emg_filter(adc_data, float(sampling_rate), emg_setting)
-            if ac_setting in ("50", "60"):
-                adc_data = apply_ac_filter(adc_data, float(sampling_rate), ac_setting)
-            if pad_filt_n > 0 and adc_data.size > (2 * pad_filt_n):
-                adc_data = adc_data[pad_filt_n:-pad_filt_n]
+            centered_adc = _prepare_report_strip_signal(
+                adc_data,
+                float(sampling_rate),
+                settings_manager,
+                target_samples=adc_data.size,
+                emg_override="25",
+                dft_override="0.5",
+            )
         except Exception as filter_err:
             print(f"⚠️ HRV report filter apply failed for selected lead strip: {filter_err}")
-
-        data_mean = float(np.mean(adc_data))
-        if abs(data_mean - ECG_BASELINE_ADC) < 500:
-            centered_adc = adc_data - ECG_BASELINE_ADC
-        else:
-            centered_adc = adc_data.copy()
-
-        centered_adc = centered_adc - float(np.mean(centered_adc))
+            data_mean = float(np.mean(adc_data))
+            if abs(data_mean - ECG_BASELINE_ADC) < 500:
+                centered_adc = adc_data - ECG_BASELINE_ADC
+            else:
+                centered_adc = adc_data.copy()
+            centered_adc = centered_adc - float(np.mean(centered_adc))
         if centered_adc.size > 20:
             x_idx = np.arange(centered_adc.size, dtype=float)
             trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
@@ -3596,6 +3587,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         segment_end = minute_start + segment_duration
 
         full_segment_data = [d for d in captured_data if segment_start <= d['time'] < segment_end]
+
+        # Skip startup artifacts in the first minute (device/filter settling)
+        startup_skip_sec = 1.5 if segment_idx == 0 else 0.0
+        if startup_skip_sec > 0 and full_segment_data:
+            full_segment_data = [d for d in full_segment_data if d['time'] >= startup_skip_sec]
 
         if len(full_segment_data) > samples_per_strip:
             segment_data = full_segment_data[:samples_per_strip]
@@ -4565,7 +4561,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                     all_psds.append(p_ac)
             
             if all_psds:
-                from numpy import trapz
+                try:
+                    from numpy import trapezoid as trapz
+                except ImportError:
+                    from numpy import trapz
+
 
                 # Average PSD across minutes for a stable estimate
                 avg_psd = np.mean(all_psds, axis=0)

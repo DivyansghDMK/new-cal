@@ -8,7 +8,7 @@
   "machine_serial_number": "",
   "report_format": "12_1",
   "filter_ac": "50",
-  "filter_emg": "150",
+  "filter_emg": "25",
   "filter_dft": "off",
   "system_beat_vol": "on",
   "system_language": "en",

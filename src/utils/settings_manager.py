@@ -24,7 +24,7 @@ class SettingsManager:
             # Filter settings
             "filter_ac": "50",
             # Default EMG cutoff for all modes (user can change in settings).
-            "filter_emg": "150",
+            "filter_emg": "25",
             # Default baseline HP (DFT) cutoff for all modes (user can change in settings).
             "filter_dft": "off",
 
@@ -39,6 +39,12 @@ class SettingsManager:
             "factory_reset": "cancel"
         }
         self.settings = self.load_settings()
+        if self.settings.get("filter_emg") == "150":
+            self.settings["filter_emg"] = "25"
+            try:
+                self.save_settings()
+            except Exception:
+                pass
 
     def _normalize_filter_value(self, key, value):
         """

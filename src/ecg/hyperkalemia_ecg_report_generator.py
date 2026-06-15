@@ -27,12 +27,12 @@ ECG_GRID_MAJOR = "#efb9b9"
 
 ECG_HEIGHT_MM = 210.0
 ECG_WIDTH_MM = 297.0
-ECG_LARGE_BOX_MM_HEIGHT = ECG_HEIGHT_MM / 40.0
-ECG_LARGE_BOX_MM_WIDTH = ECG_WIDTH_MM / 56.0
-ECG_SMALL_BOX_MM_HEIGHT = ECG_LARGE_BOX_MM_HEIGHT / 5.0
-ECG_SMALL_BOX_MM_WIDTH = ECG_LARGE_BOX_MM_WIDTH / 5.0
+ECG_LARGE_BOX_MM_HEIGHT = 5.0
+ECG_LARGE_BOX_MM_WIDTH = 5.0
+ECG_SMALL_BOX_MM_HEIGHT = 1.0
+ECG_SMALL_BOX_MM_WIDTH = 1.0
 ECG_BASE_BOX_MM = 5.0
-ECG_SPEED_SCALE = ECG_LARGE_BOX_MM_HEIGHT / ECG_BASE_BOX_MM
+ECG_SPEED_SCALE = 1.0
 ECG_BASELINE_ADC = 2000.0
 
 def beats_in_boxes(bpm, boxes, mm_per_box=ECG_LARGE_BOX_MM_WIDTH, speed_mm_per_s=25.0):
@@ -1756,9 +1756,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 ecg_width = width_boxes * box_width_points
                 ecg_height = 45
                 
-                # Create time array for ALL data with 1mm gap after calibration notch for specific leads
-                gap = mm_unit if lead in ["V1", "V2", "V3", "II"] else 0
-                t = np.linspace(x_pos + gap, x_pos + ecg_width, len(real_ecg_data))
+                # t time array will be calculated after filtering and slicing to avoid transients
                 
                 
                 
@@ -1835,8 +1833,18 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 box_height_points = 5.0 * mm  # Standard ECG: 5mm = 14.17 points per box
                 major_spacing_y = box_height_points  # Use standard ECG spacing (5mm)
                 
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                visible_seconds = ecg_width / (25.0 * mm_unit)
+                visible_samples = int(round(visible_seconds * computed_sampling_rate))
+                if len(boxes_offset) > visible_samples:
+                    boxes_offset = boxes_offset[-visible_samples:]
+                
                 # Convert boxes offset to Y position
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
+                
+                gap = mm_unit if lead in ["V1", "V2", "V3", "II"] else 0
+                t_sec = np.arange(len(boxes_offset)) / computed_sampling_rate
+                t = x_pos + gap + t_sec * 25.0 * mm_unit
                 
                 # DEBUG: Verify Y position calculation
                 
@@ -2180,9 +2188,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 ecg_width = 460
                 ecg_height = 45
                 
-                # Create time array for ALL data with 1mm gap after calibration notch for specific leads
-                gap = mm_unit if lead in ["V1", "V2", "V3", "II"] else 0
-                t = np.linspace(x_pos + gap, x_pos + ecg_width, len(real_ecg_data))
+                # t time array will be calculated after filtering and slicing to avoid transients
                 
                 
                 # Step 1: Convert ADC data to numpy array
@@ -2247,11 +2253,21 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # IMPORTANT: User changed to height/3 = 45/3 = 15.0 points per box
                 # This matches the actual grid spacing the user wants
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                major_spacing_y = ecg_height / 3.0  # height/3 = 15.0 points per box (user's choice)
-                box_height_points = major_spacing_y  # Use actual grid spacing (height/3)
+                box_height_points = ECG_LARGE_BOX_MM_WIDTH * mm_unit
+                major_spacing_y = box_height_points
+                
+                # Slices to exactly fit the visible width, cropping extra samples instead of stretching
+                visible_seconds = ecg_width / (25.0 * mm_unit)
+                visible_samples = int(round(visible_seconds * computed_sampling_rate))
+                if len(boxes_offset) > visible_samples:
+                    boxes_offset = boxes_offset[-visible_samples:]
                 
                 # Convert boxes offset to Y position
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
+                
+                gap = mm_unit if lead in ["V1", "V2", "V3", "II"] else 0
+                t_sec = np.arange(len(boxes_offset)) / computed_sampling_rate
+                t = x_pos + gap + t_sec * 25.0 * mm_unit
                 
                 
                 # Draw ALL REAL ECG data points
@@ -3338,10 +3354,9 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         if canvas.getPageNumber() == 1:
             page_width, page_height = canvas._pagesize
             
-            num_boxes_width = 57
-            page_width_mm = 297.0
-            box_width_mm = page_width_mm / num_boxes_width
-            box_width_pts = box_width_mm * mm
+            num_boxes_width = 59
+            box_width_mm = 5.0
+            box_width_pts = 5.0 * mm
             
             canvas.setFillColor(colors.HexColor(ECG_PAPER_BG))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
@@ -3349,8 +3364,8 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             light_grid_color = colors.HexColor(ECG_GRID_MINOR)
             major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
             
-            minor_spacing_mm = box_width_mm / 5.0
-            minor_spacing_pts = minor_spacing_mm * mm
+            minor_spacing_mm = 1.0
+            minor_spacing_pts = 1.0 * mm
             
             canvas.setStrokeColor(light_grid_color)
             canvas.setLineWidth(0.6)
@@ -3362,10 +3377,9 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 if x > page_width:
                     break
             
-            num_boxes_height = 40
-            page_height_mm = 210.0
-            box_height_mm = page_height_mm / num_boxes_height
-            minor_spacing_y = (box_height_mm / 5.0) * mm
+            num_boxes_height = 42
+            box_height_mm = 5.0
+            minor_spacing_y = 1.0 * mm
             y = 0
             while y <= page_height:
                 canvas.line(0, y, page_width, y)
@@ -3379,7 +3393,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 canvas.line(x, 0, x, page_height)
                 x += box_width_pts
             
-            box_height_pts = box_height_mm * mm
+            box_height_pts = 5.0 * mm
             y = 0
             for i in range(num_boxes_height + 1):
                 canvas.line(0, y, page_width, y)
@@ -3653,15 +3667,23 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         except Exception:
             pass
 
-    short_lead_samples = int(6.0 * report_sampling_rate)
-    rhythm_lead_samples = int(12.0 * report_sampling_rate)
-    four_three_box_points = ECG_LARGE_BOX_MM_HEIGHT * mm_unit
-    four_three_column_boxes = 17.5
-    four_three_column_pitch = 18.0 * four_three_box_points
-    four_three_rhythm_boxes = 51.0
-    four_three_column_samples = 1750
-    four_three_rhythm_samples = 5100
-    effective_wave_speed_mm_s = wave_speed_mm_s * ECG_SPEED_SCALE
+    # Match reference hyperkalemia PDF: 27-box columns, 6 s V-leads, 10 s Lead II rhythm
+    grid_box_mm = ECG_LARGE_BOX_MM_WIDTH
+    column_boxes = 27.0
+    rhythm_boxes = 54.0
+    column_width_pts = column_boxes * grid_box_mm * mm_unit
+    rhythm_strip_width = rhythm_boxes * grid_box_mm * mm_unit
+    v_lead_seconds = 6.0
+    rhythm_seconds = 10.0
+    if abs(wave_speed_mm_s - 50.0) < 0.1:
+        v_lead_seconds = 3.0
+        rhythm_seconds = 5.0
+    four_three_column_samples = max(100, int(v_lead_seconds * report_sampling_rate))
+    four_three_rhythm_samples = max(100, int(rhythm_seconds * report_sampling_rate))
+    left_column_x = 0.0
+    right_column_x = total_width - column_width_pts
+    strip_height = 45
+    startup_skip_samples = int(0.5 * report_sampling_rate)
 
     def _normalize_saved_signal(values):
         if values is None:
@@ -3700,17 +3722,24 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             return (lead_i + lead_ii) / 2.0
         return None
 
-    def _select_target_samples(is_rhythm_strip=False):
-        if abs(wave_speed_mm_s - 50.0) < 0.1:
-            return (four_three_rhythm_samples if is_rhythm_strip else four_three_column_samples) // 2
+    def _strip_sample_count(is_rhythm_strip=False):
         return four_three_rhythm_samples if is_rhythm_strip else four_three_column_samples
 
-    def _clip_signal(signal, target_samples):
+    print(
+        f" Hyperkalemia strip config @ {report_sampling_rate:.0f} Hz: "
+        f"V leads={four_three_column_samples} samples ({v_lead_seconds}s), "
+        f"Lead II={four_three_rhythm_samples} samples ({rhythm_seconds}s), "
+        f"column={column_boxes} boxes, rhythm={rhythm_boxes} boxes"
+    )
+
+    def _clip_signal(signal, target_samples, skip_startup=False):
         if signal is None:
             return None
         signal = np.array(signal, dtype=float).flatten()
         if signal.size == 0:
             return None
+        if skip_startup and signal.size > startup_skip_samples + 50:
+            signal = signal[startup_skip_samples:]
         if target_samples and signal.size > target_samples:
             signal = signal[-target_samples:]
         return signal
@@ -3741,153 +3770,65 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     if "aVR" in saved_lead_map and "-aVR" not in saved_lead_map:
         saved_lead_map["-aVR"] = -1.0 * np.array(saved_lead_map["aVR"], dtype=float)
 
-    def create_lead_drawing(lead_name, lead_data, x_pos, y_pos, width, height, draw_notch=False):
-        """Create ECG drawing for a single 4:3 strip; returns (trace_path, notch_path, dotted_path)."""
+    from ecg.ecg_report_generator import create_report_strip_paths
+
+    def create_lead_drawing(lead_name, lead_data, x_pos, y_pos, width, is_rhythm_strip=False):
+        """Plot one strip using the same box-by-box algorithm as the HRV Lead II report."""
         if width <= 0:
             return None
 
-        center_y = y_pos + (height / 2.0)
-        trace_start_x = x_pos
-        notch_path = None
-        notch_width = 0.0
-        notch_tail = 0.0
-        if draw_notch:
-            try:
-                notch_boxes = settings_manager.get_calibration_notch_boxes()
-            except Exception:
-                notch_boxes = 2.0
-
-            # EXACT MATCH FOR IMAGE 2: Notch starts from baseline, goes UP, then stays UP, then goes DOWN to baseline
-            notch_width = 5.0 * mm_unit
-            notch_height = (notch_boxes * 5.0) * mm_unit
-            notch_x = x_pos + (1.0 * mm_unit)
-
-            notch_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.8,
-                strokeLineCap=1,
-                strokeLineJoin=0,
-            )
-            # Start at baseline (beginning of grid)
-            notch_path.moveTo(x_pos, center_y)
-            # Left tail to notch start
-            notch_path.lineTo(notch_x, center_y)
-            # Vertical up
-            notch_path.lineTo(notch_x, center_y + notch_height)
-            # Horizontal top
-            notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
-            # Vertical down back to baseline
-            notch_path.lineTo(notch_x + notch_width, center_y)
-            # Small forward tick to the right (to trace start) for continuous baseline
-            notch_path.lineTo(notch_x + notch_width + (1.0 * mm_unit), center_y)
-            
-            # Update trace start to avoid overlap
-            trace_start_x = notch_x + notch_width + (1.0 * mm_unit)
-
         adc_data = _normalize_saved_signal(lead_data)
         if adc_data is None or adc_data.size < 2:
-            baseline_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.4,
-                strokeLineCap=1,
-                strokeLineJoin=1,
+            return create_report_strip_paths(
+                None, x_pos, y_pos, width, strip_height,
+                report_sampling_rate, settings_manager,
+                wave_speed_mm_s, wave_gain_mm_mv, lead_name,
+                ADC_PER_BOX_CONFIG.get(lead_name, 6400.0),
             )
-            baseline_path.moveTo(trace_start_x, center_y)
-            baseline_path.lineTo(x_pos + width, center_y)
-            return baseline_path, notch_path, None
 
-        try:
-            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-
-            dft_setting = "0.5"
-            emg_setting = "25"
-            ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
-
-            pad_filt_n = min(max(12, int(0.35 * float(report_sampling_rate))), max(0, adc_data.size // 3))
-            if pad_filt_n > 0:
-                adc_data = np.pad(adc_data, (pad_filt_n, pad_filt_n), mode="reflect")
-            if dft_setting not in ("off", ""):
-                adc_data = apply_dft_filter(adc_data, float(report_sampling_rate), dft_setting)
-            if emg_setting not in ("off", ""):
-                adc_data = apply_emg_filter(adc_data, float(report_sampling_rate), emg_setting)
-            if ac_setting in ("50", "60"):
-                adc_data = apply_ac_filter(adc_data, float(report_sampling_rate), ac_setting)
-            if pad_filt_n > 0 and adc_data.size > (2 * pad_filt_n):
-                adc_data = adc_data[pad_filt_n:-pad_filt_n]
-        except Exception as filter_err:
-            print(f" Report filter apply failed for {lead_name}: {filter_err}")
-
-        data_mean = float(np.mean(adc_data))
-        if abs(data_mean - ECG_BASELINE_ADC) < 500:
-            centered_adc = adc_data - ECG_BASELINE_ADC
-        else:
-            centered_adc = adc_data.copy()
-
-        centered_adc = centered_adc - float(np.mean(centered_adc))
-        if centered_adc.size > 20:
-            x_idx = np.arange(centered_adc.size, dtype=float)
-            trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
-            centered_adc = centered_adc - trend
-
-        adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead_name if lead_name in ADC_PER_BOX_CONFIG else "II", 6400.0)
-        adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
-        ecg_normalized = center_y + ((centered_adc / adc_per_box) * four_three_box_points)
-
-        seconds = np.arange(centered_adc.size, dtype=float) / max(1e-6, float(report_sampling_rate))
-        t = trace_start_x + (seconds * effective_wave_speed_mm_s * mm_unit)
-        visible_mask = t <= (x_pos + width)
-        if not np.any(visible_mask):
-            baseline_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.4,
-                strokeLineCap=1,
-                strokeLineJoin=1,
+        target_n = _strip_sample_count(is_rhythm_strip=is_rhythm_strip)
+        adc_data = _clip_signal(adc_data, target_n, skip_startup=True)
+        if adc_data is None or adc_data.size < 2:
+            return create_report_strip_paths(
+                None, x_pos, y_pos, width, strip_height,
+                report_sampling_rate, settings_manager,
+                wave_speed_mm_s, wave_gain_mm_mv, lead_name,
+                ADC_PER_BOX_CONFIG.get(lead_name, 6400.0),
             )
-            baseline_path.moveTo(trace_start_x, center_y)
-            baseline_path.lineTo(x_pos + width, center_y)
-            return baseline_path, notch_path, None
 
-        t = t[visible_mask]
-        ecg_normalized = ecg_normalized[visible_mask]
-
-        trace_path = Path(
-            fillColor=None,
-            strokeColor=colors.HexColor("#000000"),
-            strokeWidth=0.4,
-            strokeLineCap=1,
-            strokeLineJoin=1,
+        return create_report_strip_paths(
+            adc_data,
+            x_pos,
+            y_pos,
+            width,
+            strip_height,
+            report_sampling_rate,
+            settings_manager,
+            wave_speed_mm_s,
+            wave_gain_mm_mv,
+            lead_name,
+            ADC_PER_BOX_CONFIG.get(lead_name, 6400.0),
+            fill_strip=True,
         )
-        trace_path.moveTo(t[0], ecg_normalized[0])
-        for i in range(1, len(t)):
-            trace_path.lineTo(t[i], ecg_normalized[i])
 
-        dotted_path = None
-        if t[-1] < (x_pos + width - 1.0):
-            dotted_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.4,
-                strokeLineCap=1,
-                strokeLineJoin=1,
-                strokeDashArray=[2, 3],
-            )
-            dotted_path.moveTo(t[-1], center_y)
-            dotted_path.lineTo(x_pos + width, center_y)
-
-        return trace_path, notch_path, dotted_path
-
+    # Reference layout: V1-V3 left column, V4-V6 right column, Lead II rhythm strip at bottom
     chest_lead_rows = [("V1", "V4"), ("V2", "V5"), ("V3", "V6")]
-    short_lead_height = 60
-    rhythm_lead_height = 80
     row_y_positions = [390, 320, 250]
     rhythm_y = 140
-    short_strip_width = 27.0 * ECG_LARGE_BOX_MM_WIDTH * mm_unit
-    rhythm_strip_width = 54.0 * ECG_LARGE_BOX_MM_WIDTH * mm_unit
-    left_column_x = 0.0
-    right_column_x = total_width - short_strip_width
+
+    # Vertical dotted divider between precordial columns (same as 6:2 report)
+    divider_x = right_column_x - (2.0 * mm_unit)
+    divider_top = row_y_positions[0] + strip_height + 8
+    divider_bottom = rhythm_y + strip_height + 4
+    dot_spacing = 3.0
+    dot_len = 2.0
+    dot_y = divider_top
+    while dot_y > divider_bottom:
+        seg_end = max(dot_y - dot_len, divider_bottom)
+        master_drawing.add(
+            Line(divider_x, dot_y, divider_x, seg_end, strokeColor=colors.black, strokeWidth=0.5)
+        )
+        dot_y = seg_end - dot_spacing
 
     successful_graphs = 0
     for row_index, (left_lead, right_lead) in enumerate(chest_lead_rows):
@@ -3897,7 +3838,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             master_drawing.add(
                 String(
                     x_pos + (3.5 * mm_unit),
-                    y_pos + short_lead_height + 4,
+                    y_pos + strip_height + 4,
                     lead_name,
                     fontSize=10,
                     fontName=FONT_TYPE_BOLD,
@@ -3905,15 +3846,18 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 )
             )
 
-            lead_signal = _clip_signal(saved_lead_map.get(lead_name), short_lead_samples)
+            lead_signal = _clip_signal(
+                saved_lead_map.get(lead_name),
+                _strip_sample_count(is_rhythm_strip=False),
+                skip_startup=True,
+            )
             result = create_lead_drawing(
                 lead_name,
                 lead_signal,
                 x_pos,
                 y_pos,
-                short_strip_width,
-                short_lead_height,
-                draw_notch=True,
+                column_width_pts,
+                is_rhythm_strip=False,
             )
             if result:
                 trace_path, notch_path, dotted_path = result
@@ -3925,17 +3869,31 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                     master_drawing.add(dotted_path)
                 successful_graphs += 1
 
-    rhythm_signal = _clip_signal(saved_lead_map.get("II"), rhythm_lead_samples)
-    if rhythm_signal is None and lead_ii_data:
-        rhythm_signal = _clip_signal(
-            np.array([sample.get("value", 0.0) for sample in lead_ii_data], dtype=float),
-            rhythm_lead_samples,
+    sampling_rate = report_sampling_rate
+    lead_data = saved_lead_map.get("II")
+    if lead_data is None and lead_ii_data:
+        first_item = lead_ii_data[0]
+        if isinstance(first_item, dict) and "value" in first_item:
+            lead_data = np.array([sample.get("value", 0.0) for sample in lead_ii_data], dtype=float)
+        else:
+            lead_data = np.array(lead_ii_data, dtype=float)
+
+    rhythm_signal = _clip_signal(
+        lead_data,
+        _strip_sample_count(is_rhythm_strip=True),
+        skip_startup=True,
+    )
+    if rhythm_signal is not None:
+        print(
+            f"[VERIFY] Lead II rhythm strip length = "
+            f"{len(rhythm_signal)} samples "
+            f"({len(rhythm_signal)/sampling_rate:.2f} sec)"
         )
 
     master_drawing.add(
         String(
             3.5 * mm_unit,
-            rhythm_y + rhythm_lead_height + 4,
+            rhythm_y + strip_height + 4,
             "Lead II",
             fontSize=10,
             fontName=FONT_TYPE_BOLD,
@@ -3948,8 +3906,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         0.0,
         rhythm_y,
         rhythm_strip_width,
-        rhythm_lead_height,
-        draw_notch=True,
+        is_rhythm_strip=True,
     )
     if rhythm_result:
         trace_path, notch_path, dotted_path = rhythm_result
@@ -3961,7 +3918,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             master_drawing.add(dotted_path)
         successful_graphs += 1
 
-    print(f" Created {successful_graphs} ECG strips in hyperkalemia chest-lead layout (V1-V6 + long Lead II)")
+    print(f" Created {successful_graphs} ECG strips in 2-column hyperkalemia layout (V1-V6 + Lead II)")
     
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
     header_y_shift = 5.2 * mm_unit

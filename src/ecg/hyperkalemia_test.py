@@ -205,15 +205,8 @@ class HyperkalemiaTestWindow(QWidget):
         # Track active sample count to avoid skewing stats with leading zeros
         self.active_samples = 0
 
-        # Sweep state variables for each lead
-        self._sweep_bufs = {}
-        self._sweep_poses = {}
-        self._sweep_gaps = {}
-        self._sweep_ns = {}
-        
-        self.plot_curves_glow = {}
-        self.sweep_dots = {}
-        self.sweep_gap_curves = {}
+        # Scrolling display window per lead (same flow as 12-lead, no raster sweep)
+        self._display_window_sec = {}
 
         # Store last displayed metrics so analysis dialog matches dashboard values
         self.last_metrics = {}
@@ -547,13 +540,8 @@ class HyperkalemiaTestWindow(QWidget):
             center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='#003300', width=1.0, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
-            seconds = 5.0 if lead_name == 'II' else 2.0
-            sweep_n = int(seconds * 500)  # 500Hz pe map karo — real time speed
-            self._sweep_ns[lead_name] = sweep_n
-            center_val = -2048.0 if lead_name == 'aVR' else 2048.0
-            self._sweep_bufs[lead_name] = np.full(sweep_n, center_val, dtype=float)
-            self._sweep_poses[lead_name] = 0
-            self._sweep_gaps[lead_name] = 50 if lead_name == 'II' else 20
+            # Display window matches 4:3 report strip duration (no raster sweep)
+            self._display_window_sec[lead_name] = 10.0 if lead_name == 'II' else 3.2
 
             vb = plot_widget.getViewBox()
             if vb is not None:
@@ -562,37 +550,19 @@ class HyperkalemiaTestWindow(QWidget):
                 else:
                     vb.setLimits(yMin=0, yMax=4096)
                 try:
-                    vb.setLimits(xMin=0, xMax=sweep_n)
-                    vb.setRange(xRange=(0, sweep_n))
+                    win_sec = self._display_window_sec[lead_name]
+                    vb.setLimits(xMin=0, xMax=win_sec)
+                    vb.setRange(xRange=(0, win_sec))
                 except Exception:
                     pass
-            
-            # Layer 1 — phosphor glow (drawn first = behind)
-            plot_curve_glow = plot_widget.plot(
-                pen=pg.mkPen(color='#003300', width=5)
-            )
-            # Layer 2 — bright ECG trace
+
             plot_curve = plot_widget.plot(
                 pen=pg.mkPen(color='#00DD00', width=1.5), connect='finite'
             )
-            # Layer 3 — sweep head dot
-            sweep_dot = plot_widget.plot(
-                pen=None, symbol='o',
-                symbolSize=7,
-                symbolBrush=pg.mkBrush('#00FF41'),
-                symbolPen=pg.mkPen('#00FF41', width=1)
-            )
-            # Layer 4 — black eraser gap ahead of sweep head
-            sweep_gap_curve = plot_widget.plot(
-                pen=pg.mkPen(color='#000000', width=14)
-            )
 
             self.plot_widgets[lead_name] = plot_widget
-            self.plot_curves_glow[lead_name] = plot_curve_glow
             self.plot_curves[lead_name] = plot_curve
             self.data_lines[lead_name] = plot_curve
-            self.sweep_dots[lead_name] = sweep_dot
-            self.sweep_gap_curves[lead_name] = sweep_gap_curve
 
             card_layout.addWidget(plot_widget)
             row, col = positions[lead_name]
@@ -766,11 +736,8 @@ class HyperkalemiaTestWindow(QWidget):
             self.lead_ii_data = []
             for lead_name in self.lead_data.keys():
                 self.lead_data[lead_name] = []
-                if lead_name in self._sweep_bufs:
-                    self._sweep_bufs[lead_name][:] = 2048.0
-                    self._sweep_poses[lead_name] = 0
 
-            # Per-lead circular display buffers (same stable sweep model as HRV test)
+            # Per-lead circular display buffers (scrolling window, same as 12-lead)
             HISTORY_LENGTH = 10000
             self._ring_bufs = {
                 lead: np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32)
@@ -781,14 +748,10 @@ class HyperkalemiaTestWindow(QWidget):
             # Reset display anchors and warmup so trace starts clean (same as HRV test)
             if hasattr(self, "_display_anchors"):
                 del self._display_anchors
-            self._display_warmup_samples = int(max(400, self.sampling_rate * 1.2))
+            self._display_warmup_samples = int(max(600, self.sampling_rate * 2.5))
+            self._display_settle_samples = int(max(250, self.sampling_rate * 0.5))
+            self._display_ready_announced = False
             self._display_anchors_locked = set()
-            self._last_sweep_y = {lead: (-2048.0 if lead == 'aVR' else 2048.0) for lead in self.lead_data.keys()}
-            for lead in self.lead_data.keys():
-                center_val = -2048.0 if lead == 'aVR' else 2048.0
-                if lead in self._sweep_bufs:
-                    self._sweep_bufs[lead][:] = center_val
-                self._sweep_poses[lead] = 0
 
             # Discard stale serial packets so the trace does not start mid-stream
             if self.serial_reader:
@@ -952,19 +915,13 @@ class HyperkalemiaTestWindow(QWidget):
         try:
             for curve in getattr(self, "plot_curves", {}).values():
                 curve.setData([], [])
-            for curve in getattr(self, "plot_curves_glow", {}).values():
-                curve.setData([], [])
-            for curve in getattr(self, "sweep_dots", {}).values():
-                curve.setData([], [])
-            for curve in getattr(self, "sweep_gap_curves", {}).values():
-                curve.setData([], [])
         except Exception:
             pass
         try:
             if hasattr(self, "plot_widgets"):
                 for lead_name, widget in self.plot_widgets.items():
-                    sweep_n = self._sweep_ns.get(lead_name, 750)
-                    widget.setXRange(0, sweep_n, padding=0)
+                    win_sec = self._display_window_sec.get(lead_name, 3.2)
+                    widget.setXRange(0, win_sec, padding=0)
                     if lead_name == 'aVR':
                         widget.setYRange(0, -4096, padding=0)
                     else:
@@ -1164,7 +1121,7 @@ class HyperkalemiaTestWindow(QWidget):
                             if lead_name in self._plot_buffers:
                                 self._plot_buffers[lead_name].append(value_for_buffers)
 
-                            # Circular display buffer for stable sweep rendering
+                            # Circular display buffer for scrolling window rendering
                             if lead_name in self.lead_data and hasattr(self, "_ring_bufs"):
                                 ring = self._ring_bufs.get(lead_name)
                                 if ring is not None:
@@ -1204,7 +1161,7 @@ class HyperkalemiaTestWindow(QWidget):
                 apply_dft_filter,
                 apply_baseline_wander_median_mean,
             )
-            from ecg.utils.helpers import get_display_gain, build_raster_sweep_frame
+            from ecg.utils.helpers import get_display_gain
 
             ac_val = "50"
             emg_val = "25"
@@ -1218,8 +1175,9 @@ class HyperkalemiaTestWindow(QWidget):
                 self._plot_update_in_progress = False
                 return
 
-            warmup_needed = getattr(self, "_display_warmup_samples", int(1.2 * fs))
-            display_ready = self.active_samples >= warmup_needed
+            warmup_needed = getattr(self, "_display_warmup_samples", int(2.5 * fs))
+            settle_needed = warmup_needed + getattr(self, "_display_settle_samples", int(0.5 * fs))
+            display_ready = self.active_samples >= settle_needed
             if not display_ready:
                 self._plot_update_in_progress = False
                 return
@@ -1239,7 +1197,9 @@ class HyperkalemiaTestWindow(QWidget):
                 if valid_count <= 0:
                     continue
 
-                window_seconds = 10.0 if lead_name == 'II' else 4.0
+                window_seconds = self._display_window_sec.get(
+                    lead_name, 10.0 if lead_name == 'II' else 3.2
+                )
                 window_samples = max(50, int(window_seconds * fs))
                 window_samples = min(window_samples, valid_count)
 
@@ -1249,7 +1209,7 @@ class HyperkalemiaTestWindow(QWidget):
 
                 # Same filter + smooth pipeline as HRV test (clean display)
                 if len(buffer_data) > 5 and not lead_is_off:
-                    pad_len = min(int(fs * 1.5), max(0, len(buffer_data) - 1))
+                    pad_len = min(int(fs * 2.0), max(0, len(buffer_data) - 1))
                     if pad_len > 0:
                         padded_data = np.pad(buffer_data, (pad_len, pad_len), mode='reflect')
                     else:
@@ -1267,7 +1227,7 @@ class HyperkalemiaTestWindow(QWidget):
                             padded_data = apply_dft_filter(padded_data, fs, dft_text)
                         padded_data = padded_data + float(self._adc_center)
                         if dft_text == "0.5":
-                            edge_trim = int(0.5 * fs)
+                            edge_trim = int(0.75 * fs)
                             min_keep = max(50, pad_len * 2 + 20)
                             if edge_trim > 0 and len(padded_data) > (2 * edge_trim + min_keep):
                                 padded_data = padded_data[edge_trim:-edge_trim]
@@ -1277,10 +1237,15 @@ class HyperkalemiaTestWindow(QWidget):
                     else:
                         buffer_data = padded_data
 
-                    buffer_data = gaussian_filter1d(buffer_data, sigma=1.2)
+                    buffer_data = gaussian_filter1d(buffer_data, sigma=0.8)
 
                 if len(buffer_data) <= 0:
                     continue
+
+                if not getattr(self, "_display_ready_announced", False):
+                    self._display_anchors = {}
+                    self._display_anchors_locked = set()
+                    self._display_ready_announced = True
 
                 locked = getattr(self, "_display_anchors_locked", set())
                 if lead_name not in self._display_anchors:
@@ -1298,44 +1263,10 @@ class HyperkalemiaTestWindow(QWidget):
                     else:
                         display_values = np.clip(2048.0 + centered, 0, 4096)
 
-                sweep_n = self._sweep_ns[lead_name]
-                if n_new > 0 and len(display_values) > 0:
-                    samples_to_push = min(n_new, len(display_values))
-                    new_vals = display_values[-samples_to_push:]
-                    max_step = 180.0
-                    last_y = self._last_sweep_y.get(lead_name, center_val)
-                    for v in new_vals:
-                        y = float(v)
-                        if lead_name == 'aVR':
-                            y = np.clip(y, -4096, 0)
-                        else:
-                            y = np.clip(y, 0, 4096)
-                        if abs(y - last_y) > max_step:
-                            y = last_y + float(np.clip(y - last_y, -max_step, max_step))
-                        pos = self._sweep_poses[lead_name]
-                        self._sweep_bufs[lead_name][pos] = y
-                        self._sweep_poses[lead_name] = (pos + 1) % sweep_n
-                        last_y = y
-                    self._last_sweep_y[lead_name] = last_y
-
-                pos = self._sweep_poses[lead_name]
-                s_buf = self._sweep_bufs[lead_name]
-                gap = self._sweep_gaps[lead_name]
-
-                y_display, head_pos, gap_x, gap_y = build_raster_sweep_frame(
-                    s_buf, pos, gap, baseline=center_val
-                )
-
-                x_axis = np.arange(sweep_n, dtype=float)
-                self.plot_curves_glow[lead_name].setData(x_axis, y_display)
-                self.plot_curves[lead_name].setData(x_axis, y_display, connect='finite')
-                self.sweep_gap_curves[lead_name].setData(gap_x, gap_y)
-
-                dot_y = float(y_display[head_pos]) if head_pos < len(y_display) else center_val
-                if not np.isfinite(dot_y):
-                    dot_y = center_val
-                self.sweep_dots[lead_name].setData([float(head_pos)], [dot_y])
-                self.plot_widgets[lead_name].setXRange(0, sweep_n, padding=0)
+                # Scrolling window display (12-lead flow — no raster sweep)
+                x_axis = np.linspace(0.0, window_seconds, len(display_values))
+                self.plot_curves[lead_name].setData(x_axis, display_values, connect='finite')
+                self.plot_widgets[lead_name].setXRange(0, window_seconds, padding=0)
                 if lead_name == 'aVR':
                     self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
                 else:
@@ -2046,9 +1977,39 @@ class HyperkalemiaTestWindow(QWidget):
             )
             
             if reply == QMessageBox.Yes:
-                self.stop_capture()
+                try:
+                    self.stop_capture()
+                except Exception as e:
+                    print(f" Error stopping capture: {e}")
+                
+                # Explicitly stop BPM controller if it is running
+                if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                    try:
+                        self._bpm_ctrl.stop()
+                    except Exception as e:
+                        print(f" Error stopping BPM controller: {e}")
+                
+                # Resume dashboard timers
+                if hasattr(self, 'dashboard_instance') and self.dashboard_instance is not None:
+                    try:
+                        self.dashboard_instance.resume_dashboard_timers()
+                    except Exception as e:
+                        print(f" Error resuming dashboard timers: {e}")
                 event.accept()
             else:
                 event.ignore()
         else:
+            # Explicitly stop BPM controller if it is running
+            if hasattr(self, '_bpm_ctrl') and self._bpm_ctrl is not None:
+                try:
+                    self._bpm_ctrl.stop()
+                except Exception as e:
+                    print(f" Error stopping BPM controller: {e}")
+            
+            # Resume dashboard timers
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance is not None:
+                try:
+                    self.dashboard_instance.resume_dashboard_timers()
+                except Exception as e:
+                    print(f" Error resuming dashboard timers: {e}")
             event.accept()

@@ -81,6 +81,38 @@ class OfflineQueue:
         self._last_connectivity_check = current_time
         return self._is_online
     
+    def _heal_path(self, file_path: str) -> str:
+        """
+        Heal a queued file path if it points to a directory that no longer exists
+        (e.g., if the project was moved or renamed from qww_new to DEMO).
+        """
+        if not file_path:
+            return file_path
+        if os.path.exists(file_path):
+            return file_path
+            
+        try:
+            filename = os.path.basename(file_path)
+            current_root = Path(__file__).resolve().parent.parent.parent
+            
+            # 1. Try directly under reports/
+            fallback_path = current_root / "reports" / filename
+            if fallback_path.exists():
+                print(f"[PATH_HEAL] Resolved {filename} to {fallback_path}")
+                return str(fallback_path)
+                
+            # 2. Try under reports/sessions/ or other subfolders
+            reports_dir = current_root / "reports"
+            if reports_dir.exists():
+                found_paths = list(reports_dir.rglob(filename))
+                if found_paths:
+                    print(f"[PATH_HEAL] Resolved {filename} (searched) to {found_paths[0]}")
+                    return str(found_paths[0])
+        except Exception as e:
+            print(f"[PATH_HEAL] Failed to heal path {file_path}: {e}")
+            
+        return file_path
+
     def queue_data(self, data_type: str, data: Dict[str, Any], priority: int = 5) -> str:
         """
         Queue data for upload
@@ -261,7 +293,7 @@ class OfflineQueue:
             # Handle cloud-specific queue items
             if item['type'] == 'cloud_report':
                 # Upload report to S3
-                file_path = item['data'].get('file_path')
+                file_path = self._heal_path(item['data'].get('file_path'))
                 metadata = item['data'].get('metadata', {})
                 
                 if file_path and os.path.exists(file_path):
@@ -312,9 +344,11 @@ class OfflineQueue:
             
             elif item['type'] == 'cloud_complete_package':
                 # Upload complete report package to S3
-                pdf_path = item['data'].get('pdf_path')
+                pdf_path = self._heal_path(item['data'].get('pdf_path'))
                 patient_data = item['data'].get('patient_data', {})
                 ecg_data_file = item['data'].get('ecg_data_file')
+                if isinstance(ecg_data_file, str):
+                    ecg_data_file = self._heal_path(ecg_data_file)
                 report_metadata = item['data'].get('report_metadata', {})
                 
                 if pdf_path and os.path.exists(pdf_path):
@@ -358,7 +392,7 @@ class OfflineQueue:
                 )
             elif item['type'] == 'report':
                 result = backend_api.upload_report(
-                    item['data'].get('file_path'),
+                    self._heal_path(item['data'].get('file_path')),
                     item['data'].get('metadata', {})
                 )
             elif item['type'] == 'session_start':

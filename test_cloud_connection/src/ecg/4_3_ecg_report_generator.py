@@ -18,6 +18,7 @@ class TransparentDrawing(Drawing):
         canvas.restoreState()
 from reportlab.pdfbase.pdfmetrics import stringWidth
 import os
+from utils.app_paths import data_file
 import sys
 import json
 import matplotlib.pyplot as plt  
@@ -26,11 +27,11 @@ import os
 import logging
 from datetime import datetime
 
-# Setup logging for edge trimming debugging
-log_dir = "/Users/indresh/Desktop/2_mar/logs"
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"4_3_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-logging.basicConfig(filename=log_file, level=logging.DEBUG, 
+# Setup logging - use a path relative to this script to work cross-platform
+_log_base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
+os.makedirs(_log_base, exist_ok=True)
+log_file = os.path.join(_log_base, f"4_3_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(filename=log_file, level=logging.DEBUG,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -48,7 +49,7 @@ COLUMN_BOXES = 17.5
 # Scale wave speed so 1 second equals 5 large boxes at 25 mm/s on 40-box grid
 ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM
 FOUR_THREE_SAMPLES_COLUMN = 1750  # 17.5 boxes * 100 samples per box (at 500Hz/5boxes_per_sec)
-FOUR_THREE_SAMPLES_EXTRA_II = 5100 # 51 boxes
+FOUR_THREE_SAMPLES_EXTRA_II = 5000 # 50 boxes (5 seconds at 500Hz = 5000 samples for Lead II rhythm strip)
 
 # matplotlib.use('Agg') # Removed to prevent main thread Qt canvas corruption
 
@@ -90,8 +91,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         return None
     
     # Create output directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    ecg_data_dir = os.path.join(base_dir, 'reports', 'ecg_data')
+    ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
     os.makedirs(ecg_data_dir, exist_ok=True)
     
     # Generate filename with timestamp
@@ -281,7 +281,7 @@ def calculate_time_window_from_width_points(wave_speed_mm_s, width_points):
     return width_mm / max(1e-6, effective_wave_speed_mm_s)
 
 def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
-    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean
+    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean, stabilize_report_edges
     arr = np.asarray(signal, dtype=float)
     if arr.size < 10:
         return arr
@@ -304,7 +304,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     else:
         work = arr
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
     dft_param = dft_setting if dft_setting not in ("off", "") else None
     emg_param = emg_setting if emg_setting not in ("off", "") else None
@@ -320,7 +320,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     try:
         if filtered.size > 5:
             from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.3)
+            filtered = gaussian_filter1d(filtered, sigma=0.8)  # Match display SMOOTH_SIGMA
     except Exception:
         pass
     try:
@@ -372,18 +372,25 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
             filtered = filtered[hard_trim:n3 - hard_trim]
     except Exception:
         pass
+    # NOTE: Hanning-window taper removed — it forced large portions of the strip
+    # toward the mean, creating the "hump at the end of wave" artifact the user reported.
+    # stabilize_report_edges does a much gentler (180 ms) blend instead.
+    filtered = stabilize_report_edges(filtered, fs)
     try:
-        n4 = filtered.size
-        if n4 > 50:
-            alpha = 0.5
-            m = max(10, int((alpha * n4) / 2.0))
-            if m * 2 < n4:
-                ramp = 0.5 * (1 - np.cos(np.linspace(0, np.pi, m)))
-                w = np.ones(n4)
-                w[:m] = ramp
-                w[-m:] = ramp[::-1]
-                mu = float(np.mean(filtered))
-                filtered = mu + (filtered - mu) * w
+        from ecg.ecg_filters import notch_filter_butterworth
+        try:
+            ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip() if settings_manager else "50"
+            notch_freq = float(ac_setting) if ac_setting and ac_setting not in ("off", "") else 50.0
+        except Exception:
+            notch_freq = 50.0
+        try:
+            from ecg.ecg_filters import apply_ac_filter
+            filtered = apply_ac_filter(filtered, fs, str(int(notch_freq)))
+        except Exception:
+            try:
+                filtered = notch_filter_butterworth(filtered, fs, freq=notch_freq, q=25.0)
+            except Exception:
+                pass
     except Exception:
         pass
     return filtered
@@ -701,6 +708,7 @@ ADC_PER_BOX_CONFIG = {
     'V6': 6400.0,
     '-aVR': 6400.0,  # For Cabrera sequence
 }
+REPORT_WAVEFORM_ADC_DIVISOR = 1083.3333333333333
 
 def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, height=45, wave_gain_mm_mv=None, sampling_rate=500.0, settings_manager=None):
     """
@@ -801,12 +809,15 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     total_seconds = width_mm / (speed_mm_s * ECG_SPEED_SCALE)
     height_mm_physical = height / mm  # Convert height points to mm
 
+    fs = float(sampling_rate) if sampling_rate and float(sampling_rate) > 0 else 500.0
+    t_sec = np.arange(len(ecg_data)) / fs
+
     ecg_array = np.asarray(ecg_data, dtype=float)
     
     # ORIGINAL WORKING APPROACH: Simple amplitude normalization like ecg_report_generator.py
     med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
     if med_abs > 20.0:  # Use 20.0 threshold like ecg_report_generator.py
-        ecg_mv = ecg_array / 1000.0  # Simple division by 1000
+        ecg_mv = ecg_array / REPORT_WAVEFORM_ADC_DIVISOR
     else:
         ecg_mv = ecg_array  # Already in mV
     
@@ -826,23 +837,19 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend  # ALWAYS remove trend - no threshold
             print(f" {lead_name}: FORCEFUL: Removed slope={slope:.6f} (no threshold)")
             
-            # Edge conditioning for all BPM: smooth approach + hard-flat terminal segment.
-            edge_samples = min(80, max(20, len(ecg_mv) // 16))
+            # Edge conditioning: gentle taper only at the very start to avoid
+            # abrupt jumps. Do NOT force end of strip to zero — that creates the
+            # "jumping" artifact at the tail of the printed waveform.
+            edge_samples = min(40, max(10, len(ecg_mv) // 20))
             if len(ecg_mv) > edge_samples * 3:
-                t = np.linspace(0.0, 1.0, edge_samples)
-                taper = 0.5 * (1.0 + np.cos(np.pi * t))
-                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * (1.0 - taper)
-                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * taper
-
-                flat_tail = max(10, edge_samples // 4)
-                blend = max(8, edge_samples // 5)
-                if len(ecg_mv) > flat_tail + blend:
-                    blend_start = len(ecg_mv) - (flat_tail + blend)
-                    blend_end = len(ecg_mv) - flat_tail
-                    ramp = np.linspace(1.0, 0.0, blend)
-                    ecg_mv[blend_start:blend_end] = ecg_mv[blend_start:blend_end] * ramp
-                    ecg_mv[-flat_tail:] = 0.0
-                print(f" {lead_name}: Applied edge taper + flat tail ({flat_tail} samples)")
+                t_taper = np.linspace(0.0, 1.0, edge_samples)
+                head_ramp = 0.5 * (1.0 - np.cos(np.pi * t_taper))  # 0→1 ramp
+                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * head_ramp
+                # Tail: blend toward local median value (NOT zero) over last edge_samples
+                tail_target = float(np.median(ecg_mv[-(edge_samples * 3):-edge_samples])) if len(ecg_mv) > edge_samples * 4 else 0.0
+                tail_ramp = np.linspace(1.0, 0.0, edge_samples)  # 1→0 weight for signal
+                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * tail_ramp + tail_target * (1.0 - tail_ramp)
+                print(f" {lead_name}: Applied gentle edge taper (no forced zero tail)")
     
     # ORIGINAL WORKING GAIN: Calculate y_mm AFTER slope removal
     y_mm = ecg_mv * wave_gain_mm_mv
@@ -985,7 +992,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     # **NEW: Try to load from JSON file first (DYNAMIC)**
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        conclusions_file = os.path.join(base_dir, 'last_conclusions.json')
+        conclusions_file = str(data_file("last_conclusions.json"))
         
         print(f" Looking for conclusions at: {conclusions_file}")
         
@@ -1064,7 +1071,7 @@ def load_latest_metrics_entry(reports_dir):
                 return data
     except Exception as e:
         print(f" Could not read metrics file for HR: {e}")
-def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
+def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None, data=None, settings_manager=None):
     from reportlab.lib.units import mm
     
     # STEP 1: Draw pink ECG grid background on Page 1 (now the only landscape page)
@@ -1135,6 +1142,20 @@ def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
         canvas.drawString(x_pos + org_label_width + 5, y_pos, patient.get("Org.", "") if patient else "")
         
         y_pos -= 15
+
+        canvas.setFont("Helvetica-Bold", 10)
+        address_label = "Address:"
+        canvas.drawString(x_pos, y_pos, address_label)
+
+        address_label_width = canvas.stringWidth(address_label, "Helvetica-Bold", 10)
+        canvas.setFont("Helvetica", 10)
+        canvas.drawString(
+            x_pos + address_label_width + 5,
+            y_pos,
+            (patient.get("org_address", "") or patient.get("Org. Address", "")) if patient else "",
+        )
+
+        y_pos -= 15
         
         canvas.setFont("Helvetica-Bold", 10)
         phone_label = "Phone No:"
@@ -1175,7 +1196,24 @@ def _draw_logo_and_footer_callback(canvas, doc_obj, patient=None):
     canvas.saveState()
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.black)
-    footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
+    
+    serial_num = ""
+    if data:
+        serial_num = data.get("machine_serial", "") or data.get("machine_serial_number", "")
+    if not serial_num:
+        try:
+            from utils.settings_manager import SettingsManager
+            sm = SettingsManager()
+            serial_num = sm.get_setting("machine_serial_number", "")
+        except Exception:
+            pass
+    serial_suffix = serial_num[-4:] if len(serial_num) >= 4 else serial_num
+    
+    if serial_suffix:
+        footer_text = f"Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | {serial_suffix} | Made in India"
+    else:
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        
     text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
     
     if canvas.getPageNumber() in [2, 3]:
@@ -1266,8 +1304,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         }
 
     # Define base_dir and reports_dir for file operations
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    reports_dir = os.path.join(base_dir, 'reports')
+    reports_dir = str(data_file("reports"))
     os.makedirs(reports_dir, exist_ok=True)
 
     from utils.settings_manager import SettingsManager
@@ -1547,7 +1584,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                          topMargin=30, bottomMargin=30)
     # Create wrapper function for callback with patient parameter
     def callback_wrapper(canvas, doc):
-        return _draw_logo_and_footer_callback(canvas, doc, patient)
+        return _draw_logo_and_footer_callback(canvas, doc, patient, data, settings_manager)
 
 
     # Define Landscape template as DEFAULT (only template) with onPage callback
@@ -1982,7 +2019,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                     from scipy.ndimage import gaussian_filter1d as _gf1d
                     
                     ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
                     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
@@ -2715,7 +2752,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 try:
                     from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
                     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
                     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
                     if dft_setting not in ("off", ""):
                         adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
@@ -2930,15 +2967,15 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
 
     # LEFT SIDE: Patient Info (ABOVE ECG GRAPH - shifted further up)
     patient_name_label = String(-5, 535, f"Name: {full_name}",  # Shifted down by 15 points
-                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                           fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
 
     patient_age_label = String(-5, 515, f"Age: {age}",  # Shifted down by 15 points
-                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                          fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
 
     patient_gender_label = String(-5, 495, f"Gender: {gender}",  # Shifted down by 15 points
-                             fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                             fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
     
     # TODO: Add new Date/Time labels below DECKMOUNT logo
@@ -2957,34 +2994,34 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # Add vital parameters in TWO COLUMNS (ABOVE ECG GRAPH - shifted further up)
     # FIRST COLUMN (Left side - x=130)
     hr_label = String(130, 535, f"HR    : {HR} bpm",  # Shifted down by 20 points total  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
 
     pr_label = String(130, 515, f"PR    : {PR} ms",  # Shifted down by 20 points total  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
 
     qrs_label = String(130, 495, f"QRS : {QRS} ms",  # Shifted down by 20 points total 
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qrs_label)
     
     rr_label = String(130, 475, f"RR    : {RR} ms",  # Shifted down by 20 points total 
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
 
     qt_label = String(130, 455, f"QT    : {int(round(QT))} ms",  # Shifted down by 20 points total  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
 
     qtc_label = String(130, 435, f"QTc  : {int(round(QTc))} ms",  # Shifted down by 20 points total  
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
 
     # SECOND COLUMN (Right side) - QTcF replaces ST
     _qtcf_val = data.get('QTc_Fridericia') or data.get('QTcF_ms') or data.get('QTcF') or data.get('QTcF_interval')
     _qtcf_display = f"{int(round(float(_qtcf_val)))} ms" if _qtcf_val and float(_qtcf_val) > 0 else "-- ms"
     qtcf_header_label = String(240, 455, f"QTcF : {_qtcf_display}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_header_label)
 
     # CALCULATED wave amplitudes and lead-specific measurements
@@ -3393,18 +3430,32 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
 
-    # Get RV5 and SV1 amplitudes
-    rv5_amp = data.get('rv5', 0.0)
-    sv1_amp = data.get('sv1', 0.0)
-    
-    print(f" Report Generator - Received RV5/SV1 from data:")
-    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
+    # Get RV5 and SV1 amplitudes from the actual raw ECG graph whenever available.
+    rv5_amp = None
+    sv1_amp = None
+    used_live_measurement = False
+
+    if ecg_test_page is not None:
+        try:
+            from .metrics.intervals import calculate_rv5_sv1_from_test_page
+            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
+            if rv5_calc is not None and rv5_calc > 0:
+                rv5_amp = float(rv5_calc)
+                used_live_measurement = True
+            if sv1_calc is not None and sv1_calc != 0.0:
+                sv1_amp = float(sv1_calc)
+                used_live_measurement = True
+        except Exception as e:
+            print(f" Error getting live RV5/SV1 measurement: {e}")
+
+    print(" Report Generator - Final RV5/SV1 source values:")
+    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}, source={'live_raw_ecg' if used_live_measurement else 'lead_data_unavailable'}")
     
     # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
     # CRITICAL: Use RAW ECG data, not display-filtered signals
     # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
     # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
-    if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
+    if False:
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             fs = float(computed_sampling_rate)
@@ -3496,26 +3547,27 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
     # No additional conversion needed - use values directly
     # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
-    rv5_mv = rv5_amp if rv5_amp > 0 else 0.0
-    sv1_mv = sv1_amp if sv1_amp != 0.0 else 0.0  # SV1 is negative (preserved from calculation)
+    rv5_mv = float(rv5_amp) if rv5_amp is not None and rv5_amp > 0 else None
+    sv1_mv = float(sv1_amp) if sv1_amp is not None and sv1_amp != 0.0 else None
     
-    print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
+    print(f"   Converted to mV: RV5={rv5_mv if rv5_mv is not None else '--'}, SV1={sv1_mv if sv1_mv is not None else '--'}")
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
     # Display SV1 as negative mV (GE/Hospital standard)
     # Use 3 decimal places for precision (not rounded to integers)
-    rv5_sv_label = String(240, 515, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # Shifted down by 20 points total
+    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
+    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
+    rv5_sv_label = String(240, 515, f"RV5/SV1  : {rv5_text}/{sv1_text}",
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
-    # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
-    # CRITICAL: Calculate from unrounded values to avoid rounding errors
-    # SV1 is negative, so RV5+SV1 = RV5 + (SV1) for Sokolow-Lyon index
-    rv5_sv1_sum = rv5_mv + (sv1_mv)  # RV5 + (SV1) as per GE/Philips standard
+    # Calculate RV5+SV1 from displayed magnitudes: RV5 - SV1_magnitude.
+    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
     # Use 3 decimal places for precision
-    rv5_sv1_sum_label = String(240, 495, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Shifted down by 20 points total
+    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
+    rv5_sv1_sum_label = String(240, 495, f"RV5+SV1 : {rv5_sv1_sum_text}",  # Shifted down by 20 points total
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
@@ -3532,7 +3584,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     master_drawing.add(qtcf_label)
 
     # SECOND COLUMN - Speed/Gain (merged in one line) (ABOVE ECG GRAPH - shifted further up)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
@@ -3560,28 +3612,34 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     from reportlab.pdfbase.pdfmetrics import stringWidth
     label_text = "Doctor Name: "
     
-    # Value from Save ECG / signup profile -> passed in 'patient'
+    # Value from Save ECG -> passed in 'patient'
+    # Accept both keys: `doctor` (legacy) and `doctor_name` (signup/profile mapping)
     doctor = ""
     try:
         if patient:
-            doctor = str(patient.get("doctor_name", "") or patient.get("doctor", "") or "").strip()
+            doctor = str(patient.get("doctor", "") or patient.get("doctor_name", "") or "").strip()
     except Exception:
         doctor = ""
   
+    # Reference Report Confirmed by (above Doctor Name)
+    confirmed_label = String(-15, 30, "Reference Report Confirmed by ", 
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(confirmed_label)
+
     # Doctor Name (below V6 lead)
     doctor_name_label = String(-15, 15, "Doctor Name: ",  # Shifted down by 20 points (35 - 20 = 15) 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = -15 + stringWidth("Doctor Name: ", "Helvetica-Bold", 10) + 5
+        value_x = -15 + stringWidth("Doctor Name: ", "Helvetica", 8) + 5
         doctor_name_value = String(value_x, 15, doctor,  # Same y-coordinate as label
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
 
     # Doctor Signature (below Doctor Name)
     doctor_sign_label = String(-15, -10, "Doctor Sign: ",  # Moved up to fit within height 530 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 
     # Add RIGHT-SIDE Conclusion Box (moved to the right) - NOW DYNAMIC FROM DASHBOARD (12 conclusions max) - MADE SMALLER
@@ -3604,47 +3662,32 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                               textAnchor="middle")  # This centers the text
     master_drawing.add(conclusion_header)
     
-    # DYNAMIC conclusions from dashboard in the box - ONLY REAL CONCLUSIONS (no empty/---)
-    # Split filtered conclusions into rows (2 conclusions per row) - COMPACT SPACING
+    # DYNAMIC conclusions from dashboard in the box - SINGLE COLUMN to avoid overlapping
     print(f" Drawing conclusions in graph from filtered list: {filtered_conclusions}")
     
-    # Calculate how many rows we need based on actual conclusions
-    num_conclusions = len(filtered_conclusions)
-    num_rows = (num_conclusions + 1) // 2  # Round up division for rows
-    
-    # Split into rows (2 conclusions per row)
-    conclusion_rows = []
-    for i in range(0, num_conclusions, 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
-    
-    print(f"   Total conclusions: {num_conclusions}, Rows needed: {num_rows}")
-    for idx, row in enumerate(conclusion_rows):
-        print(f"   Row {idx+1}: {row}")
-    
-    # Draw conclusions row by row - ONLY REAL ONES with proper numbering
-    row_spacing = 8  # Vertical spacing between rows
+    # Draw conclusions vertically in a single column
+    row_spacing = 10  # Increased vertical spacing
     start_y = conclusion_y_start - 5  # Starting Y position (shifted down by 15 points)
+    box_bottom = conclusion_y_start - 55  # Bottom edge of the box
     
-    conclusion_num = 1  # Start numbering from 1
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
+    for idx, conclusion in enumerate(filtered_conclusions):
+        row_y = start_y - (idx * row_spacing)
         
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # Truncate long conclusions
-            display_conclusion = conclusion[:30] + "..." if len(conclusion) > 30 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if row_y < box_bottom + 5:  # 5 points padding from bottom
+            print(f" Skipping conclusion {idx+1} as it would be cropped")
+            continue
             
-            # Position horizontally across the box (2 conclusions per row)
-            x_pos = 465 + (col_idx * 160)  # Shifted right by 255 points total (210 + 225 + 30 = 465)
+        conc_text = f"{idx + 1}. {conclusion}"
+        
+        # Position horizontally in a single column
+        x_pos = 465  # Align with the box's left side
+        
+        conc = String(x_pos, row_y, conc_text, 
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(conc)
             
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
-            master_drawing.add(conc)
-            
-            conclusion_num += 1  # Increment for next conclusion
-
-    print(f" Added Patient Info, Vital Parameters, {len(filtered_conclusions)} REAL Conclusions (no empty/---), and Doctor Name/Signature to ECG grid")
+    print(f" Added {len(filtered_conclusions)} REAL Conclusions in single column (no cropping)")
     
     # STEP 5: Add SINGLE master drawing to story on Page 1 (Landscape)
     story.append(master_drawing)
@@ -3766,27 +3809,27 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
             y_pos = doc.height + doc.bottomMargin - 5  # 20 points from top
             
             # Always draw "Org." label with value
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(colors.black)
             org_label = "Org:"
             canvas.drawString(x_pos, y_pos, org_label)
             
             # Calculate width of label and add small gap
-            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 9)
+            canvas.setFont("Helvetica", 9)
             canvas.drawString(x_pos + org_label_width + 5, y_pos, patient.get("Org.", "") if patient else "")
             
             y_pos -= 15  # Move down for next line
             
             # Always draw "Phone No." label with value
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(colors.black)
             phone_label = "Phone No:"
             canvas.drawString(x_pos, y_pos, phone_label)
             
             # Calculate width of label and add small gap
-            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 9)
+            canvas.setFont("Helvetica", 9)
             canvas.drawString(x_pos + phone_label_width + 5, y_pos, patient.get("doctor_mobile", "") if patient else "")
             
             canvas.restoreState()
@@ -3838,8 +3881,7 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # Save parameters to a JSON index for later reuse
     try:
         from datetime import datetime
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        reports_dir = os.path.join(base_dir, 'reports')
+        reports_dir = str(data_file("reports"))
         os.makedirs(reports_dir, exist_ok=True)
         index_path = os.path.join(reports_dir, 'index.json')
         metrics_path = os.path.join(reports_dir, 'metrics.json')
@@ -3861,9 +3903,12 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 "QTc_ms": QTc,
                 "ST_ms": ST,
                 "RR_ms": RR,
-                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
                 "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-                "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+                "RV5_SV1_mV": [
+                    round(rv5_mv, 3) if rv5_mv is not None else None,
+                    round(sv1_mv, 3) if sv1_mv is not None else None,
+                ],
                 "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
             }
         }
@@ -3898,10 +3943,13 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
             "QTc_ms": QTc,
             "ST_ms": ST,
             "RR_ms": RR,
-            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
             "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
-            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
+            "RV5_SV1_mV": [
+                round(rv5_mv, 3) if rv5_mv is not None else None,
+                round(sv1_mv, 3) if sv1_mv is not None else None,
+            ]
         }
 
         metrics_list = []
@@ -3930,28 +3978,63 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     try:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        # --- NEW UNIFIED PAYLOAD DISPATCH ---
+        from utils.ecg_payload_builder import dispatch_12lead_report
+        
+        dispatch_12lead_report(
+            data=data,
+            patient=patient or {},
+            pdf_path=filename,
+            settings_manager=settings_manager if 'settings_manager' in locals() else None,
+            signup_details={},
+            ecg_test_page=ecg_test_page if 'ecg_test_page' in locals() else None,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else (ecg_data_file if 'ecg_data_file' in locals() else None),
+            report_format="4_3",
+            conclusions=filtered_conclusions if 'filtered_conclusions' in locals() else None,
+            arrhythmia=None,
+        )
+        print("  Dispatched 4-3 unified payload")
+        # -------------------------------------
+
         from utils.cloud_uploader import get_cloud_uploader
         
         cloud_uploader = get_cloud_uploader()
         if cloud_uploader.is_configured():
-            print(f"  Uploading report to cloud ({cloud_uploader.cloud_service})...")
+            print(f"  Uploading report package to cloud ({cloud_uploader.cloud_service})...")
+            
+            # Prepare clinical measurements
+            clinical_measurements = {
+                "heart_rate": HR,
+                "pr_interval": PR,
+                "qrs_duration": QRS,
+                "qt_interval": QT,
+                "qtc": QTc,
+                "p_axis": p_mm,
+                "qrs_axis": qrs_mm,
+                "t_axis": t_mm
+            }
             
             # Prepare metadata
-            upload_metadata = {
+            report_metadata = {
                 "patient_name": data.get('patient', {}).get('name', 'Unknown'),
                 "patient_age": str(data.get('patient', {}).get('age', '')),
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
-                "heart_rate": str(data.get('Heart_Rate', '')),
             }
             
-            # Upload the report
-            result = cloud_uploader.upload_report(filename, metadata=upload_metadata)
+            # Upload the complete package
+            result = cloud_uploader.upload_complete_report_package(
+                pdf_path=filename,
+                patient_data=patient if isinstance(patient, dict) else {},
+                ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else None,
+                report_metadata=report_metadata,
+                report_type="12_LEAD_ECG",
+                clinical_measurements=clinical_measurements
+            )
             
             if result.get('status') == 'success':
-                print(f"✓ Report uploaded successfully to {cloud_uploader.cloud_service}")
-                if 'url' in result:
-                    print(f"  URL: {result['url']}")
+                print(f"✓ Report package uploaded successfully to {cloud_uploader.cloud_service}")
             else:
                 print(f"  Cloud upload failed: {result.get('message', 'Unknown error')}")
         else:
