@@ -858,6 +858,9 @@ class ECGTestPage(QWidget):
         # PreciseTimer is only needed on high-spec machines for tightest timing accuracy.
         self.timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
         self.timer.timeout.connect(self.update_plots)
+        self.metrics_timer = QTimer(self)
+        self.metrics_timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
+        self.metrics_timer.timeout.connect(self._on_metrics_timer_timeout)
         self._replay_timer = QTimer(self)
         self._replay_timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
         self._replay_timer.timeout.connect(self._update_replay_plots)
@@ -1125,6 +1128,9 @@ class ECGTestPage(QWidget):
         self.demo_toggle.toggled.connect(self.on_demo_toggle_changed)
         
         recording_layout.addWidget(self.demo_toggle)
+        # Hidden per request — demo mode is disabled for end users
+        self.demo_toggle.setVisible(False)
+        self.demo_toggle.setEnabled(False)
 
         # Capture Screen button - Make it compact
         self.capture_screen_btn = QPushButton("Capture Screen")
@@ -6663,6 +6669,7 @@ class ECGTestPage(QWidget):
         # ── Start timers (was right after serial_reader.start() in original code) ──
         timer_interval = 30  # ~33 FPS keeps redraws steadier on slower systems
         self.timer.start(timer_interval)
+        self.metrics_timer.start(200)
         QTimer.singleShot(10, self.update_plots)   # instant first frame
 
         # ── Start HolterBPMController (stable BPM engine) ─────────────────────
@@ -6799,6 +6806,29 @@ class ECGTestPage(QWidget):
         # Enforce 10-second cooldown after Start before first report generation.
         self._start_generate_report_cooldown(seconds=10, reason="Start")
 
+
+    def _on_metrics_timer_timeout(self):
+        """Dedicated timer callback to update ECG metrics at a stable rate (200ms)"""
+        # Do not recalculate metrics while report is generating or view is frozen.
+        if getattr(self, '_report_generating', False) or getattr(self, '_grid_frozen', False):
+            # While frozen: restore snapshot texts so label flushes do not overwrite them
+            _ftexts = getattr(self, '_frozen_metric_texts', {})
+            if _ftexts:
+                for _k, _txt in _ftexts.items():
+                    try:
+                        lbl = self.metric_labels.get(_k)
+                        if lbl and lbl.text() != _txt:
+                            lbl.setText(_txt)
+                    except Exception:
+                        pass
+            return
+
+        try:
+            self.calculate_ecg_metrics()
+            if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
+                self._last_calculated_bpm = self.last_heart_rate
+        except Exception:
+            pass
 
     # ---------------------- Stop Button Functionality ----------------------
 
@@ -6942,6 +6972,8 @@ class ECGTestPage(QWidget):
             # self.serial_reader.close()
             # self.serial_reader = None
         self.timer.stop()
+        if hasattr(self, 'metrics_timer') and self.metrics_timer.isActive():
+            self.metrics_timer.stop()
         # Cancel any active countdown timers for generate report button
         for timer in self.countdown_timers:
             if hasattr(timer, "stop") and timer.isActive():
@@ -10330,49 +10362,7 @@ class ECGTestPage(QWidget):
                     except Exception as e:
                         print(f" Error updating plot {i}: {e}")
                         continue
-                # Optimized metric calculation - calculate less frequently for better performance
-                if not hasattr(self, '_metrics_update_count'):
-                    self._metrics_update_count = 0
-                self._metrics_update_count += 1
-                
-                # Check if BPM changed significantly (force immediate recalculation)
-                current_bpm = getattr(self, 'last_heart_rate', 0)
-                last_calculated_bpm = getattr(self, '_last_calculated_bpm', current_bpm)
-                bpm_change = abs(current_bpm - last_calculated_bpm) if current_bpm > 0 and last_calculated_bpm > 0 else 0
-                
-                # Optimized: Calculate metrics every 5 updates (reduced from every update for better performance)
-                # Still calculate immediately if BPM changed significantly (>5 BPM) or in first 6 seconds
-                updates_in_6_seconds = 120  # ~6 seconds at 20 FPS (50ms timer)
-                should_calculate = (
-                    (self.update_count <= updates_in_6_seconds) or  # First 6 seconds: calculate every 2 updates
-                    (bpm_change > 5) or  # BPM change >5: force immediate recalculation
-                    (self._metrics_update_count % 5 == 0)  # Every 5 updates for smooth performance
-                )
-                
-                if should_calculate:
-                    try:
-                        # Do NOT recalculate / repaint metric labels while frozen.
-                        # The frozen snapshot texts are preserved by _freeze_current_view.
-                        if not getattr(self, '_grid_frozen', False):
-                            self.calculate_ecg_metrics()
-                            # Store current BPM for change detection
-                            if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
-                                self._last_calculated_bpm = self.last_heart_rate
-                        else:
-                            # While frozen: restore snapshot texts on every tick so
-                            # that any label flush from other code paths does not
-                            # overwrite the frozen values.
-                            _ftexts = getattr(self, '_frozen_metric_texts', {})
-                            if _ftexts:
-                                for _k, _txt in _ftexts.items():
-                                    try:
-                                        lbl = self.metric_labels.get(_k)
-                                        if lbl and lbl.text() != _txt:
-                                            lbl.setText(_txt)
-                                    except Exception:
-                                        pass
-                    except Exception as e:
-                        pass  # Silently handle errors to avoid console spam
+                pass
                 # Removed heartbeat debug print for better performance
 
         except Exception as e:
@@ -10476,6 +10466,10 @@ class ECGTestPage(QWidget):
             if hasattr(self, 'timer') and self.timer:
                 self.timer.stop()
                 self.timer.deleteLater()
+            
+            if hasattr(self, 'metrics_timer') and self.metrics_timer:
+                self.metrics_timer.stop()
+                self.metrics_timer.deleteLater()
             
             if hasattr(self, 'elapsed_timer') and self.elapsed_timer:
                 self.elapsed_timer.stop()

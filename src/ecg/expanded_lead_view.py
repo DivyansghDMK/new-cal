@@ -279,9 +279,9 @@ class MetricsCard(QFrame):
         self._base_value_pt = 20
         self._base_status_pt = 10
         
-        # Increase card vertical room to prevent value text cropping on macOS/Windows
-        self.setMinimumHeight(160)
-        self.setMaximumHeight(200)
+        # Flexible card height — scales down on small screens without clipping
+        self.setMinimumHeight(110)
+        self.setMaximumHeight(220)
         self.base_style = f"""
             QFrame {{
                 background: white;
@@ -515,7 +515,7 @@ class ExpandedLeadView(QDialog):
         except Exception:
             self.resize(1280, 720)
         # Reasonable minimum to keep layout usable on small screens
-        self.setMinimumSize(960, 600)
+        self.setMinimumSize(800, 500)
 
         # Center the dialog over the parent window (on the same screen) when possible
         try:
@@ -582,7 +582,8 @@ class ExpandedLeadView(QDialog):
     def create_header(self, parent_layout):
         """Create the header section"""
         header_frame = QFrame()
-        header_frame.setFixedHeight(60)
+        header_frame.setMinimumHeight(50)
+        header_frame.setMaximumHeight(70)
         header_frame.setStyleSheet("""
             QFrame {
                 background: white;
@@ -715,279 +716,117 @@ class ExpandedLeadView(QDialog):
 
         plot_layout.addWidget(self.plot_widget)
 
-        # --- AMPLIFICATION CONTROLS ---
+        # --- CONTROLS: two compact rows so nothing clips on any screen ---
+        def _mk_lbl(text, style):
+            lb = QLabel(text); lb.setStyleSheet(style); return lb
         control_frame = QFrame()
-        control_frame.setStyleSheet("background: transparent; border: none;")
-        control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(10, 5, 10, 5)
-        control_layout.setSpacing(10)
+        control_frame.setStyleSheet("background: #f8f9fa; border-radius: 6px; border: 1px solid #e0e5eb;")
+        ctrl_vbox = QVBoxLayout(control_frame)
+        ctrl_vbox.setContentsMargins(8, 4, 8, 4)
+        ctrl_vbox.setSpacing(3)
 
-        # Zoom (time) controls
-        zoom_title = QLabel("Zoom:")
-        zoom_title.setStyleSheet("""
-            color: #2c3e50; 
-            font-weight: bold; 
-            font-size: 11pt;
-            background: transparent;
-            border: none;
-        """)
-        control_layout.addWidget(zoom_title)
+        # ── Shared compact styles ────────────────────────────────────────────
+        _blue = ("QPushButton{background:#3498db;color:white;border-radius:5px;"
+                 "font-weight:bold;font-size:14pt;border:1px solid #2980b9;"
+                 "min-width:28px;max-width:32px;min-height:24px;max-height:26px;}"
+                 "QPushButton:hover{background:#2980b9;}"
+                 "QPushButton:pressed{background:#21618c;}")
+        _val = ("color:#2c3e50;font-weight:bold;font-size:9pt;"
+                "background:#fff;border:1px solid #dee2e6;"
+                "border-radius:4px;padding:2px 5px;min-width:40px;")
+        _sec = "color:#555;font-size:8pt;font-weight:600;background:transparent;border:none;"
+        _grey = ("QPushButton{background:#95a5a6;color:white;border-radius:5px;"
+                 "padding:2px 8px;font-weight:bold;font-size:9pt;"
+                 "border:1px solid #7f8c8d;min-height:24px;max-height:26px;}"
+                 "QPushButton:hover{background:#7f8c8d;}")
+        _green = ("QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                  "stop:0 #4CAF50,stop:1 #45a049);color:white;"
+                  "border:1px solid #4CAF50;border-radius:5px;"
+                  "padding:2px 10px;font-size:9pt;font-weight:bold;"
+                  "min-height:24px;max-height:26px;min-width:58px;}"
+                  "QPushButton:hover{background:#45a049;}"
+                  "QPushButton:pressed{background:#3d8b40;}"
+                  "QPushButton:disabled{background:#aaa;border-color:#aaa;}")
+        _purple = ("QPushButton{background:#8e44ad;color:white;border-radius:5px;"
+                   "padding:2px 8px;font-weight:bold;font-size:9pt;"
+                   "border:1px solid #7d3c98;min-height:24px;max-height:26px;}"
+                   "QPushButton:hover{background:#7d3c98;}")
+        _chk = "QCheckBox{font-size:9pt;color:#2c3e50;background:transparent;border:none;spacing:4px;}"
 
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setMinimumSize(40, 35)
-        zoom_out_btn.setMaximumSize(40, 35)
-        zoom_out_btn.setStyleSheet("""
-            QPushButton {
-                background: #3498db; 
-                color: white; 
-                border-radius: 6px;
-                font-weight: bold; 
-                font-size: 18pt;
-                border: 2px solid #2980b9;
-            }
-            QPushButton:hover { 
-                background: #2980b9; 
-            }
-            QPushButton:pressed {
-                background: #21618c;
-            }
-        """)
-        zoom_out_btn.clicked.connect(self.zoom_out_time)
-        control_layout.addWidget(zoom_out_btn)
+        # ── ROW 1 : Zoom  |  Amp  |  Reset  |  hint ─────────────────────────
+        row1 = QHBoxLayout(); row1.setSpacing(4)
 
+        _zt = QLabel("Zoom:"); _zt.setStyleSheet(_sec); row1.addWidget(_zt)
+        _zo = QPushButton("−"); _zo.setStyleSheet(_blue)
+        _zo.clicked.connect(self.zoom_out_time); row1.addWidget(_zo)
         self.zoom_label = QLabel(f"{self.view_window_duration:.1f}s")
-        self.zoom_label.setMinimumWidth(60)
-        self.zoom_label.setAlignment(Qt.AlignCenter)
-        self.zoom_label.setStyleSheet("""
-            color: #2c3e50; 
-            font-weight: bold; 
-            font-size: 12pt;
-            background: #f8f9fa;
-            border: 2px solid #dee2e6;
-            border-radius: 6px;
-            padding: 5px;
-        """)
-        control_layout.addWidget(self.zoom_label)
+        self.zoom_label.setAlignment(Qt.AlignCenter); self.zoom_label.setStyleSheet(_val)
+        row1.addWidget(self.zoom_label)
+        _zi = QPushButton("+"); _zi.setStyleSheet(_blue)
+        _zi.clicked.connect(self.zoom_in_time); row1.addWidget(_zi)
 
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setMinimumSize(40, 35)
-        zoom_in_btn.setMaximumSize(40, 35)
-        zoom_in_btn.setStyleSheet("""
-            QPushButton {
-                background: #3498db; 
-                color: white; 
-                border-radius: 6px;
-                font-weight: bold; 
-                font-size: 18pt;
-                border: 2px solid #2980b9;
-            }
-            QPushButton:hover { 
-                background: #2980b9; 
-            }
-            QPushButton:pressed {
-                background: #21618c;
-            }
-        """)
-        zoom_in_btn.clicked.connect(self.zoom_in_time)
-        control_layout.addWidget(zoom_in_btn)
-        
-        # Amplification label
-        amp_title = QLabel("Amplification:")
-        amp_title.setStyleSheet("""
-            color: #2c3e50; 
-            font-weight: bold; 
-            font-size: 11pt;
-            background: transparent;
-            border: none;
-        """)
-        control_layout.addWidget(amp_title)
-        
-        # - Button (Decrease amplification)
-        minus_btn = QPushButton("−")
-        minus_btn.setMinimumSize(40, 35)
-        minus_btn.setMaximumSize(40, 35)
-        minus_btn.setStyleSheet("""
-            QPushButton {
-                background: #3498db; 
-                color: white; 
-                border-radius: 6px;
-                font-weight: bold; 
-                font-size: 18pt;
-                border: 2px solid #2980b9;
-            }
-            QPushButton:hover { 
-                background: #2980b9; 
-            }
-            QPushButton:pressed {
-                background: #21618c;
-            }
-        """)
-        minus_btn.clicked.connect(self.decrease_amplification)
-        control_layout.addWidget(minus_btn)
-        
-        # Amplification display
+        row1.addSpacing(8)
+        _at = QLabel("Amp:"); _at.setStyleSheet(_sec); row1.addWidget(_at)
+        _am = QPushButton("−"); _am.setStyleSheet(_blue)
+        _am.clicked.connect(self.decrease_amplification); row1.addWidget(_am)
         self.amp_label = QLabel(f"{self.amplification:.2f}x")
-        self.amp_label.setMinimumWidth(60)
-        self.amp_label.setAlignment(Qt.AlignCenter)
-        self.amp_label.setStyleSheet("""
-            color: #2c3e50; 
-            font-weight: bold; 
-            font-size: 12pt;
-            background: #f8f9fa;
-            border: 2px solid #dee2e6;
-            border-radius: 6px;
-            padding: 5px;
-        """)
-        control_layout.addWidget(self.amp_label)
-        
-        # + Button (Increase amplification)
-        plus_btn = QPushButton("+")
-        plus_btn.setMinimumSize(40, 35)
-        plus_btn.setMaximumSize(40, 35)
-        plus_btn.setStyleSheet("""
-            QPushButton {
-                background: #3498db; 
-                color: white; 
-                border-radius: 6px;
-                font-weight: bold; 
-                font-size: 18pt;
-                border: 2px solid #2980b9;
-            }
-            QPushButton:hover { 
-                background: #2980b9; 
-            }
-            QPushButton:pressed {
-                background: #21618c;
-            }
-        """)
-        plus_btn.clicked.connect(self.increase_amplification)
-        control_layout.addWidget(plus_btn)
-        
-        # Reset Button
-        reset_btn = QPushButton("Reset")
-        reset_btn.setMinimumSize(60, 35)
-        reset_btn.setStyleSheet("""
-            QPushButton {
-                background: #95a5a6; 
-                color: white; 
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-weight: bold; 
-                font-size: 10pt;
-                border: 2px solid #7f8c8d;
-            }
-            QPushButton:hover { 
-                background: #7f8c8d; 
-            }
-        """)
-        reset_btn.clicked.connect(self.reset_amplification)
-        control_layout.addWidget(reset_btn)
-        
-        # Info label
-        info_label = QLabel("💡 Use mouse scroll to zoom")
-        info_label.setStyleSheet("""
-            color: #7f8c8d; 
-            font-size: 9pt;
-            font-style: italic;
-            background: transparent;
-            border: none;
-        """)
-        control_layout.addWidget(info_label)
+        self.amp_label.setAlignment(Qt.AlignCenter); self.amp_label.setStyleSheet(_val)
+        row1.addWidget(self.amp_label)
+        _ap = QPushButton("+"); _ap.setStyleSheet(_blue)
+        _ap.clicked.connect(self.increase_amplification); row1.addWidget(_ap)
 
-        # Lorenz Plot button
-        lorenz_btn = QPushButton("Lorenz Plot")
-        lorenz_btn.setMinimumSize(100, 35)
-        lorenz_btn.setStyleSheet("""
-            QPushButton {
-                background: #8e44ad;
-                color: white;
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-weight: bold;
-                font-size: 10pt;
-                border: 2px solid #7d3c98;
-            }
-            QPushButton:hover { background: #7d3c98; }
-        """)
-        lorenz_btn.clicked.connect(self.show_lorenz_plot)
-        control_layout.addWidget(lorenz_btn)
+        reset_btn = QPushButton("Reset"); reset_btn.setStyleSheet(_grey)
+        reset_btn.clicked.connect(self.reset_amplification); row1.addWidget(reset_btn)
 
-        # Toggles (display-only UX)
+        _hint = QLabel("🖱 Scroll = zoom")
+        _hint.setStyleSheet("color:#95a5a6;font-size:8pt;font-style:italic;"
+                            "background:transparent;border:none;")
+        row1.addWidget(_hint)
+        row1.addStretch()
+
+        # ── ROW 2 : Lorenz  |  toggles  |  Start / Stop ─────────────────────
+        row2 = QHBoxLayout(); row2.setSpacing(8)
+
+        lorenz_btn = QPushButton("Lorenz Plot"); lorenz_btn.setStyleSheet(_purple)
+        lorenz_btn.clicked.connect(self.show_lorenz_plot); row2.addWidget(lorenz_btn)
+
+        row2.addSpacing(6)
+
+        # Hidden clean-view toggle (logic intact, UI hidden)
         self.clean_view_toggle = QCheckBox("Clean display")
-        self.clean_view_toggle.setChecked(False)  # Default to unchecked
+        self.clean_view_toggle.setChecked(False)
         self.clean_view_toggle.stateChanged.connect(self.toggle_clean_view)
-        # Hide the clean display toggle from user interface
         self.clean_view_toggle.hide()
 
         self.resp_toggle = QCheckBox("Respiration")
-        self.resp_toggle.setChecked(True)
+        self.resp_toggle.setChecked(True); self.resp_toggle.setStyleSheet(_chk)
         self.resp_toggle.stateChanged.connect(self.toggle_respiration)
-        control_layout.addWidget(self.resp_toggle)
+        row2.addWidget(self.resp_toggle)
 
         self.median_toggle = QCheckBox("Median beat")
-        self.median_toggle.setChecked(True)
+        self.median_toggle.setChecked(True); self.median_toggle.setStyleSheet(_chk)
         self.median_toggle.stateChanged.connect(self.toggle_median_overlay)
-        control_layout.addWidget(self.median_toggle)
+        row2.addWidget(self.median_toggle)
 
         self.marker_toggle = QCheckBox("Markers")
-        self.marker_toggle.setChecked(False)
+        self.marker_toggle.setChecked(False); self.marker_toggle.setStyleSheet(_chk)
         self.marker_toggle.stateChanged.connect(self.toggle_markers)
-        control_layout.addWidget(self.marker_toggle)
-        
-        control_layout.addStretch()
+        row2.addWidget(self.marker_toggle)
 
-        startstop_layout = QHBoxLayout()
-        startstop_layout.addStretch()
-        
-        # Use the same green button style as the main ECG test page for visual consistency
-        green_btn_style = """
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #4CAF50, stop:1 #45a049);
-                color: white; 
-                border: 2px solid #4CAF50;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 10px;
-                font-weight: bold; 
-                text-align: center;
-            }
-            QPushButton:hover { 
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #45a049, stop:1 #4CAF50);
-                border: 2px solid #45a049;
-                color: white;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #3d8b40, stop:1 #357a38);
-                border: 2px solid #3d8b40;
-                color: white;
-            }
-            QPushButton:disabled {
-                background: #6c757d;
-                border: 2px solid #6c757d;
-                color: #eeeeee;
-            }
-        """
+        row2.addStretch()
 
-        # Start Button for Expanded Lead View
-        self.expanded_start_btn = QPushButton("Start")
-        self.expanded_start_btn.setMinimumSize(90, 34)
-        self.expanded_start_btn.setMaximumHeight(36)
-        self.expanded_start_btn.setStyleSheet(green_btn_style)
+        self.expanded_start_btn = QPushButton("▶ Start")
+        self.expanded_start_btn.setStyleSheet(_green)
         self.expanded_start_btn.clicked.connect(self.start_parent_acquisition)
-        startstop_layout.addWidget(self.expanded_start_btn)
-        
-        # Stop Button for Expanded Lead View (same style and size)
-        self.expanded_stop_btn = QPushButton("Stop")
-        self.expanded_stop_btn.setMinimumSize(90, 34)
-        self.expanded_stop_btn.setMaximumHeight(36)
-        self.expanded_stop_btn.setStyleSheet(green_btn_style)
+        row2.addWidget(self.expanded_start_btn)
+
+        self.expanded_stop_btn = QPushButton("■ Stop")
+        self.expanded_stop_btn.setStyleSheet(_green)
         self.expanded_stop_btn.clicked.connect(self.stop_parent_acquisition)
-        startstop_layout.addWidget(self.expanded_stop_btn)
-        
-        plot_layout.addLayout(startstop_layout)
+        row2.addWidget(self.expanded_stop_btn)
+
+        ctrl_vbox.addLayout(row1)
+        ctrl_vbox.addLayout(row2)
         
         # History slider container (initially hidden until acquisition stops)
         history_frame = QFrame()
@@ -2255,7 +2094,9 @@ class ExpandedLeadView(QDialog):
     def create_arrhythmia_panel(self, parent_layout):
         """Create the arrhythmia analysis panel"""
         arrhythmia_frame = QFrame()
-        arrhythmia_frame.setFixedHeight(70)
+        arrhythmia_frame.setMinimumHeight(44)
+        arrhythmia_frame.setMaximumHeight(80)
+        arrhythmia_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         arrhythmia_frame.setStyleSheet("""
             QFrame {
                 background: white;

@@ -395,7 +395,7 @@ def calculateAdaptiveWindows(heart_rate: int, rr_interval_sec: float,
     elif heart_rate < 40:
         return AdaptiveWindows( 75, 150, 200,  50,  80, 150, min(300, int(rr_samples * 0.65)))
     elif heart_rate < 60:
-        return AdaptiveWindows( 60, 120, 150,  40,  60, 120, min(250, int(rr_samples * 0.60)))
+        return AdaptiveWindows( 50,  90, 130,  40,  60, 120, min(250, int(rr_samples * 0.60)))
     elif 60 <= heart_rate <= 100:
         return AdaptiveWindows( 45,  85, 100,  30,  45, 100, min(175, int(rr_samples * 0.55)))
     elif 100 < heart_rate <= 150:
@@ -607,8 +607,8 @@ def calculatePRIntervalsImproved(signal: np.ndarray, p_waves: List[int],
             # Kotlin: ((rPeak - pWave) * 1000 / samplingRate).toInt()
             pr_ms = int((r_after - p_wave) * 1000 / fs)
 
-            # Kotlin clamp: usually 80..300, but adapted for high HR
-            if pr_min_limit <= pr_ms <= 300:
+            # PR ceiling: 200ms (>200ms = 1° AVB territory; reject as outlier)
+            if pr_min_limit <= pr_ms <= 200:
                 pr_intervals.append(pr_ms)
 
         except Exception:
