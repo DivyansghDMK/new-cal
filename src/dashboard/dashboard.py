@@ -231,10 +231,26 @@ class StyledMessageBox(QDialog):
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dialog.setFixedSize(400, 200)
         dialog.setStyleSheet("""
-            QDialog { background: #fff; border-radius: 18px; }
-            QLabel { font-size: 16px; color: #222; }
-            QPushButton { background: #ff6600; color: white; border-radius: 10px; padding: 8px 24px; font-size: 16px; font-weight: bold; }
-            QPushButton:hover { background: #ff8800; }
+            QDialog { 
+                background: #111827; 
+                border-radius: 12px;
+                border: 1px solid #374151;
+            }
+            QLabel { 
+                font-size: 14px; 
+                color: #D1D5DB; 
+                font-family: 'Segoe UI', Arial;
+            }
+            QPushButton { 
+                background: #3B82F6; 
+                color: white; 
+                border-radius: 8px; 
+                padding: 8px 24px; 
+                font-size: 14px; 
+                font-weight: bold;
+                border: none;
+            }
+            QPushButton:hover { background: #2563EB; }
         """)
         layout = QVBoxLayout(dialog)
         layout.setSpacing(18)
@@ -244,9 +260,9 @@ class StyledMessageBox(QDialog):
         title_lbl.setFont(QFont("Arial", 18, QFont.Bold))
         title_lbl.setAlignment(Qt.AlignCenter)
         if is_critical:
-            title_lbl.setStyleSheet("color: #e74c3c;")
+            title_lbl.setStyleSheet("color: #e74c3c; font-family: 'Segoe UI', Arial;")
         else:
-            title_lbl.setStyleSheet("color: #ff6600;")
+            title_lbl.setStyleSheet("color: #00E676; font-family: 'Segoe UI', Arial;")
         layout.addWidget(title_lbl)
         
         msg_lbl = QLabel(message)
@@ -695,6 +711,13 @@ class Dashboard(QWidget):
         self.date_btn.clicked.connect(self.go_to_lead_test)
         self.date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.date_btn)
+
+        # # --- Add Comprehensive ECG Analysis Button ---
+        # self.holter_btn = QPushButton("Comprehensive ECG")
+        # self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
+        # self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
+        # self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # greet_row.addWidget(self.holter_btn)
 
         # --- Add Chatbot Button ---
         self.chatbot_btn = QPushButton("AI Chatbot")
@@ -2212,7 +2235,7 @@ class Dashboard(QWidget):
                         ("ST", f"{st} mV"),
                         ("RR", f"{rr} ms"),
                         ("RV5+SV1", f"{rv5p} mV"),
-                        ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]}°"),
+                        # ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]}°"),
                         ("RV5/SV1", f"{rv5s[0]}/{rv5s[1]} mV"),
                     ]
 
@@ -2336,7 +2359,7 @@ class Dashboard(QWidget):
                 ("QTc", f"{qtc} ms" if qtc != '--' else '--'),
                 ("RR", f"{rr} ms" if rr != '--' else '--'),
                 ("RV5+SV1", f"{rv5_sv1_sum} mV"),
-                ("P/QRS/T", f"{p_qrs_t}°"),
+                # ("P/QRS/T", f"{p_qrs_t}°"),
                 ("RV5/SV1", f"{rv5_sv1} mV"),
             ]
             
@@ -3811,11 +3834,6 @@ class Dashboard(QWidget):
         from dashboard.history_window import append_history_entry
         from utils.pdf_process_runner import PDFProcessRunner
 
-        saved_ecg_data_file = save_ecg_data_to_file(ecg_page)
-        if not saved_ecg_data_file:
-            QMessageBox.warning(self, "Report Failed", "No ECG data available to generate report.")
-            return
-
         report_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         # Resolve machine serial — check all sources in priority order
         machine_serial = (
@@ -3840,6 +3858,7 @@ class Dashboard(QWidget):
         os.makedirs(downloads_dir, exist_ok=True)
         filename = os.path.join(downloads_dir, default_name)
 
+        # First, build patient profile and frozen data first, then save companion JSON with full schema
         frozen_patient = copy.deepcopy(
             resolve_patient_profile(
                 explicit_patient=getattr(self, "patient_details", None),
@@ -3848,6 +3867,7 @@ class Dashboard(QWidget):
             )
         )
 
+        # Now build the rest of the data for the report
         rr_ms = int(round(60000.0 / hr_value)) if hr_value > 0 else 0
         frozen_ecg_data = {
             "HR": hr_value,
@@ -3872,6 +3892,7 @@ class Dashboard(QWidget):
             "machine_serial": getattr(self, "user_details", {}).get("serial_id", "") or os.getenv("MACHINE_SERIAL_ID", ""),
         }
 
+        # Now get frozen conclusions:
         frozen_conclusions = []
         try:
             if ecg_page:
@@ -3906,6 +3927,39 @@ class Dashboard(QWidget):
                 print(f" Frozen report conclusions: {frozen_conclusions}")
         except Exception as conclusion_err:
             print(f" Could not freeze report conclusions: {conclusion_err}")
+
+        # Now, save companion JSON with the FULL structured schema instead of just raw ECG
+        json_filename = os.path.abspath(os.path.splitext(filename)[0] + ".json")
+        try:
+            from utils.ecg_payload_builder import build_12lead_payload
+            
+            full_payload = build_12lead_payload(
+                data=frozen_ecg_data,
+                patient=frozen_patient,
+                signup_details=getattr(self, "user_details", {}),
+                ecg_test_page=ecg_page,
+                source_report_file=filename,
+                conclusions=frozen_conclusions,
+                report_format="12_1"
+            )
+            
+            with open(json_filename, 'w', encoding='utf-8') as f:
+                json.dump(full_payload, f, indent=2, ensure_ascii=False)
+            
+            saved_ecg_data_file = json_filename
+            print(f"✅ Saved FULL STRUCTURED JSON companion file to: {saved_ecg_data_file}")
+            print(f"   Schema matches the expected format with patient details, device info, etc.")
+        except Exception as payload_err:
+            print(f"⚠️ Could not build full payload: {payload_err}")
+            import traceback
+            traceback.print_exc()
+            # Fall back to raw ECG data if full payload fails
+            saved_ecg_data_file = save_ecg_data_to_file(ecg_page, output_file=json_filename)
+        
+        # We need data to generate the report
+        if not saved_ecg_data_file:
+            QMessageBox.warning(self, "Report Failed", "No ECG data available to generate report.")
+            return
 
         def _on_finished(fname):
             try:

@@ -265,14 +265,9 @@ class CloudUploader:
         if report_type not in allowed_report_types:
             report_type = ""
 
-        # Make JSON objects type-identifiable in S3 key names.
-        # Example: hrv_ecg_data_20260411_123000.json
+        # NO automatic prefixing for JSON files. Keep filenames matching the PDF
+        # for easier identification in the S3 browser.
         key_filename = filename
-        if filename.lower().endswith(".json") and report_type:
-            stem, ext = os.path.splitext(filename)
-            prefix = f"{report_type}_"
-            if not stem.lower().startswith(prefix):
-                key_filename = f"{prefix}{stem}{ext}"
 
         prefix = (os.getenv("S3_REPORTS_PREFIX", "reports") or "reports").strip().strip("/")
         mobile = self._extract_mobile_for_s3_key(meta)

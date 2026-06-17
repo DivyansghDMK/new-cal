@@ -98,6 +98,36 @@ def _report_id(user_id: str) -> str:
     return f"{ts}_{uid}"
 
 
+def _report_id_from_source(source_file: str, machine_serial: str) -> str:
+    """
+    Extract report_id in format {Date}_{Time}_{Machine_serial} from source_report_file.
+    If not possible, falls back to standard _report_id.
+    """
+    if not source_file:
+        return _report_id(machine_serial)
+
+    try:
+        filename = os.path.basename(str(source_file))
+        name_no_ext = os.path.splitext(filename)[0]
+        parts = name_no_ext.split('_')
+
+        # All filenames generated in this app end with _YYYYMMDD_HHMMSS.pdf
+        if len(parts) >= 2:
+            time_part = parts[-1]
+            date_part = parts[-2]
+
+            # Basic validation for YYYYMMDD and HHMMSS format
+            if (len(date_part) == 8 and date_part.isdigit() and
+                len(time_part) == 6 and time_part.isdigit()):
+
+                uid = str(machine_serial or "0").replace(" ", "")
+                return f"{date_part}_{time_part}_{uid}"
+    except Exception:
+        pass
+
+    return _report_id(machine_serial)
+
+
 def _leads_from_ecg_test_page(ecg_test_page: Any, n: int = SAMPLES_PER_LEAD) -> Dict[str, List[int]]:
     """Extract the latest `n` samples for all 12 leads from a live ECGTestPage."""
     out: Dict[str, List[int]] = {}
@@ -116,7 +146,7 @@ def _leads_from_ecg_test_page(ecg_test_page: Any, n: int = SAMPLES_PER_LEAD) -> 
             # Pad with zeros if we have fewer than n samples
             if len(samples) < n:
                 samples = [0] * (n - len(samples)) + samples
-            out[name] = [int(round(v)) for v in samples]
+            out[name] = [int(round(float(v))) for v in samples]
     except Exception as e:
         print(f"[ECGPayload] leads_from_ecg_test_page error: {e}")
     return out
@@ -140,7 +170,7 @@ def _leads_from_file(ecg_data_file: str, n: int = SAMPLES_PER_LEAD) -> Dict[str,
             samples = arr[-n:] if len(arr) > n else arr
             if len(samples) < n:
                 samples = [0] * (n - len(samples)) + samples
-            out[name] = [int(round(v)) for v in samples]
+            out[name] = [int(round(float(v))) for v in samples]
     except Exception as e:
         print(f"[ECGPayload] leads_from_file error: {e}")
     return out
@@ -158,23 +188,27 @@ def _ensure_all_leads(leads: Dict[str, List[int]], n: int = SAMPLES_PER_LEAD) ->
     return leads
 
 
-def _device_data_string(leads: Dict[str, List[int]]) -> str:
-    """Build pipe-separated device data string as frame-wise [12 values] chunks."""
+def _device_data_string(leads: Dict[str, List[float]]) -> str:
+    """Build pipe-separated device data string as frame-wise chunks.
+    For 12-lead reports: [12 values per frame]
+    For HRV/hyperkalemia: only the available leads are included.
+    """
     try:
-        # Required compact format:
-        #   [I0,II0,III0,aVR0,aVL0,aVF0,V10,V20,V30,V40,V50,V60]|
-        #   [I1,II1,III1,...]
-        # One frame per sample, each frame has 12 lead values.
+        # Use only the leads present in the input dict
+        lead_keys = list(leads.keys())
+        if not lead_keys:
+            return ""
+        
         frames = []
         n = 0
-        for name in LEAD_NAMES:
+        for name in lead_keys:
             n = max(n, len(leads.get(name, [])))
         for s_idx in range(n):
             vals = []
-            for name in LEAD_NAMES:
+            for name in lead_keys:
                 arr = leads.get(name, [])
-                v = arr[s_idx] if s_idx < len(arr) else 0
-                vals.append(str(int(round(v))))
+                v = arr[s_idx] if s_idx < len(arr) else 0.0
+                vals.append(str(round(float(v), 3)))
             frames.append("[" + ",".join(vals) + "]")
         return "|".join(frames)
     except Exception:
@@ -352,11 +386,25 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
         or _report_date_str()
     )
 
+    def _get_phone(d: Dict) -> str:
+        return str(
+            d.get('phone')
+            or d.get('mobile_no')
+            or d.get('contact')
+            or ''
+        ).strip()
+
+    signup_phone = _get_phone(signup or {})
+    patient_phone = _get_phone(patient)
+    data_patient_phone = _get_phone(data_patient)
+    data_phone = _get_phone(data)
+
+    final_phone = signup_phone or patient_phone or data_patient_phone or data_phone
+
     return {
         "user_id": str(
             master_phone
-            or patient.get('phone')
-            or patient.get('mobile_no')
+            or final_phone
             or patient.get('serial_id')
             or patient.get('serial_number')
             or data_patient.get('serial_id')
@@ -366,11 +414,8 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
             or data.get('serial_number')
             or (signup or {}).get('serial_id')
             or (signup or {}).get('serial_number')
-            or (signup or {}).get('phone')
             or ''
         ).strip() or "0",
-        "master_phone": master_phone,
-        "login_identifier": str(master_phone or (signup or {}).get('username') or '').strip(),
         "report_id": report_id,
         "name": full or "Unknown",
         "age": _safe_int(
@@ -386,17 +431,7 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
             or (signup or {}).get('gender')
             or 'Unknown'
         ).strip(),
-        "mobile_no": str(
-            patient.get('phone')
-            or patient.get('mobile_no')
-            or data_patient.get('phone')
-            or data_patient.get('mobile_no')
-            or data.get('mobile_no')
-            or data.get('phone')
-            or (signup or {}).get('phone')
-            or (signup or {}).get('contact')
-            or ''
-        ).strip(),
+        "mobile_no": final_phone,
         "report_date": report_date,
     }
 
@@ -405,8 +440,8 @@ def _build_device_block(machine_serial: str) -> Dict:
     return {
         "device_name": DEVICE_NAME,
         "manufacturer": MANUFACTURER,
-        "app_version": APP_VERSION,
-        "report_version": REPORT_VERSION,
+        "software_version": SCHEMA_VERSION,
+        "report_version": SCHEMA_VERSION,
         "machine_serial": machine_serial,
     }
 
@@ -432,30 +467,20 @@ def _build_result_reading(data: Dict) -> Dict:
     qrs = _safe_int(data.get('QRS') or data.get('QRS_ms'))
     qt = _safe_int(data.get('QT') or data.get('QT_ms'))
     qtc = _safe_int(data.get('QTc') or data.get('QTc_ms'))
-    qtcf = _safe_int(data.get('QTc_Fridericia') or data.get('QTcF') or data.get('QTCF_ms'))
-    st = _safe_int(data.get('ST') or data.get('ST_ms'))
+    qtcf = _safe_int(data.get('QTc_Fridericia') or data.get('QTcF') or data.get('QTCF') or data.get('QTCF_ms'))
 
-    # Axis: must be int[3]
-    raw_axis = data.get('P_QRS_T_deg') or data.get('P_QRS_T') or []
-    if isinstance(raw_axis, list) and len(raw_axis) >= 3:
-        p_qrs_t = [_safe_int(raw_axis[0]), _safe_int(raw_axis[1]), _safe_int(raw_axis[2])]
+    # Get RV5, SV1, RV5+SV1 from data - check both single values and RV5_SV1_mV array, and lowercase keys
+    rv5_sv1_arr = data.get('RV5_SV1_mV', [])
+    if isinstance(rv5_sv1_arr, list) and len(rv5_sv1_arr) >=2:
+        rv5 = _safe_float(rv5_sv1_arr[0] if rv5_sv1_arr[0] is not None else (data.get('RV5_mV') or data.get('RV5') or data.get('rv5')))
+        sv1 = _safe_float(rv5_sv1_arr[1] if rv5_sv1_arr[1] is not None else (data.get('SV1_mV') or data.get('SV1') or data.get('sv1')))
     else:
-        p_axis = _safe_int(data.get('P_axis') or data.get('P_deg'))
-        qrs_axis = _safe_int(data.get('QRS_axis') or data.get('QRS_deg'))
-        t_axis = _safe_int(data.get('T_axis') or data.get('T_deg'))
-        p_qrs_t = [p_axis, qrs_axis, t_axis]
-
-    rv5 = _safe_float(data.get('RV5_mV') or data.get('RV5'))
-    sv1 = _safe_float(data.get('SV1_mV') or data.get('SV1'))
-    rv5_sv1 = _safe_float(data.get('RV5_plus_SV1_mV') or data.get('RV5_SV1'))
+        rv5 = _safe_float(data.get('RV5_mV') or data.get('RV5') or data.get('rv5'))
+        sv1 = _safe_float(data.get('SV1_mV') or data.get('SV1') or data.get('sv1'))
+    
+    rv5_sv1 = _safe_float(data.get('RV5_plus_SV1_mV') or data.get('RV5_SV1') or data.get('rv5_sv1'))
     if rv5_sv1 == 0.0 and (rv5 != 0.0 or sv1 != 0.0):
         rv5_sv1 = round(rv5 + abs(sv1), 4)
-
-    rv6 = _safe_float(data.get('RV6_mV') or data.get('RV6'))
-    sv2 = _safe_float(data.get('SV2_mV') or data.get('SV2'))
-    rv6_sv2 = _safe_float(data.get('RV6_plus_SV2_mV') or data.get('RV6_SV2'))
-    if rv6_sv2 == 0.0 and (rv6 != 0.0 or sv2 != 0.0):
-        rv6_sv2 = round(rv6 + abs(sv2), 4)
 
     return {
         "HR_bpm": hr,
@@ -465,25 +490,73 @@ def _build_result_reading(data: Dict) -> Dict:
         "QT_ms": qt,
         "QTc_ms": qtc,
         "QTCF_ms": qtcf,
-        "ST_ms": st,
-        "P_QRS_T_deg": p_qrs_t,
         "RV5_mV": rv5,
         "SV1_mV": sv1,
         "RV5_plus_SV1_mV": rv5_sv1,
-        "RV6_mV": rv6,
-        "SV2_mV": sv2,
-        "RV6_plus_SV2_mV": rv6_sv2,
     }
 
 
 def _build_hrv_result_reading(data: Dict) -> Dict:
-    """HRV-specific result_reading (HR only + HRV metrics)."""
+    """HRV-specific result_reading."""
     hr = _safe_int(data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR'))
+    rr = _safe_int(data.get('RR_ms') or data.get('RR'))
+    pr = _safe_int(data.get('PR') or data.get('PR_ms'))
+    qrs = _safe_int(data.get('QRS') or data.get('QRS_ms'))
+    qt = _safe_int(data.get('QT') or data.get('QT_ms'))
+    qtc = _safe_int(data.get('QTc') or data.get('QTc_ms'))
+    qtcf = _safe_int(data.get('QTc_Fridericia') or data.get('QTcF') or data.get('QTCF') or data.get('QTCF_ms'))
+    
+    sdnn = _safe_float(data.get('SDNN_ms') or data.get('SDNN') or data.get('HRV_SDNN_ms'))
+    rmssd = _safe_float(data.get('RMSSD_ms') or data.get('RMSSD') or data.get('HRV_RMSSD_ms'))
+    nn50 = _safe_int(data.get('NN50') or data.get('HRV_NN50') or data.get('nn50_count'))
+    pnn50 = _safe_float(data.get('pNN50_percent') or data.get('pNN50') or data.get('HRV_pNN50'))
+    sdann = _safe_float(data.get('SDANN_ms') or data.get('SDANN') or data.get('HRV_SDANN_ms'))
+    lf_power = _safe_float(data.get('LF_ms2') or data.get('LF') or data.get('HRV_LF_power'))
+    hf_power = _safe_float(data.get('HF_ms2') or data.get('HF') or data.get('HRV_HF_power'))
+    lf_hf_ratio = _safe_float(data.get('LF_HF_ratio') or data.get('LF/HF') or data.get('HRV_LF_HF_ratio'))
+    original_hr = _safe_int(data.get('Original_HR_bpm') or data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR'))
+    
     return {
         "HR_bpm": hr,
-        "SDNN_ms": _safe_float(data.get('SDNN_ms') or data.get('SDNN')),
-        "RMSSD_ms": _safe_float(data.get('RMSSD_ms') or data.get('RMSSD')),
-        "pNN50_percent": _safe_float(data.get('pNN50_percent') or data.get('pNN50')),
+        "RR_ms": rr,
+        "PR_ms": pr,
+        "QRS_ms": qrs,
+        "QT_ms": qt,
+        "QTc_ms": qtc,
+        "QTCF_ms": qtcf,
+        "HRV_SDNN_ms": round(sdnn, 2) if sdnn is not None else 0.0,
+        "HRV_RMSSD_ms": round(rmssd, 2) if rmssd is not None else 0.0,
+        "HRV_NN50": nn50,
+        "HRV_pNN50": round(pnn50, 2) if pnn50 is not None else 0.0,
+        "HRV_SDANN_ms": round(sdann, 2) if sdann is not None else 0.0,
+        "HRV_LF_power": round(lf_power, 2) if lf_power is not None else 0.0,
+        "HRV_HF_power": round(hf_power, 2) if hf_power is not None else 0.0,
+        "HRV_LF_HF_ratio": round(lf_hf_ratio, 2) if lf_hf_ratio is not None else 0.0,
+    }
+
+def _build_hyperkalemia_result_reading(data: Dict) -> Dict:
+    """Hyperkalemia-specific result_reading."""
+    hr = _safe_int(data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR') or data.get('heart_rate', 0))
+    rr = _safe_int(data.get('RR_ms') or data.get('RR'))
+    
+    if (rr == 0 or rr is None) and hr > 0:
+        rr = int(60000 / hr)
+        
+    pr = _safe_int(data.get('PR') or data.get('PR_ms') or data.get('pr_interval_ms', 0))
+    qrs = _safe_int(data.get('QRS') or data.get('QRS_ms') or data.get('qrs_duration_ms', 0))
+    qt = _safe_int(data.get('QT') or data.get('QT_ms') or data.get('qt_interval_ms', 0))
+    qtc = _safe_int(data.get('QTc') or data.get('QTc_ms') or data.get('qtc_ms', 0))
+    qtcf = _safe_int(data.get('QTc_Fridericia') or data.get('QTcF') or data.get('QTCF') or data.get('QTCF_ms'))
+    est_k = data.get('Estimated_K') or data.get('estimated_k') or data.get('Estimated K') or 0.0
+    return {
+        "HR_bpm": hr,
+        "RR_ms": rr,
+        "PR_ms": pr,
+        "QRS_ms": qrs,
+        "QT_ms": qt,
+        "QTc_ms": qtc,
+        "QTCF_ms": qtcf,
+        "Estimated K": est_k,
     }
 
 
@@ -616,8 +689,6 @@ def _pdf_upload_metadata_from_payload(payload: Dict) -> Dict[str, Any]:
         "patient_age": patient.get("age"),
         "patient_gender": patient.get("gender"),
         "patient_phone": patient.get("mobile_no"),
-        "master_phone": patient.get("master_phone"),
-        "login_identifier": patient.get("login_identifier"),
         "report_date": patient.get("report_date"),
         "machine_serial": device.get("machine_serial"),
         "conclusion": findings.get("conclusion", []),
@@ -640,13 +711,10 @@ def _backend_report_json_from_payload(payload: Dict) -> Dict[str, Any]:
         "report_type": payload.get("report_type"),
         "report_format": payload.get("report_format"),
         "source_report_file": payload.get("source_report_file"),
-        "master_phone": patient.get("master_phone"),
-        "login_identifier": patient.get("login_identifier"),
         "patient_details": patient,
         "device_details": payload.get("device_details", {}) or {},
         "result_reading": payload.get("result_reading", {}) or {},
         "hrv_result_reading": payload.get("hrv_result_reading", {}) or {},
-        "rr_intervals": payload.get("rr_intervals", {}) or {},
         "clinical_findings": payload.get("clinical_findings", {}) or {},
     }
 
@@ -663,6 +731,7 @@ def build_12lead_payload(
     signup_details: Optional[Dict] = None,
     ecg_test_page: Any = None,
     ecg_data_file: Optional[str] = None,
+    raw_leads: Optional[Dict[str, List[float]]] = None,
     report_format: str = "12_1",
     source_report_file: str = "",
     conclusions: Optional[List[str]] = None,
@@ -679,6 +748,7 @@ def build_12lead_payload(
     signup_details    : raw user record from users.json (optional)
     ecg_test_page     : live ECGTestPage instance (optional, for lead data)
     ecg_data_file     : path to saved ECG JSON file (optional)
+    raw_leads         : dict of lead_name -> list of floats (optional)
     report_format     : "12_1" | "4_3" | "6_2"
     source_report_file: path to the generated PDF
     conclusions       : list of clinical conclusion strings
@@ -690,15 +760,26 @@ def build_12lead_payload(
     """
     signup = _load_signup_details(signup_details, patient, data)
     machine_serial = _machine_serial(patient, data, signup)
-    rid = _report_id(patient.get('serial_id') or machine_serial)
+    rid = _report_id_from_source(source_report_file, patient.get('serial_id') or machine_serial)
 
     # Lead data
     leads: Dict[str, List[int]] = {}
-    if ecg_data_file:
+    if raw_leads:
+        # Use FULL raw leads without trimming
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in raw_leads.items()}
+    elif ecg_data_file:
         leads = _leads_from_file(ecg_data_file)
-    if not leads and ecg_test_page is not None:
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+    elif ecg_test_page is not None:
         leads = _leads_from_ecg_test_page(ecg_test_page)
-    leads = _ensure_all_leads(leads)
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+    else:
+        # Only ensure all leads if we didn't get raw_leads
+        leads = _ensure_all_leads(leads)
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
 
     ecg_settings = _settings_details(settings_manager)
 
@@ -714,8 +795,6 @@ def build_12lead_payload(
         "data_details": _build_data_details(),
         "ecg_settings": ecg_settings,
         "ecg_data": {
-            "device_data_encoding": "pipe_separated_frames",
-            "device_data": _device_data_string(leads),
             "leads_data": leads,
         },
         "result_reading": _build_result_reading(data),
@@ -733,10 +812,12 @@ def build_hrv_payload(
     signup_details: Optional[Dict] = None,
     ecg_test_page: Any = None,
     ecg_data_file: Optional[str] = None,
+    raw_leads: Optional[Dict[str, List[float]]] = None,
     source_report_file: str = "",
     conclusions: Optional[List[str]] = None,
     arrhythmia: Optional[List[str]] = None,
     hrv_metrics: Optional[Dict] = None,
+    selected_lead: str = "II",
 ) -> Dict:
     """
     Build a schema-compliant payload for an HRV report.
@@ -748,16 +829,29 @@ def build_hrv_payload(
     """
     signup = _load_signup_details(signup_details, patient, data)
     machine_serial = _machine_serial(patient, data, signup)
-    rid = _report_id(patient.get('serial_id') or machine_serial)
+    rid = _report_id_from_source(source_report_file, patient.get('serial_id') or machine_serial)
     merged = {**data, **(hrv_metrics or {})}
 
     # Lead data (HRV captures 5 min of Lead II but we include all 12 if available)
     leads: Dict[str, List[int]] = {}
-    if ecg_data_file:
+    if raw_leads:
+        # Use FULL raw leads without trimming
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in raw_leads.items()}
+    elif ecg_data_file:
         leads = _leads_from_file(ecg_data_file)
-    if not leads and ecg_test_page is not None:
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+    elif ecg_test_page is not None:
         leads = _leads_from_ecg_test_page(ecg_test_page)
-    leads = _ensure_all_leads(leads)
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+    else:
+        # Only ensure all leads if we didn't get raw_leads
+        leads = _ensure_all_leads(leads)
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+
+    leads_for_json = {k: v for k, v in leads.items() if k == selected_lead}
 
     ecg_settings = _settings_details(settings_manager)
 
@@ -773,13 +867,9 @@ def build_hrv_payload(
         "data_details": _build_data_details(),
         "ecg_settings": ecg_settings,
         "ecg_data": {
-            "device_data_encoding": "pipe_separated_frames",
-            "device_data": _device_data_string(leads),
-            "leads_data": leads,
+            "leads_data": leads_for_json,
         },
-        "result_reading": _build_result_reading(merged),
-        "hrv_result_reading": _build_hrv_result_reading(merged),
-        "rr_intervals": _build_rr_intervals_block(merged),
+        "result_reading": _build_hrv_result_reading(merged),
         "clinical_findings": _build_clinical_findings(
             "hrv", merged, conclusions=conclusions, arrhythmia=arrhythmia
         ),
@@ -794,6 +884,7 @@ def build_hyperkalemia_payload(
     signup_details: Optional[Dict] = None,
     ecg_test_page: Any = None,
     ecg_data_file: Optional[str] = None,
+    raw_leads: Optional[Dict[str, List[float]]] = None,
     source_report_file: str = "",
     conclusions: Optional[List[str]] = None,
     arrhythmia: Optional[List[str]] = None,
@@ -807,15 +898,33 @@ def build_hyperkalemia_payload(
     """
     signup = _load_signup_details(signup_details, patient, data)
     machine_serial = _machine_serial(patient, data, signup)
-    rid = _report_id(patient.get('serial_id') or machine_serial)
+    rid = _report_id_from_source(source_report_file, patient.get('serial_id') or machine_serial)
 
-    # Lead data
+    # Lead data - load FULL raw data without trimming for hyperkalemia
     leads: Dict[str, List[int]] = {}
-    if ecg_data_file:
-        leads = _leads_from_file(ecg_data_file)
+    if raw_leads:
+        # Use provided raw leads directly
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in raw_leads.items()}
+    elif ecg_data_file:
+        try:
+            with open(ecg_data_file, 'r', encoding='utf-8') as f:
+                saved = json.load(f)
+            raw_leads_from_file = saved.get('leads') if isinstance(saved, dict) else {}
+            if isinstance(raw_leads_from_file, dict):
+                leads = {k: [int(round(float(v))) for v in arr] for k, arr in raw_leads_from_file.items()}
+        except Exception as e:
+            print(f"[ECGPayload] Could not load full raw ECG data: {e}")
+            # Fall back to trimmed data if full load fails
+            leads = _leads_from_file(ecg_data_file)
+            # Convert to int
+            leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
     if not leads and ecg_test_page is not None:
         leads = _leads_from_ecg_test_page(ecg_test_page)
-    leads = _ensure_all_leads(leads)
+        # Convert to int
+        leads = {k: [int(round(float(v))) for v in arr] for k, arr in leads.items()}
+
+    hk_leads = {"II", "V1", "V2", "V3", "V4", "V5", "V6"}
+    leads_for_json = {k: v for k, v in leads.items() if k in hk_leads}
 
     ecg_settings = _settings_details(settings_manager)
 
@@ -831,11 +940,9 @@ def build_hyperkalemia_payload(
         "data_details": _build_data_details(),
         "ecg_settings": ecg_settings,
         "ecg_data": {
-            "device_data_encoding": "pipe_separated_frames",
-            "device_data": _device_data_string(leads),
-            "leads_data": leads,
+            "leads_data": leads_for_json,
         },
-        "result_reading": _build_result_reading(data),
+        "result_reading": _build_hyperkalemia_result_reading(data),
         "clinical_findings": _build_clinical_findings(
             "hyperkalemia",
             data,
@@ -1030,6 +1137,7 @@ def dispatch_12lead_report(
     signup_details: Optional[Dict] = None,
     ecg_test_page: Any = None,
     ecg_data_file: Optional[str] = None,
+    raw_leads: Optional[Dict[str, List[float]]] = None,
     report_format: str = "12_1",
     conclusions: Optional[List[str]] = None,
     arrhythmia: Optional[List[str]] = None,
@@ -1042,7 +1150,8 @@ def dispatch_12lead_report(
     payload = build_12lead_payload(
         data=data, patient=patient, settings_manager=settings_manager,
         signup_details=signup_details, ecg_test_page=ecg_test_page,
-        ecg_data_file=ecg_data_file, report_format=report_format,
+        ecg_data_file=ecg_data_file, raw_leads=raw_leads,
+        report_format=report_format,
         source_report_file=pdf_path, conclusions=conclusions, arrhythmia=arrhythmia,
     )
     fpath = save_payload_locally(payload, reports_dir) if save_local else None
@@ -1061,6 +1170,7 @@ def dispatch_hrv_report(
     signup_details: Optional[Dict] = None,
     ecg_test_page: Any = None,
     ecg_data_file: Optional[str] = None,
+    raw_leads: Optional[Dict[str, List[float]]] = None,
     conclusions: Optional[List[str]] = None,
     arrhythmia: Optional[List[str]] = None,
     hrv_metrics: Optional[Dict] = None,
@@ -1073,7 +1183,8 @@ def dispatch_hrv_report(
     payload = build_hrv_payload(
         data=data, patient=patient, settings_manager=settings_manager,
         signup_details=signup_details, ecg_test_page=ecg_test_page,
-        ecg_data_file=ecg_data_file, source_report_file=pdf_path,
+        ecg_data_file=ecg_data_file, raw_leads=raw_leads,
+        source_report_file=pdf_path,
         conclusions=conclusions, arrhythmia=arrhythmia, hrv_metrics=hrv_metrics,
     )
     fpath = save_payload_locally(payload, reports_dir) if save_local else None

@@ -91,7 +91,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
     # Generate filename with timestamp
     if output_file is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(ecg_data_dir, f'ecg_data_{timestamp}.json')
+        output_file = os.path.join(ecg_data_dir, f'hrv_ecg_data_{timestamp}.json')
     
     # Prepare data for saving
     lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
@@ -1112,7 +1112,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
         print(" Saving ECG data to file (required for calculation-based beats)...")
-        saved_data_file_path = save_ecg_data_to_file(ecg_test_page)
+        # Use companion JSON name derived from PDF filename
+        json_filename = os.path.splitext(filename)[0] + ".json"
+        saved_data_file_path = save_ecg_data_to_file(ecg_test_page, output_file=json_filename)
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
@@ -2798,7 +2800,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             "RR_ms": RR,
             "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-            "QTCF": None,  # Removed hardcoded constant - must be calculated from QT and RR
+            "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val is not None and qtcf_val > 0 else None,
             "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
         }
 
@@ -2914,6 +2916,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "master_phone": str((patient or {}).get("phone") or (patient or {}).get("mobile_no") or backend_username or ""),
+                "report_type": "hrv_test"
             }
             
             # Upload the complete package
@@ -4829,6 +4832,26 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         if 'sdann' not in locals():
             sdann = None
         
+        # Calculate QTCF value for HRV report
+        qtcf_val = 0
+        # First try to get pre-calculated QTc_Fridericia from data
+        if data and 'QTc_Fridericia' in data:
+            qtcf_val = data.get('QTc_Fridericia', 0)
+        else:
+            # Calculate it if not available
+            qt_val = data.get("QT", 0)
+            hrv_hr_bpm = hrv_specific_bpm if 'hrv_specific_bpm' in locals() else 0
+            hrv_rr_ms = int(60000 / hrv_hr_bpm) if hrv_hr_bpm > 0 else 0
+            if 'rr_avg_for_report' in locals():
+                hrv_rr_ms = rr_avg_for_report
+            
+            try:
+                rr_interval_s = float(hrv_rr_ms) / 1000.0 if hrv_rr_ms > 0 else 0
+                if rr_interval_s > 0 and qt_val > 0:
+                    qtcf_val = qt_val / (np.cbrt(rr_interval_s))
+            except Exception:
+                qtcf_val = 0
+        
         # Save HRV-specific metrics in a separate hrv_metric.json file
         # HR_bpm will be the HRV-specific average (5 minutes)
         hrv_hr_bpm = hrv_specific_bpm if 'hrv_specific_bpm' in locals() else 0
@@ -4856,6 +4879,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             "HRV_LF_power": float(lf_power) if 'lf_power' in locals() else 0,
             "HRV_HF_power": float(hf_power) if 'hf_power' in locals() else 0,
             "HRV_LF_HF_ratio": float(lf_hf_ratio) if 'lf_hf_ratio' in locals() else 0,
+            "QTCF_ms": round(qtcf_val, 1) if qtcf_val > 0 else None,
             # Retain the current session header HR for reference/debugging.
             "Original_HR_bpm": session_metrics.get("HR", 0),
         }
@@ -4893,7 +4917,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     print(f"   📄 Page 1: 5 One-Minute Lead II ECG Graphs (Landscape)")
     print(f"   📄 Page 2: HRV Analysis - Time & Frequency Domain (Landscape)")
     
-    return filename
+    return filename, metrics_entry
 
 
 # ==================== END OF HRV ECG REPORT GENERATION ====================

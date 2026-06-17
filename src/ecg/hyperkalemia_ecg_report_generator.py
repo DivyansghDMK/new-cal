@@ -105,7 +105,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
     # Generate filename with timestamp
     if output_file is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(ecg_data_dir, f'ecg_data_{timestamp}.json')
+        output_file = os.path.join(ecg_data_dir, f'hyperkalemia_ecg_data_{timestamp}.json')
     
     # Prepare data for saving
     lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
@@ -994,7 +994,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
         print(" Saving ECG data to file (required for calculation-based beats)...")
-        saved_data_file_path = save_ecg_data_to_file(ecg_test_page)
+        # Use companion JSON name derived from PDF filename
+        json_filename = os.path.splitext(filename)[0] + ".json"
+        saved_data_file_path = save_ecg_data_to_file(ecg_test_page, output_file=json_filename)
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
@@ -2425,12 +2427,12 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     t_mm = extract_axis_value(t_axis_deg)
 
     # SECOND COLUMN - P/QRS/T Axis (SAME LINE AS HR - right column)
-    p_qrs_label = String(
-        240, 740,
-        f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",
-        fontSize=10, fontName="Helvetica", fillColor=colors.black
-    )
-    master_drawing.add(p_qrs_label)
+    # p_qrs_label = String(
+    #     240, 740,
+    #     f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",
+    #     fontSize=10, fontName="Helvetica", fillColor=colors.black
+    # )
+    # master_drawing.add(p_qrs_label)
 
     # SECOND COLUMN - RV5/SV1 (SAME LINE AS PR - right column)
     rv5_mv = 0.0
@@ -2946,6 +2948,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "master_phone": str((patient or {}).get("phone") or (patient or {}).get("mobile_no") or backend_username or ""),
+                "report_type": "hyperkalemia_test"
             }
             
             # Upload the complete package
@@ -2972,7 +2975,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
 
 # ==================== HYPERKALEMIA REPORT WRAPPER ====================
-def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampling_rate=500.0, ecg_data_file=None):
+def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampling_rate=500.0, ecg_data_file=None, raw_leads=None):
     """
     Reuse the main ECG report layout for the Hyperkalemia flow.
     Expects:
@@ -3057,14 +3060,15 @@ def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampl
         patient=patient,
         settings_manager=settings_manager,
         ecg_data_file=ecg_data_file,
-        ecg_test_page=ecg_page
+        ecg_test_page=ecg_page,
+        raw_leads=raw_leads
     )
 
 
 # ==================== Hyperkalemia ECG REPORT GENERATION ====================
 # COMPLETE ECG REPORT FORMAT - Same as generate_ecg_report() but with 5 one-minute Lead II graphs
 
-def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lead_ii_data=None, data=None, patient=None, settings_manager=None, ecg_data_file=None, ecg_test_page=None):
+def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lead_ii_data=None, data=None, patient=None, settings_manager=None, ecg_data_file=None, ecg_test_page=None, raw_leads=None):
     """
     Generate Hyperkalemia ECG report PDF with EXACT SAME format as main 12-lead ECG report
     Only difference: Page 2 shows 5 one-minute Lead II graphs in LANDSCAPE mode instead of 12 leads
@@ -3745,11 +3749,22 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         return signal
 
     saved_lead_map = {}
-    if saved_ecg_data and isinstance(saved_ecg_data, dict):
-        for lead_name, lead_values in (saved_ecg_data.get("leads") or {}).items():
+    
+    # First priority: use raw_leads (if provided, they have all V1-V6 and II data)
+    if raw_leads and isinstance(raw_leads, dict):
+        for lead_name, lead_values in raw_leads.items():
             normalized = _normalize_saved_signal(lead_values)
             if normalized is not None:
                 saved_lead_map[lead_name] = normalized
+        print(f" Using raw_leads provided: {list(saved_lead_map.keys())}")
+    
+    # Fallback to saved_ecg_data (file) if raw_leads not provided or incomplete
+    if saved_ecg_data and isinstance(saved_ecg_data, dict):
+        for lead_name, lead_values in (saved_ecg_data.get("leads") or {}).items():
+            if lead_name not in saved_lead_map:  # Don't overwrite raw_leads data
+                normalized = _normalize_saved_signal(lead_values)
+                if normalized is not None:
+                    saved_lead_map[lead_name] = normalized
 
     if "II" not in saved_lead_map and lead_ii_data:
         saved_lead_map["II"] = np.array([sample.get("value", 0.0) for sample in lead_ii_data], dtype=float)
@@ -3827,7 +3842,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             master_drawing.add(
                 String(
                     x_pos + (3.5 * mm_unit),
-                    y_pos + strip_height + 4,
+                    y_pos + strip_height + 4 + (3 * mm_unit),
                     lead_name,
                     fontSize=10,
                     fontName=FONT_TYPE_BOLD,
@@ -3882,7 +3897,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     master_drawing.add(
         String(
             3.5 * mm_unit,
-            rhythm_y + strip_height + 4,
+            rhythm_y + strip_height + 4 + (3 * mm_unit),
             "Lead II",
             fontSize=10,
             fontName=FONT_TYPE_BOLD,

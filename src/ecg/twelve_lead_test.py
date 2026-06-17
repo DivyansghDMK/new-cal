@@ -1090,47 +1090,44 @@ class ECGTestPage(QWidget):
         recording_layout.setSpacing(4)  # Reduced spacing
 
         # Demo toggle button - Custom Switch Style
-        self.demo_toggle = SwitchButton()
-        self.demo_toggle.setChecked(False)
-        self.demo_toggle.setMinimumHeight(40)  # Same as other buttons
-        # self.demo_toggle.setMaximumHeight(40)  # Same as other buttons
-        self.demo_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # self.demo_toggle = SwitchButton()
+        # self.demo_toggle.setChecked(False)
+        # self.demo_toggle.setMinimumHeight(40)  # Same as other buttons
+        # # self.demo_toggle.setMaximumHeight(40)  # Same as other buttons
+        # self.demo_toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
         # Set demo button style (toggle-style like recording button)
-        self.demo_toggle.setStyleSheet("""
-            QPushButton {
-                background: #ff4d4d; /* Red for OFF */
-                color: white;
-                border: 2px solid #e60000;
-                border-radius: 20px; /* Rounded pill shape like the image */
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: bold;
-                text-align: center;
-                margin: 4px 0;
-            }
-            QPushButton:hover {
-                background: #ff6666;
-                border: 2px solid #ff1a1a;
-            }
-            QPushButton:checked {
-                background: #2ecc71; /* Green for ON */
-                border: 2px solid #27ae60;
-                color: white;
-            }
-            QPushButton:checked:hover {
-                background: #40e080;
-                border: 2px solid #2ecc71;
-            }
-        """)
+        # self.demo_toggle.setStyleSheet("""
+        #     QPushButton {
+        #         background: #ff4d4d; /* Red for OFF */
+        #         color: white;
+        #         border: 2px solid #e60000;
+        #         border-radius: 20px; /* Rounded pill shape like the image */
+        #         padding: 8px 16px;
+        #         font-size: 13px;
+        #         font-weight: bold;
+        #         text-align: center;
+        #         margin: 4px 0;
+        #     }
+        #     QPushButton:hover {
+        #         background: #ff6666;
+        #         border: 2px solid #ff1a1a;
+        #     }
+        #     QPushButton:checked {
+        #         background: #2ecc71; /* Green for ON */
+        #         border: 2px solid #27ae60;
+        #         color: white;
+        #     }
+        #     QPushButton:checked:hover {
+        #         background: #40e080;
+        #         border: 2px solid #2ecc71;
+        #     }
+        # """)
         
         # Connect demo toggle to demo manager
-        self.demo_toggle.toggled.connect(self.on_demo_toggle_changed)
+        # self.demo_toggle.toggled.connect(self.on_demo_toggle_changed)
         
-        recording_layout.addWidget(self.demo_toggle)
-        # Hidden per request — demo mode is disabled for end users
-        self.demo_toggle.setVisible(False)
-        self.demo_toggle.setEnabled(False)
+        # recording_layout.addWidget(self.demo_toggle)
 
         # Capture Screen button - Make it compact
         self.capture_screen_btn = QPushButton("Capture Screen")
@@ -6485,7 +6482,7 @@ class ECGTestPage(QWidget):
             try:
                 baud_int = int(baud)
             except (ValueError, TypeError):
-                self.show_connection_warning(f"Invalid baud rate: {baud}. Please set a valid baud rate in System Setup.")
+                self.show_connection_warning(f"Invalid baud rate: {baud}.")
                 return
             
             if self.serial_reader:
@@ -7568,6 +7565,33 @@ class ECGTestPage(QWidget):
                             _sh.copyfile(filename, str(dp))
                     except Exception: pass
 
+                    # ── Create JSON twin (in thread) ───────────────────────────
+                    try:
+                        twin_path = _os.path.splitext(filename)[0] + '.json'
+                        from utils.ecg_payload_builder import build_12lead_payload
+                        
+                        # Map snap_raw to lead names for raw samples
+                        LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+                        raw_leads_map = {}
+                        for i, name in enumerate(LEAD_NAMES):
+                            if i < len(snap_raw):
+                                # Convert numpy arrays to lists for JSON serialization
+                                raw_leads_map[name] = snap_raw[i].tolist() if isinstance(snap_raw[i], np.ndarray) else list(snap_raw[i])
+                        
+                        twin_data = build_12lead_payload(
+                            data=frozen,
+                            patient=patient,
+                            signup_details=getattr(getattr(self, "dashboard_instance", None), "user_details", {}),
+                            settings_manager=None,
+                            raw_leads=raw_leads_map,
+                            report_format=fmt,
+                            source_report_file=filename
+                        )
+                        with open(twin_path, 'w') as jf:
+                            _js.dump(twin_data, jf, indent=2)
+                    except Exception as je:
+                        print(f"Error creating JSON twin: {je}")
+
                     # Update index.json (Recent Reports)
                     try:
                         idx_path = _os.path.join(rpt_dir, 'index.json')
@@ -7789,7 +7813,7 @@ class ECGTestPage(QWidget):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Connection Required")
-        msg.setText("❤️ Please configure serial port and baud rate in System Setup.\n\nStay healthy!" + ("\n\n" + extra_msg if extra_msg else ""))
+        msg.setText(extra_msg if extra_msg else "")
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
 
