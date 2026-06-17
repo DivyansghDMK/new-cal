@@ -167,7 +167,7 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     master_drawing.add(String(col3_x, y_start - y_step, f"QTcF: {qtcf_display}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(col3_x, y_start - 2*y_step, f"RV5/SV1: {rv5_text}/{sv1_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(col3_x, y_start - 3*y_step, f"RV5+SV1: {rv5_sv1_sum_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(col3_x, y_start - 4*y_step, f"P/QRS/T: {p_qrs_t_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(col3_x, y_start - 4*y_step, f"P/QRS/T: {p_qrs_t_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
 
     # --- COLUMN 4 ---
     master_drawing.add(String(col4_x, y_start, org_name, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
@@ -2163,7 +2163,9 @@ def generate_ecg_report(
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
         print(" Saving ECG data to file (required for calculation-based beats)...")
-        saved_data_file_path = save_ecg_data_to_file(ecg_test_page)
+        # Use companion JSON name derived from PDF filename
+        json_filename = os.path.splitext(filename)[0] + ".json"
+        saved_data_file_path = save_ecg_data_to_file(ecg_test_page, output_file=json_filename)
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
@@ -4388,6 +4390,7 @@ def generate_ecg_report(
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "master_phone": master_phone,
+                "report_type": "12_lead_ecg"
             }
             
             # Upload the complete report package
@@ -4403,7 +4406,18 @@ def generate_ecg_report(
             if result.get('status') == 'success':
                 print(f"✓ Report package uploaded successfully to {cloud_uploader.cloud_service}")
             else:
-                print(f"  Cloud upload failed: {result.get('message', 'Unknown error')}")
+                print(f"  Cloud uploader fallback: attempting direct report file uploads...")
+                # If package upload failed or was skipped, try uploading files directly
+                cloud_uploader.upload_report(filename, metadata=report_metadata)
+                if saved_data_file_path and os.path.exists(saved_data_file_path):
+                    cloud_uploader.upload_report(saved_data_file_path, metadata=report_metadata)
+            
+            # ALWAYS ensure the companion JSON is uploaded with the same name as the PDF
+            # for easy identification in the S3 File Browser.
+            if saved_data_file_path and os.path.exists(saved_data_file_path):
+                # Only upload if not already handled by the package uploader (to avoid double work, 
+                # although upload_report handles duplicates anyway)
+                cloud_uploader.upload_report(saved_data_file_path, metadata=report_metadata)
         else:
             print("  Cloud upload not configured (see cloud_config_template.txt)")
             
@@ -4411,6 +4425,8 @@ def generate_ecg_report(
         print("  Cloud uploader not available")
     except Exception as e:
         print(f"  Cloud upload error: {e}")
+    
+    return filename, metrics_entry
 
 
 # REMOVE ENTIRE create_sample_ecg_images function (lines ~1222-1257)

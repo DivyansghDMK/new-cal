@@ -59,6 +59,7 @@ from ecg.ecg_filters import (
 from ecg.utils.helpers import get_display_gain, build_raster_sweep_frame
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
+from dashboard.dashboard import StyledMessageBox
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
 try:
@@ -677,8 +678,17 @@ class HRVTestWindow(QWidget):
             if self.ecg_calculator:
                 if hasattr(self.ecg_calculator, 'smoothing_buffers'):
                     self.ecg_calculator.smoothing_buffers = {}
-                if not hasattr(self.ecg_calculator, 'data') or len(self.ecg_calculator.data) < 12:
-                    self.ecg_calculator.data = [np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32) for _ in range(12)]
+                # ALWAYS reset data buffer to avoid step function from previous captures
+                self.ecg_calculator.data = [np.full(HISTORY_LENGTH, 2048.0, dtype=np.float32) for _ in range(12)]
+                
+                # Reset sampler to avoid stale timestamps causing bad rate calculations
+                if hasattr(self.ecg_calculator, 'sampler') and self.ecg_calculator.sampler:
+                    try:
+                        from ecg.utils.helpers import SamplingRateCalculator
+                        self.ecg_calculator.sampler = SamplingRateCalculator()
+                        self.ecg_calculator.sampler.sampling_rate = self.sampling_rate
+                    except Exception:
+                        pass
             
             # Update UI
             self.start_btn.setEnabled(False)
@@ -727,12 +737,14 @@ class HRVTestWindow(QWidget):
             self.metrics_timer.timeout.connect(self.update_metrics)
             self.metrics_timer.start(500 if is_low_spec_mode() else 200)
             
-            QMessageBox.information(self, "Capture Started",
-                                  f"{self.selected_lead} capture started. It will automatically stop after {int(self.duration_minutes)} {self._minutes_word()}.")
+            StyledMessageBox.show_message(self, "Capture Started",
+                                  f"{self.selected_lead} capture started. It will automatically stop after {int(self.duration_minutes)} {self._minutes_word()}.",
+                                  is_critical=False)
             
         except Exception as e:
-            QMessageBox.critical(self, "Error",
-                               f"Failed to start capture: {str(e)}")
+            StyledMessageBox.show_message(self, "Error",
+                               f"Failed to start capture: {str(e)}",
+                               is_critical=True)
             self.crash_logger.log_error(
                 message=f"HRV test capture start error: {e}",
                 exception=e,
@@ -994,40 +1006,41 @@ class HRVTestWindow(QWidget):
                     except Exception as e:
                         print(f" Error updating calculator buffer: {e}")
 
-                if lead_value is not None:
-                    lead_value = float(lead_value)
-                    self.active_samples = min(len(self.data), self.active_samples + 1)
-                    
-                    # 2. DISPLAY DATA (Use RAW data for display as requested)
-                    # User requested raw plot centered at 2048
-                    # We skip smoothing for display to show raw signal
-                    
-                    # Define smoothed_value as raw value (since we are skipping smoothing)
-                    # This ensures subsequent code (report storage) works and matches display
-                    smoothed_value = lead_value
-                    
-                    # Update local circular buffer for plot
-                    self.data = np.roll(self.data, -1)
-                    self.data[-1] = lead_value
-                    n_new += 1
-                    
-                    if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler"):
-                        try:
-                            sr = self.ecg_calculator.sampler.add_sample()
-                        except Exception:
-                            sr = 0.0
-                        if sr and sr > 0:
-                            safe_sr = float(sr)
-                            if safe_sr < 50.0 or safe_sr > 1000.0:
-                                safe_sr = self.sampling_rate
-                            self.sampling_rate = safe_sr
-                    
-                    # Store data point with timestamp for final report generation
-                    elapsed = time.time() - self.start_time
-                    self.captured_data.append({
-                        'time': elapsed,
-                        'value': smoothed_value  # Reports use smoothed values for clean graphs
-                    })
+                if lead_value is None:
+                    lead_value = 2048.0
+                
+                lead_value = float(lead_value)
+                self.active_samples = min(len(self.data), self.active_samples + 1)
+                # 2. DISPLAY DATA (Use RAW data for display as requested)
+                # User requested raw plot centered at 2048
+                # We skip smoothing for display to show raw signal
+                
+                # Define smoothed_value as raw value (since we are skipping smoothing)
+                # This ensures subsequent code (report storage) works and matches display
+                smoothed_value = lead_value
+                
+                # Update local circular buffer for plot
+                self.data = np.roll(self.data, -1)
+                self.data[-1] = lead_value
+                n_new += 1
+                
+                if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler"):
+                    try:
+                        sr = self.ecg_calculator.sampler.add_sample()
+                    except Exception:
+                        sr = 0.0
+                    if sr and sr > 0:
+                        safe_sr = float(sr)
+                        if safe_sr < 50.0 or safe_sr > 1000.0:
+                            safe_sr = self.sampling_rate
+                        self.sampling_rate = safe_sr
+                
+                # Store data point with timestamp for final report generation
+                elapsed = time.time() - self.start_time
+                self.captured_data.append({
+                    'time': elapsed,
+                    'value': smoothed_value  # Reports use smoothed values for clean graphs
+                })
                 
             if not self.is_capturing:
                 self._plot_update_in_progress = False
@@ -1480,8 +1493,37 @@ class HRVTestWindow(QWidget):
                 except Exception as exc:
                     self.failed.emit(str(exc))
 
-        def _on_success(fname):
+        def _on_success(fname, metrics_entry=None):
             print(f"✅ HRV ECG report saved successfully: {fname}")
+            
+             # ── Create JSON twin for S3 sync ──────────────────────────────
+            try:
+                import json
+                twin_path = os.path.splitext(fname)[0] + '.json'
+                from utils.ecg_payload_builder import build_hrv_payload
+                
+                # Extract raw values from captured data for the selected lead
+                raw_values = [d['value'] for d in _captured_snap]
+                raw_leads_map = {getattr(self, "selected_lead", "II"): raw_values}
+                
+                # Merge display metrics with the detailed HRV metrics
+                merged_data = {**_display_metrics_snap, **(metrics_entry or {})}
+                
+                twin_data = build_hrv_payload(
+                    data=merged_data,
+                    patient=_patient_snap,
+                    signup_details=getattr(getattr(self, "dashboard_instance", None), "user_details", {}),
+                    settings_manager=getattr(self, "settings_manager", None),
+                    raw_leads=raw_leads_map,
+                    source_report_file=fname,
+                    selected_lead=getattr(self, "selected_lead", "II"),
+                    hrv_metrics=metrics_entry
+                )
+                with open(twin_path, 'w') as jf:
+                    json.dump(twin_data, jf, indent=2)
+            except Exception as je:
+                print(f"Error creating JSON twin: {je}")
+                
             try:
                 h_pat = _patient_snap.copy()
                 if 'patient_name' not in h_pat:

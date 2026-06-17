@@ -3140,7 +3140,8 @@ class ECGAnalysisWindow(QDialog):
                 import os as _os
                 import numpy as _np
                 base_no_ext = _os.path.splitext(path)[0]
-                ecg_json_path = base_no_ext + "_ecg_data.json"
+                # Use exact same name as PDF for the JSON companion
+                ecg_json_path = base_no_ext + ".json"
 
                 target_samples = int(round(float(self.sampling_rate) * 10.0)) if self.sampling_rate else 5000
                 if target_samples <= 0:

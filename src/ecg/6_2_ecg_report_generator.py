@@ -1434,7 +1434,9 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
         print(" Saving ECG data to file (required for calculation-based beats)...")
-        saved_data_file_path = save_ecg_data_to_file(ecg_test_page)
+        # Use companion JSON name derived from PDF filename
+        json_filename = os.path.splitext(filename)[0] + ".json"
+        saved_data_file_path = save_ecg_data_to_file(ecg_test_page, output_file=json_filename)
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
@@ -3529,9 +3531,9 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     t_mm = extract_axis_value(t_axis_deg)
     
     # SECOND COLUMN - P/QRS/T Axis (ABOVE ECG GRAPH - same position)
-    p_qrs_label = String(240, 555, f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",  # Changed to axis values
-                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(p_qrs_label)
+    # p_qrs_label = String(240, 555, f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",  # Changed to axis values
+    #                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # master_drawing.add(p_qrs_label)
 
     # Get RV5 and SV1 amplitudes from the actual raw ECG graph whenever available.
     rv5_amp = None
@@ -4150,6 +4152,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 "patient_age": str(data.get('patient', {}).get('age', '')),
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
+                "master_phone": master_phone,
+                "report_type": "12_lead_ecg"
             }
             # Upload the complete package
             result = cloud_uploader.upload_complete_report_package(
@@ -4172,6 +4176,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         print("  Cloud uploader not available")
     except Exception as e:
         print(f"  Cloud upload error: {e}")
+    
+    return filename, metrics_entry
 
 
 # ====================  REPORT WRAPPER 6_2 ====================

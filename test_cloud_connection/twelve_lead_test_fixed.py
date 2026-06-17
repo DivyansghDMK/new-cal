@@ -5605,7 +5605,7 @@ class ECGTestPage(QWidget):
             try:
                 baud_int = int(baud)
             except (ValueError, TypeError):
-                self.show_connection_warning(f"Invalid baud rate: {baud}. Please set a valid baud rate in System Setup.")
+                self.show_connection_warning(f"Invalid baud rate: {baud}.")
                 return
             
             if self.serial_reader:
@@ -6622,6 +6622,31 @@ class ECGTestPage(QWidget):
                     except Exception:
                         pass
 
+                    # ── Create JSON twin (in thread) ───────────────────────────
+                    try:
+                        twin_path = os.path.splitext(dst_path)[0] + '.json'
+                        from utils.ecg_payload_builder import build_12lead_payload
+                        twin_data = build_12lead_payload(
+                            data=ecg_data,
+                            patient=patient,
+                            settings_manager=None,
+                            ecg_test_page=ecg_page_ref,
+                            report_format=fmt,
+                            source_report_file=dst_path
+                        )
+                        with open(twin_path, 'w') as jf:
+                            json.dump(twin_data, jf, indent=2)
+                        
+                        # Copy JSON twin to Downloads just like PDF
+                        try:
+                            if 'dl' in locals() and dl.exists() and 'dp' in locals():
+                                dp_json = dp.with_suffix('.json')
+                                shutil.copyfile(twin_path, str(dp_json))
+                        except Exception:
+                            pass
+                    except Exception as je:
+                        print(f"Error creating JSON twin: {je}")
+
                     # ── Append history entry (in thread) ────────────────────────
                     try:
                         from dashboard.history_window import append_history_entry
@@ -6853,7 +6878,7 @@ class ECGTestPage(QWidget):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Connection Required")
-        msg.setText("❤️ Please configure serial port and baud rate in System Setup.\n\nStay healthy!" + ("\n\n" + extra_msg if extra_msg else ""))
+        msg.setText(extra_msg if extra_msg else "")
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
 

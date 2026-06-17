@@ -374,7 +374,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
             f"QTcF: {qtcf} ms",
             f"RV5/SV1: {rv5:.3f}/{sv1:.3f} mV",
             f"RV5+SV1: {idx_val:.3f} mV",
-            f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",
+            # f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",
         ]
 
         # COL4: hospital / org info — displayed bold, right side (rows 0-2)
@@ -522,7 +522,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         f'QTcF: {qtcf} ms',
         f'RV5/SV1: {rv5:.3f}/{sv1:.3f} mV',
         f'RV5+SV1: {idx_val:.3f} mV',
-        f'P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0',
+        # f'P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0',
     ]
     # Only show org block when org name/address is present.
     ls_col4 = [t for t in [org, addr, phone] if t] if show_org_block else []

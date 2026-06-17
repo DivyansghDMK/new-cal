@@ -21,7 +21,7 @@ _MP_CTX = multiprocessing.get_context("spawn")
 
 
 def _child_ecg_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
-    # Ensure stdout/stderr replace unencodable characters inside child process
+    # Ensure stdout/stderr replace unencodable characters instead of crashing
     for _stream in (sys.stdout, sys.stderr):
         if _stream is not None and hasattr(_stream, 'reconfigure'):
             try:
@@ -38,16 +38,22 @@ def _child_ecg_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
             sys.path.insert(0, src_dir)
 
         demo_mode = bool(kwargs.pop("demo_mode", False))
+        filename, metrics_entry = None, None
         if demo_mode:
             from ecg.demo_ecg_report_generator import generate_demo_ecg_report
 
-            generate_demo_ecg_report(**kwargs)
+            # If demo generator doesn't return metrics, just use filename and empty dict
+            result = generate_demo_ecg_report(**kwargs)
+            if isinstance(result, tuple) and len(result) ==2:
+                filename, metrics_entry = result
+            else:
+                filename = kwargs.get("filename", "report.pdf")
+                metrics_entry = {}
         else:
             from ecg.ecg_report_generator import generate_ecg_report
 
-            generate_ecg_report(**kwargs)
-
-        queue.put(("ok", kwargs.get("filename", "report.pdf")))
+            filename, metrics_entry = generate_ecg_report(**kwargs)
+        queue.put(("ok", filename, metrics_entry))
     except Exception as exc:
         queue.put(("err", f"{exc}\n{traceback.format_exc()}"))
 
@@ -91,8 +97,8 @@ def _child_hrv_report(queue: multiprocessing.Queue, kwargs: dict) -> None:
 
         from ecg.hrv_ecg_report_generator import generate_hrv_ecg_report
 
-        generate_hrv_ecg_report(**kwargs)
-        queue.put(("ok", kwargs.get("filename", "hrv_report.pdf")))
+        filename, metrics_entry = generate_hrv_ecg_report(**kwargs)
+        queue.put(("ok", filename, metrics_entry))
     except Exception as exc:
         queue.put(("err", f"{exc}\n{traceback.format_exc()}"))
 
@@ -223,7 +229,7 @@ class PDFProcessRunner:
             return
 
         try:
-            status, payload = self._queue.get_nowait()
+            msg = self._queue.get_nowait()
         except Exception:
             if self._process is not None and not self._process.is_alive():
                 err = f"Child process exited unexpectedly (exit code {self._process.exitcode})"
@@ -233,12 +239,15 @@ class PDFProcessRunner:
             return
 
         self._cleanup()
-        if status == "ok":
+        if msg[0] == "ok":
             if self._on_success:
-                self._on_success(payload)
+                if len(msg) == 3:  # HRV report with metrics
+                    self._on_success(msg[1], msg[2])
+                else:  # 12-lead report
+                    self._on_success(msg[1])
         else:
             if self._on_failure:
-                self._on_failure(payload)
+                self._on_failure(msg[1])
 
     def _cleanup(self) -> None:
         if self._poll_timer is not None:

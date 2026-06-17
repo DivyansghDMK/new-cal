@@ -780,6 +780,17 @@ class HyperkalemiaTestWindow(QWidget):
             if self.ecg_calculator:
                 if hasattr(self.ecg_calculator, 'smoothing_buffers'):
                     self.ecg_calculator.smoothing_buffers = {}
+                # ALWAYS reset data buffer to avoid step function from previous captures
+                self.ecg_calculator.data = [np.full(10000, 2048.0, dtype=np.float32) for _ in range(12)]
+                
+                # Reset sampler to avoid stale timestamps causing bad rate calculations
+                if hasattr(self.ecg_calculator, 'sampler') and self.ecg_calculator.sampler:
+                    try:
+                        from ecg.utils.helpers import SamplingRateCalculator
+                        self.ecg_calculator.sampler = SamplingRateCalculator()
+                        self.ecg_calculator.sampler.sampling_rate = self.sampling_rate
+                    except Exception:
+                        pass
             
             # Update UI
             self.start_btn.setEnabled(False)
@@ -1476,6 +1487,9 @@ class HyperkalemiaTestWindow(QWidget):
         Estimate serum potassium (K+) level in mmol/L based on morphological features.
         This is a heuristic-based estimation model.
         """
+        if qrs_amp == 0 and t_amp == 0 and p_amp == 0:
+            return 0.0
+            
         # Baseline potassium (Normal average)
         est_k = 4.0
         
@@ -1674,6 +1688,7 @@ class HyperkalemiaTestWindow(QWidget):
             # Store results for report generator
             self.analysis_results = {
                 "heart_rate": hr,
+                "RR_ms": int(60000 / hr) if hr > 0 else 0,
                 "pr_interval_ms": pr,
                 "qrs_duration_ms": qrs,
                 "qt_interval_ms": qt,
@@ -1778,25 +1793,13 @@ class HyperkalemiaTestWindow(QWidget):
             if isinstance(self.analysis_results, dict):
                 self.analysis_results["patient"] = patient
 
-            # Save ECG data (including V1-V6) to file so report generator can load it
-            ecg_data_file = None
+            # Collect raw leads in memory instead of saving to file
+            raw_leads = {}
             try:
-                ecg_data_dir = os.path.join(str(data_file("reports")), 'ecg_data')
-                os.makedirs(ecg_data_dir, exist_ok=True)
-                
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                ecg_data_file = os.path.join(ecg_data_dir, f'ecg_data_{timestamp}.json')
-                
-                saved_data = {
-                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "sampling_rate": float(self.sampling_rate),
-                    "leads": {}
-                }
-                
                 # Save Lead II data
                 if self.lead_ii_data and len(self.lead_ii_data) > 0:
                     lead_ii_values = [d['value'] for d in self.lead_ii_data]
-                    saved_data["leads"]["II"] = lead_ii_values
+                    raw_leads["II"] = lead_ii_values
                     print(f" Saving Lead II: {len(lead_ii_values)} samples")
                 else:
                     print(f" Lead II data is empty!")
@@ -1806,7 +1809,7 @@ class HyperkalemiaTestWindow(QWidget):
                     if lead_name in self.lead_data:
                         if len(self.lead_data[lead_name]) > 0:
                             lead_values = [d['value'] for d in self.lead_data[lead_name]]
-                            saved_data["leads"][lead_name] = lead_values
+                            raw_leads[lead_name] = lead_values
                             print(f" Saving {lead_name}: {len(lead_values)} samples")
                 
                 # Also save from ecg_calculator.data if available (as fallback)
@@ -1818,27 +1821,18 @@ class HyperkalemiaTestWindow(QWidget):
                                 # Get non-zero values
                                 non_zero_data = ecg_data[ecg_data != 0]
                                 if len(non_zero_data) > 0:
-                                    if lead_name not in saved_data["leads"] or len(saved_data["leads"][lead_name]) == 0:
-                                        saved_data["leads"][lead_name] = non_zero_data.tolist()
-                
-                # Save to file
-                with open(ecg_data_file, 'w') as f:
-                    json.dump(saved_data, f, indent=2)
-                print(f"\n Saved ECG data (including V1-V6) to: {ecg_data_file}")
-                
-                # Store file path for passing to report generator
-                self.last_saved_ecg_file = ecg_data_file
+                                    if lead_name not in raw_leads or len(raw_leads[lead_name]) == 0:
+                                        raw_leads[lead_name] = non_zero_data.tolist()
                 
             except Exception as e:
-                error_msg = f" Could not save ECG data file: {e}"
+                error_msg = f" Could not collect ECG data: {e}"
                 print(error_msg)
                 import traceback
                 traceback.print_exc()
 
-            # Pass ecg_data_file to report generator
+            # Pass raw_leads directly instead of ecg_data_file
             print(f"\n Starting report generation...")
             print(f"   PDF filepath: {filepath}")
-            print(f"   ECG data file: {ecg_data_file}")
             
             try:
                 reports_dir = str(data_file("reports"))
@@ -1868,6 +1862,7 @@ class HyperkalemiaTestWindow(QWidget):
                     "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     "file": os.path.abspath(filepath),
                     "HR_bpm": hr,
+                    "RR_ms": int(60000 / hr) if hr > 0 else 0,
                     "PR_ms": pr,
                     "QRS_ms": qrs,
                     "QT_ms": qt,
@@ -1893,12 +1888,31 @@ class HyperkalemiaTestWindow(QWidget):
             except Exception as e:
                 print(f" Could not save Hyperkalemia metrics: {e}")
             
-            generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data, 
-                                        ecg_data_file=ecg_data_file)
+            generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data, sampling_rate=self.sampling_rate, raw_leads=raw_leads)
             
             print(f"\n Report generation completed!")
             
             print(f"✅ Hyperkalemia detection report saved successfully: {filepath}")
+
+            # ── Create JSON twin for S3 sync ──────────────────────────────
+            try:
+                twin_path = os.path.splitext(filepath)[0] + '.json'
+                from utils.ecg_payload_builder import build_hyperkalemia_payload
+                twin_data = build_hyperkalemia_payload(
+                    data=self.analysis_results if isinstance(self.analysis_results, dict) else {},
+                    patient=patient,
+                    signup_details=getattr(getattr(self, "dashboard_instance", None), "user_details", {}),
+                    settings_manager=getattr(self, "settings_manager", None),
+                    ecg_test_page=self,
+                    raw_leads=raw_leads,
+                    source_report_file=filepath,
+                    hyperkalemia_findings=self.analysis_results.get('indicators', []) if isinstance(self.analysis_results, dict) else []
+                )
+                with open(twin_path, 'w') as jf:
+                    json.dump(twin_data, jf, indent=2)
+            except Exception as je:
+                print(f"Error creating JSON twin: {je}")
+                            
             try:
                 h_pat = patient.copy() if patient else {}
                 if 'patient_name' not in h_pat:
