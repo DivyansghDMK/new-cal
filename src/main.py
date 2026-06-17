@@ -2788,6 +2788,17 @@ def main():
                                         except Exception:
                                             pass
                                         app.quit()
+                            else:
+                                if res.get("offline"):
+                                    try:
+                                        dashboard.set_license_banner("ONLINE", "(Offline Mode)")
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        dashboard.set_license_banner("ONLINE", "")
+                                    except Exception:
+                                        pass
 
                         def _on_key_missing():
                             """Called on main thread when license key file is gone."""

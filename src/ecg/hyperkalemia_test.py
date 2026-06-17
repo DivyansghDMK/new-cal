@@ -170,7 +170,7 @@ class HyperkalemiaTestWindow(QWidget):
         self._lead_off_state = {}  # lead -> bool
         self._last_packet_time = 0.0
         self._plot_update_in_progress = False
-        self._plot_render_stride = 1
+        self._plot_render_stride = 4 if is_low_spec_mode() else 2
 
         
         # Lead mapping: name -> index in ecg_calculator.data

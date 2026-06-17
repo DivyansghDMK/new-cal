@@ -120,6 +120,8 @@ PLAN_SEATS = {
 
 app = Flask(__name__)
 
+MAX_REGISTRATIONS_PER_DEVICE = 5
+
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -377,6 +379,27 @@ def _find_global_seat_by_RhythmUltra(
     return None, None, None
 
 
+def _count_active_registrations_by_RhythmUltra(
+    db: dict,
+    RhythmUltra_serial: str,
+    *,
+    exclude_license_key: str | None = None,
+    exclude_seat_num: str | None = None,
+) -> int:
+    """Count active registrations using this RhythmUltra serial across the DB, with optional exclusion."""
+    if not RhythmUltra_serial:
+        return 0
+    count = 0
+    for license_key, license_entry in db.get("licenses", {}).items():
+        for seat_num, seat in license_entry.get("seats", {}).items():
+            if license_key == exclude_license_key and exclude_seat_num is not None and seat_num == str(exclude_seat_num):
+                continue
+            stored_serial = seat.get("RhythmUltra_serial") or seat.get("rhythmulta_serial") or seat.get("rhythmultra_serial")
+            if seat.get("status") == "active" and stored_serial == RhythmUltra_serial:
+                count += 1
+    return count
+
+
 def _clear_license_seat_bindings(license_entry: dict) -> int:
     """
     Remove machine/device bindings from all seats on a license.
@@ -519,19 +542,17 @@ def register():
     if existing_seat is not None:
         # Re-registration of same machine — update seat info and re-issue token
         if RhythmUltra_serial:
-            global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(
+            active_count = _count_active_registrations_by_RhythmUltra(
                 db,
                 RhythmUltra_serial,
                 exclude_license_key=license_key,
                 exclude_seat_num=seat_num,
             )
-            if global_seat is not None:
+            if active_count >= MAX_REGISTRATIONS_PER_DEVICE:
                 return _signed_response({
                     "valid": False,
-                    "message": (
-                        "This RhythmUltra device is already bound to another active license "
-                        f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
-                    ),
+                    "error": "DEVICE_ALREADY_REGISTERED",
+                    "message": f"Maximum {MAX_REGISTRATIONS_PER_DEVICE} activations allowed for this RhythmUltra device."
                 }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["pc_name"] = pc_name or existing_seat.get("pc_name", "")
@@ -562,14 +583,12 @@ def register():
 
     # ── Check 3b: RhythmUltra serial unique? ──────────────────────────────────
     if RhythmUltra_serial:
-        global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(db, RhythmUltra_serial)
-        if global_seat is not None:
+        active_count = _count_active_registrations_by_RhythmUltra(db, RhythmUltra_serial)
+        if active_count >= MAX_REGISTRATIONS_PER_DEVICE:
             return _signed_response({
                 "valid": False,
-                "message": (
-                    "This RhythmUltra device is already bound to another active license "
-                    f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
-                ),
+                "error": "DEVICE_ALREADY_REGISTERED",
+                "message": f"Maximum {MAX_REGISTRATIONS_PER_DEVICE} activations allowed for this RhythmUltra device."
             }, 403)
 
     # ── Check 2b: Find next available seat ───────────────────────────────────
@@ -767,19 +786,17 @@ def activate():
     seat_num, existing_seat = _find_seat_by_fingerprint(license_entry, fingerprint)
     if existing_seat is not None:
         if RhythmUltra_serial:
-            global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(
+            active_count = _count_active_registrations_by_RhythmUltra(
                 db,
                 RhythmUltra_serial,
                 exclude_license_key=license_key,
                 exclude_seat_num=seat_num,
             )
-            if global_seat is not None:
+            if active_count >= MAX_REGISTRATIONS_PER_DEVICE:
                 return _signed_response({
                     "valid": False,
-                    "message": (
-                        "This RhythmUltra device is already bound to another active license "
-                        f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
-                    ),
+                    "error": "DEVICE_ALREADY_REGISTERED",
+                    "message": f"Maximum {MAX_REGISTRATIONS_PER_DEVICE} activations allowed for this RhythmUltra device."
                 }, 403)
         existing_seat["last_heartbeat"] = now
         existing_seat["machine_serial_id"] = machine_serial_id or existing_seat.get("machine_serial_id", "")
@@ -804,14 +821,12 @@ def activate():
         }, 403)
 
     if RhythmUltra_serial:
-        global_license, global_seat_num, global_seat = _find_global_seat_by_RhythmUltra(db, RhythmUltra_serial)
-        if global_seat is not None:
+        active_count = _count_active_registrations_by_RhythmUltra(db, RhythmUltra_serial)
+        if active_count >= MAX_REGISTRATIONS_PER_DEVICE:
             return _signed_response({
                 "valid": False,
-                "message": (
-                    "This RhythmUltra device is already bound to another active license "
-                    f"({global_license}, seat #{global_seat_num}). Contact Deckmount support."
-                ),
+                "error": "DEVICE_ALREADY_REGISTERED",
+                "message": f"Maximum {MAX_REGISTRATIONS_PER_DEVICE} activations allowed for this RhythmUltra device."
             }, 403)
 
     license_entry["seats"][next_seat] = {

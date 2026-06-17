@@ -1205,8 +1205,8 @@ def run_startup_checks(force_heartbeat: bool = False) -> StartupCheckResult:
                 res.step_failed = 1
                 res.error_code = "DEVICE_ALREADY_REGISTERED"
                 res.reason = (
-                    "This RhythmUltra device is already registered to another installation.\n\n"
-                    "Please contact Deckmount Support."
+                    "This RhythmUltra device has reached the maximum limit of 5 registrations.\n\n"
+                    "Please deactivate an existing installation or contact Deckmount Support."
                 )
                 return res
             if recovery_result.get("valid") or recovery_result.get("authorized"):

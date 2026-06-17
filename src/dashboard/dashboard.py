@@ -500,14 +500,22 @@ class Dashboard(QWidget):
         self.device_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.addWidget(self.device_status_label)
 
-        self.license_status_label = QLabel("ONLINE")
-        self.license_status_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.license_status_label = QLabel("● Software Activated")
+        self.license_status_label.setFont(QFont("Arial", 9, QFont.Bold))
         self.license_status_label.setMinimumWidth(160)
+        self.license_status_label.setMaximumHeight(28)
         self.license_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.license_status_label.setStyleSheet(
-            "color: #1b5e20; background: #dcedc8; border-radius: 10px; padding: 4px 10px; margin-right: 10px;"
-        )
-        header.addWidget(self.license_status_label)
+        self.license_status_label.setStyleSheet("""
+            QLabel {
+                color: #27ae60;
+                background: transparent;
+                padding: 2px 8px 2px 8px;
+                font-size: 9pt;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+            }
+        """)
+        # label will be placed in footer, not header
         
         self.medical_btn = QPushButton("Medical Mode")
         self.medical_btn.setCheckable(True)
@@ -1362,6 +1370,79 @@ class Dashboard(QWidget):
         
         # Add scroll area to dashboard layout
         dashboard_layout.addWidget(scroll_area)
+
+        # --- Professional Status Footer Bar ---
+        footer_bar = QFrame()
+        footer_bar.setFixedHeight(26)
+        footer_bar.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border-top: 1px solid #333333;
+            }
+        """)
+        footer_layout = QHBoxLayout(footer_bar)
+        footer_layout.setContentsMargins(12, 0, 12, 0)
+        footer_layout.setSpacing(0)
+
+        # Divider helper
+        def _footer_divider():
+            d = QFrame()
+            d.setFrameShape(QFrame.VLine)
+            d.setStyleSheet("color: #3a3a3a; background: #3a3a3a; max-width: 1px; margin: 4px 8px;")
+            return d
+
+        # Software activation status (reuse existing label)
+        self.license_status_label.setParent(footer_bar)
+        self.license_status_label.setStyleSheet("""
+            QLabel {
+                color: #3dba6e;
+                background: transparent;
+                font-size: 8pt;
+                font-weight: 700;
+                padding: 0px 4px;
+                letter-spacing: 0.4px;
+            }
+        """)
+        footer_layout.addWidget(self.license_status_label)
+
+        footer_layout.addWidget(_footer_divider())
+
+        # App name / branding
+        _brand = QLabel("CardioX V1.0")
+        _brand.setStyleSheet("""
+            QLabel {
+                color: #555555;
+                background: transparent;
+                font-size: 8pt;
+                padding: 0px 4px;
+            }
+        """)
+        footer_layout.addWidget(_brand)
+
+        footer_layout.addStretch()
+
+        # Current time ticker
+        self._footer_clock = QLabel()
+        self._footer_clock.setStyleSheet("""
+            QLabel {
+                color: #555555;
+                background: transparent;
+                font-size: 8pt;
+                padding: 0px 4px;
+            }
+        """)
+        footer_layout.addWidget(self._footer_clock)
+
+        def _tick_clock():
+            from datetime import datetime
+            self._footer_clock.setText(datetime.now().strftime("%H:%M:%S"))
+
+        _tick_clock()
+        self._footer_clock_timer = QTimer(self)
+        self._footer_clock_timer.timeout.connect(_tick_clock)
+        self._footer_clock_timer.start(1000)
+
+        dashboard_layout.addWidget(footer_bar)
         
         
         # --- ECG Animation Setup ---
@@ -6689,14 +6770,30 @@ class Dashboard(QWidget):
                 self.date_btn.setStyleSheet(grey_style)
 
     def set_license_banner(self, status: str, detail: str = "", color: str = "#1b5e20", background: str = "#dcedc8"):
-        """Update the top license banner."""
+        """Update the footer license status indicator."""
         try:
             status_text = (status or "ONLINE").strip().upper()
-            detail_text = f" {detail.strip()}" if detail and detail.strip() else ""
-            self.license_status_label.setText(f"{status_text}{detail_text}")
-            self.license_status_label.setStyleSheet(
-                f"color: {color}; background: {background}; border-radius: 10px; padding: 4px 10px; margin-right: 10px;"
-            )
+            if status_text == "ONLINE":
+                label_text = "● Software Activated"
+                text_color = "#3dba6e"
+            elif status_text == "VERIFICATION REQUIRED":
+                label_text = "● Verification Required"
+                text_color = "#e05555"
+            else:
+                label_text = f"● {status_text.title()}"
+                text_color = "#aaaaaa"
+            detail_text = f"  {detail.strip()}" if detail and detail.strip() else ""
+            self.license_status_label.setText(f"{label_text}{detail_text}")
+            self.license_status_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {text_color};
+                    background: transparent;
+                    font-size: 8pt;
+                    font-weight: 700;
+                    padding: 0px 4px;
+                    letter-spacing: 0.4px;
+                }}
+            """)
         except Exception:
             pass
 
