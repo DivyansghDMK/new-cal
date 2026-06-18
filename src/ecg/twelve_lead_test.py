@@ -7514,6 +7514,11 @@ class ECGTestPage(QWidget):
         serial_part = f"_{machine_serial}" if machine_serial and machine_serial not in ("Not Detected", "") else ""
         filename = os.path.join(rpt_dir, f"ECG_Report_{fmt}{serial_part}_{stamp}.pdf")
 
+        # Capture signup details and machine serial before the worker thread
+        # to avoid 'self' shadowing issues inside the QObject.run() method.
+        _signup_snap = getattr(getattr(self, "dashboard_instance", None), "user_details", {}) or {}
+        _machine_serial_snap = machine_serial
+
         # Worker thread
         class _Worker(QObject):
             finished = pyqtSignal(str)
@@ -7581,7 +7586,7 @@ class ECGTestPage(QWidget):
                         twin_data = build_12lead_payload(
                             data=frozen,
                             patient=patient,
-                            signup_details=getattr(getattr(self, "dashboard_instance", None), "user_details", {}),
+                            signup_details=_signup_snap,
                             settings_manager=None,
                             raw_leads=raw_leads_map,
                             report_format=fmt,
