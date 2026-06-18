@@ -446,10 +446,10 @@ def _build_device_block(machine_serial: str) -> Dict:
     }
 
 
-def _build_data_details() -> Dict:
+def _build_data_details(leads: int = 12) -> Dict:
     return {
         "format": "int16_le",
-        "leads": 12,
+        "leads": leads,
         "sampling_rate": SAMPLING_RATE,
         "samples_per_lead": SAMPLES_PER_LEAD,
         "duration_seconds": DURATION_SECONDS,
@@ -792,7 +792,7 @@ def build_12lead_payload(
         "source_report_file": str(source_report_file),
         "patient_details": _build_patient_block(patient, data, rid, signup),
         "device_details": _build_device_block(machine_serial),
-        "data_details": _build_data_details(),
+        "data_details": _build_data_details(leads=12),
         "ecg_settings": ecg_settings,
         "ecg_data": {
             "leads_data": leads,
@@ -864,7 +864,7 @@ def build_hrv_payload(
         "source_report_file": str(source_report_file),
         "patient_details": _build_patient_block(patient, merged, rid, signup),
         "device_details": _build_device_block(machine_serial),
-        "data_details": _build_data_details(),
+        "data_details": _build_data_details(leads=1),
         "ecg_settings": ecg_settings,
         "ecg_data": {
             "leads_data": leads_for_json,
@@ -937,7 +937,7 @@ def build_hyperkalemia_payload(
         "source_report_file": str(source_report_file),
         "patient_details": _build_patient_block(patient, data, rid, signup),
         "device_details": _build_device_block(machine_serial),
-        "data_details": _build_data_details(),
+        "data_details": _build_data_details(leads=7),
         "ecg_settings": ecg_settings,
         "ecg_data": {
             "leads_data": leads_for_json,
