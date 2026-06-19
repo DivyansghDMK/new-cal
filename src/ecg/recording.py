@@ -2218,7 +2218,7 @@ class ECGMenu(QGroupBox):
                 indicator_margin_left = max(4, min(5, int(margin_size * 0.2)))
                 indicator_margin_right = max(5, min(6, int(margin_size * 0.25)))
             else:
-                button_width = max(120, min(180, int(margin_size * 6.0)))
+                button_width = max(140, min(220, int(margin_size * 8.5)))
                 button_height = max(25, min(35, int(margin_size * 1.3)))
                 radio_font_size = max(9, int(margin_size * 0.45))
                 radio_padding = max(4, int(margin_size * 0.2))
