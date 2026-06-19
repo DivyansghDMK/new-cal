@@ -1181,7 +1181,7 @@ class HRVTestWindow(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Generating Report")
         dlg.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-        dlg.setFixedSize(340, 160)
+        dlg.setMinimumSize(380, 180)
         dlg.setStyleSheet("""
             QDialog {
                 background: #111827;

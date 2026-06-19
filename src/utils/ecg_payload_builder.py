@@ -48,7 +48,7 @@ except Exception:
 SCHEMA_VERSION = "1.0.0"
 EVENT_TYPE = "ecg_report"
 
-DEVICE_NAME = os.getenv("ECG_DEVICE_NAME", "RhythmPro ECG")
+DEVICE_NAME = os.getenv("ECG_DEVICE_NAME", "RhythmUltra ECG")
 MANUFACTURER = os.getenv("ECG_MANUFACTURER", "Deckmount Electronics Pvt Ltd")
 APP_VERSION = os.getenv("ECG_APP_VERSION", "4.10.1")
 REPORT_VERSION = os.getenv("ECG_REPORT_VERSION", "1.0.18")

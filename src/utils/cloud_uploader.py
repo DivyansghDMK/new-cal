@@ -270,11 +270,33 @@ class CloudUploader:
         key_filename = filename
 
         prefix = (os.getenv("S3_REPORTS_PREFIX", "reports") or "reports").strip().strip("/")
+        
+        # Get RhythmUltra device serial and extract last 4 digits (fallback to 0000)
+        machine_serial = ""
+        try:
+            from utils.license_manager import get_rhythmultra_serial
+            machine_serial = get_rhythmultra_serial() or ""
+        except Exception:
+            # Fallback to license profile
+            try:
+                from utils.license_manager import load_registration_profile
+                profile = load_registration_profile()
+                machine_serial = (profile.get("rhythmultra_serial") 
+                                  or profile.get("rhythmulta_serial") 
+                                  or profile.get("RhythmUltra_serial") 
+                                  or "")
+            except Exception:
+                machine_serial = ""
+        
+        # Process machine serial: keep only alphanumeric chars, get last 4
+        machine_serial_clean = ''.join(c for c in machine_serial if c.isalnum())
+        machine_serial_dir = machine_serial_clean[-4:] if len(machine_serial_clean) >= 4 else "0000"
+        
         mobile = self._extract_mobile_for_s3_key(meta)
         if mobile:
-            return f"{prefix}/{mobile}/{key_filename}"
+            return f"{prefix}/{mobile}/{machine_serial_dir}/{key_filename}"
         timestamp = datetime.now().strftime("%Y/%m/%d")
-        return f"{prefix}/{timestamp}/{key_filename}"
+        return f"{prefix}/{timestamp}/{machine_serial_dir}/{key_filename}"
     
     def _is_file_already_uploaded(self, file_path):
         """
@@ -970,8 +992,23 @@ class CloudUploader:
             month = now.strftime("%m")
             day = now.strftime("%d")
             
+            # Get RhythmUltra device serial and extract last 4 digits (fallback to 0000)
+            machine_serial = ""
+            try:
+                from utils.license_manager import get_rhythmultra_serial
+                machine_serial = get_rhythmultra_serial() or ""
+            except Exception:
+                # Fallback to license profile
+                machine_serial = (profile.get("rhythmultra_serial") 
+                                  or profile.get("rhythmulta_serial") 
+                                  or profile.get("RhythmUltra_serial") 
+                                  or "")
+            
+            machine_serial_clean = ''.join(c for c in machine_serial if c.isalnum())
+            machine_serial_dir = machine_serial_clean[-4:] if len(machine_serial_clean) >= 4 else "0000"
+            
             # S3 prefix and keys with patient name and report_id for easy identification
-            s3_prefix = f"reports/{year}/{month}/{day}/{report_id}"
+            s3_prefix = f"reports/{year}/{month}/{day}/{machine_serial_dir}/{report_id}"
             package_s3_key = f"{s3_prefix}/{sanitized_name}_{report_id}.json"
             pdf_s3_key = f"{s3_prefix}/{sanitized_name}_{report_id}.pdf"
             

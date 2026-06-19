@@ -188,7 +188,7 @@ class SignInDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Sign In")
-        self.setFixedSize(340, 240)
+        self.setMinimumSize(380, 280)
         self.setStyleSheet("""
             QDialog { background: #fff; border-radius: 18px; }
             QLabel { font-size: 15px; color: #222; }
@@ -229,7 +229,7 @@ class StyledMessageBox(QDialog):
         dialog = QDialog(parent)
         dialog.setWindowTitle(title)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        dialog.setFixedSize(400, 200)
+        dialog.setMinimumSize(450, 220)
         dialog.setStyleSheet("""
             QDialog { 
                 background: #111827; 
@@ -6443,7 +6443,7 @@ class Dashboard(QWidget):
         dlg.setWindowTitle("HRV Test Duration")
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setModal(True)
-        dlg.setFixedSize(360, 200)
+        dlg.setMinimumSize(420, 250)
         dlg.setStyleSheet("""
             QDialog { background: #f4f7f6; }
             QLabel { font: 900 14pt 'Segoe UI', Arial; color: #101828; }
@@ -6462,6 +6462,7 @@ class Dashboard(QWidget):
 
         title = QLabel("Select HRV capture duration")
         title.setAlignment(Qt.AlignCenter)
+        title.setWordWrap(True)
         outer.addWidget(title)
 
         btn_row = QHBoxLayout()
