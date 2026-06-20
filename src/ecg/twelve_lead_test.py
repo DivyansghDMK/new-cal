@@ -5029,6 +5029,16 @@ class ECGTestPage(QWidget):
         """Called when the ECG test page is shown - reset metrics to zero"""
         super().showEvent(event)
 
+        # Check if currently running to prevent flicker when returning to the page
+        is_acquisition_running = hasattr(self, 'serial_reader') and self.serial_reader and self.serial_reader.running
+        is_timer_active = hasattr(self, 'timer') and self.timer and self.timer.isActive()
+        
+        if is_acquisition_running or is_timer_active:
+            # Also force an immediate timer label update so it doesn't wait a full second to refresh if it was paused
+            self._last_displayed_elapsed = -1 
+            self.update_elapsed_time()
+            return  # Do not overwrite metrics while active (prevents "00:00" flicker)
+
         # Check if demo mode is active
         if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
             # Demo mode is active - set fixed demo values instead of resetting to zero
@@ -6456,6 +6466,25 @@ class ECGTestPage(QWidget):
         self._set_lead_status_idle()
         self._frozen_report_snapshot = None
         self._frozen_report_metrics = None
+        
+        self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+        self.last_heart_rate = 0
+        self.last_pr_interval = 0
+        self.last_qrs_duration = 0
+        self.last_qt_interval = 0
+        self.last_qtc_interval = 0
+        self._latest_rhythm_interpretation = "Analyzing Rhythm..."
+        
+        # Reset metric labels!
+        if hasattr(self, 'metric_labels'):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("--")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("--")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("--")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("--/--")
 
         # --- START HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -6949,6 +6978,46 @@ class ECGTestPage(QWidget):
             self._stop_holter_session_internal()
         # --------------------------------------
 
+        # ── Reset all metrics and interpretation when device disconnects ──────
+        self._latest_rhythm_interpretation = "Rhythm Undetermined"
+        
+        # Reset twelve lead test's own metric labels
+        if hasattr(self, 'metric_labels'):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("--")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("--")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("--")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("--/--")
+        
+        # Clear all wave plot data
+        if hasattr(self, 'data'):
+            self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+        
+        # Reset last values
+        self.last_heart_rate = 0
+        self.last_pr_interval = 0
+        self.last_qrs_duration = 0
+        self.last_qt_interval = 0
+        self.last_qtc_interval = 0
+        
+        # Update dashboard if available
+        if hasattr(self, 'dashboard_callback') and self.dashboard_callback:
+            self.dashboard_callback({
+                'heart_rate': 0,
+                'pr_interval': 0,
+                'qrs_duration': 0,
+                'qtc_interval': 0,
+                'st_interval': 0
+            })
+        
+        # Also, if dashboard_instance exists, tell it to reset
+        if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+            if hasattr(self.dashboard_instance, 'reset_metrics_and_interpretation'):
+                self.dashboard_instance.reset_metrics_and_interpretation()
+
         # ── Stop HolterBPMController ──────────────────────────────────────────
         try:
             # Stop the 3-second refresh timer first
@@ -6995,12 +7064,28 @@ class ECGTestPage(QWidget):
 
         # Pause elapsed time tracking (keep start_time for resume)
         self.elapsed_timer.stop()
-        # Track when pause started (for calculating total paused time on resume)
-        if hasattr(self, 'start_time') and self.start_time is not None:
-            if not hasattr(self, 'paused_at') or self.paused_at is None:
-                self.paused_at = time.time()
-                print(f" Timer paused")
-            # Keep start_time so we can resume from this point
+        
+        # RESET TIMER: When device disconnects, we want the timer to start from 00:00 next time.
+        # Check if this stop is due to a device disconnection
+        is_disconnected = False
+        if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+            if not getattr(self.dashboard_instance, 'device_connected', True):
+                is_disconnected = True
+        
+        if is_disconnected:
+            self.start_time = None
+            self.paused_duration = 0
+            self.paused_at = None
+            if 'time_elapsed' in self.metric_labels:
+                self.metric_labels['time_elapsed'].setText("00:00")
+            print(" Session timer reset due to device disconnection")
+        else:
+            # Track when pause started (for calculating total paused time on resume)
+            if hasattr(self, 'start_time') and self.start_time is not None:
+                if not hasattr(self, 'paused_at') or self.paused_at is None:
+                    self.paused_at = time.time()
+                    print(f" Timer paused")
+                # Keep start_time so we can resume from this point
 
         # --- Calculate and update metrics on dashboard ---
         try:

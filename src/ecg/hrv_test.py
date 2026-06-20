@@ -794,6 +794,11 @@ class HRVTestWindow(QWidget):
             self.lead_combo.setEnabled(False)
             self.report_btn.setEnabled(False)
             self.status_label.setText("Status: Device disconnected")
+            
+            # Reset dashboard metrics and interpretation
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                if hasattr(self.dashboard_instance, 'reset_metrics_and_interpretation'):
+                    self.dashboard_instance.reset_metrics_and_interpretation()
         elif device_not_sending:
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
