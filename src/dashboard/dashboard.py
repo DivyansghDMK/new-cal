@@ -2415,7 +2415,7 @@ class Dashboard(QWidget):
                     return True
                 # Allow metric updates even when demo/serial not running
                 # This ensures dashboard values update from Lead 2 calculation
-                return True  # Always allow updates for calibrated metrics
+                return getattr(self, "device_connected", False)  # Only allow updates if device is connected
         except Exception:
             pass
         return True  # Default to True to ensure updates work
@@ -4342,6 +4342,8 @@ class Dashboard(QWidget):
     
     def update_live_conclusion(self):
         """Generate comprehensive personalized conclusion based on current ECG metrics with detailed BPM analysis"""
+        if not getattr(self, "device_connected", False):
+            return
         try:
             findings = []
             recommendations = []
@@ -4526,13 +4528,28 @@ class Dashboard(QWidget):
                     rhythm_clean = "Normal Sinus Rhythm"
 
             if (rhythm_clean in ignore_values or not rhythm_clean) and not has_metric_data:
-                # Still waiting for ECG data
-                conclusion_html = """
-                    <p style='color: #888; font-style: italic;'>
-                    Waiting for stable ECG data...<br><br>
-                    Metrics are being analyzed. Please wait a few seconds.
-                    </p>
-                """
+                # Still waiting for ECG data or device disconnected
+                if rhythm_clean == "Rhythm Undetermined":
+                    # Show device disconnected interpretation
+                    conclusion_html = """
+                        <div style='padding:4px;'>
+                            <b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>
+                            <span style='color:#e74c3c; font-weight:bold;'>⚠ Rhythm Undetermined</span><br><br>
+                            <b style='color:#ff6600; font-size:14px;'>Recommendations:</b><br>
+                            • Review detected arrhythmia pattern, consult physician if persistent<br><br>
+                            <p style='font-size:10px; color:#999; font-style:italic;'>
+                            <b>NOTE:</b> This is an automated analysis for educational purposes only. 
+                            Not a substitute for professional medical advice.
+                            </p>
+                        </div>
+                    """
+                else:
+                    conclusion_html = """
+                        <p style='color: #888; font-style: italic;'>
+                        Waiting for stable ECG data...<br><br>
+                        Metrics are being analyzed. Please wait a few seconds.
+                        </p>
+                    """
 
             # ── Significant-rhythm override ─────────────────────────────────────
             # If the arrhythmia engine's latest analysis contains a clinically
@@ -4816,6 +4833,33 @@ class Dashboard(QWidget):
 
         except Exception as e:
             print(f" Error updating conclusion: {e}")
+
+    def reset_metrics_and_interpretation(self):
+        """Reset dashboard metrics, ECG interpretation, and clear waves when device disconnects"""
+        # Reset metric labels
+        if hasattr(self, 'metric_labels'):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("0 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("--")
+            if 'st_interval' in self.metric_labels:
+                self.metric_labels['st_interval'].setText("--")
+        
+        # Clear the dashboard's ECG plot (if it has one)
+        if hasattr(self, 'canvas') and hasattr(self.canvas, 'axes'):
+            try:
+                for ax in self.canvas.axes:
+                    ax.clear()
+                self.canvas.draw()
+            except Exception as e:
+                print(f"Error clearing dashboard plot: {e}")
+        
+        # Update the conclusion to show Rhythm Undetermined
+        self.update_live_conclusion()
 
     def show_version_popup(self):
         """Show version information in a popup dialog"""
@@ -6718,6 +6762,31 @@ class Dashboard(QWidget):
         if success:
             self._had_device_connected = True
             self._last_device_scan_time = time.time()
+            
+            # Fresh start: reset all metrics, buffers, and interpretation when device reconnects!
+            self.reset_metrics_and_interpretation()
+            
+            # Also reset 12-lead test's data if it exists
+            ecg_page = getattr(self, 'ecg_test_page', None)
+            if ecg_page:
+                ecg_page._latest_rhythm_interpretation = "Analyzing Rhythm..."
+                ecg_page.last_heart_rate = 0
+                ecg_page.last_pr_interval = 0
+                ecg_page.last_qrs_duration = 0
+                ecg_page.last_qt_interval = 0
+                ecg_page.last_qtc_interval = 0
+                if hasattr(ecg_page, 'data'):
+                    ecg_page.data = [[] for _ in range(12)]
+                if hasattr(ecg_page, 'metric_labels'):
+                    if 'heart_rate' in ecg_page.metric_labels:
+                        ecg_page.metric_labels['heart_rate'].setText("0 BPM")
+                    if 'pr_interval' in ecg_page.metric_labels:
+                        ecg_page.metric_labels['pr_interval'].setText("0 ms")
+                    if 'qrs_duration' in ecg_page.metric_labels:
+                        ecg_page.metric_labels['qrs_duration'].setText("0 ms")
+                    if 'qtc_interval' in ecg_page.metric_labels:
+                        ecg_page.metric_labels['qtc_interval'].setText("--")
+            
             # Inform user if not the initial scan
             if not was_initial_scan:
                 msg = QMessageBox(self)
@@ -6823,6 +6892,37 @@ class Dashboard(QWidget):
             if hasattr(self, 'date_btn'):
                 self.date_btn.setEnabled(False)
                 self.date_btn.setStyleSheet(grey_style)
+
+            # Reset metrics and interpretation when disconnected
+            if hasattr(self, 'metric_labels'):
+                if 'heart_rate' in self.metric_labels:
+                    self.metric_labels['heart_rate'].setText("0 BPM")
+                if 'pr_interval' in self.metric_labels:
+                    self.metric_labels['pr_interval'].setText("0 ms")
+                if 'qrs_duration' in self.metric_labels:
+                    self.metric_labels['qrs_duration'].setText("0 ms")
+                if 'qtc_interval' in self.metric_labels:
+                    self.metric_labels['qtc_interval'].setText("--")
+            
+            self.current_heart_rate = 0
+            self._last_bpm = None
+            self._last_stable_rr = None
+            self._rr_stability_counter = 0
+            
+            # Reset cached metric values
+            self._last_hr = None
+            self._last_pr = None
+            self._last_qrs = None
+            self._last_p = None
+            self._last_qtc = None
+            
+            if hasattr(self, 'conclusion_box'):
+                self.conclusion_box.setHtml("""
+                    <p style='color: #888; font-style: italic;'>
+                    No ECG data available yet.<br><br>
+                    Start an ECG test or enable demo mode to see your personalized analysis and recommendations.
+                    </p>
+                """)
 
     def set_license_banner(self, status: str, detail: str = "", color: str = "#1b5e20", background: str = "#dcedc8"):
         """Update the footer license status indicator."""
@@ -7408,6 +7508,38 @@ class Dashboard(QWidget):
             self.bg_label.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e8f5e8, stop:1 #d4edda);")
             self.bg_btn.setText("BG: Medical")
         
+    def reset_metrics_and_interpretation(self):
+        """Reset dashboard metrics and interpretation (called when device disconnects)"""
+        if hasattr(self, 'metric_labels'):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("0 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("--")
+        
+        self.current_heart_rate = 0
+        self._last_bpm = None
+        self._last_stable_rr = None
+        self._rr_stability_counter = 0
+        
+        # Reset cached metric values
+        self._last_hr = None
+        self._last_pr = None
+        self._last_qrs = None
+        self._last_p = None
+        self._last_qtc = None
+        
+        if hasattr(self, 'conclusion_box'):
+            self.conclusion_box.setHtml("""
+                <p style='color: #888; font-style: italic;'>
+                No ECG data available yet.<br><br>
+                Start an ECG test or enable demo mode to see your personalized analysis and recommendations.
+                </p>
+            """)
+
     def center_on_screen(self):
         qr = self.frameGeometry()
         cp = QApplication.desktop().availableGeometry().center()

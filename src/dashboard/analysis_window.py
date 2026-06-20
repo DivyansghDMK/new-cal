@@ -2496,8 +2496,8 @@ class ECGAnalysisWindow(QDialog):
             show_critical(self, "Error", "Failed to load reports.")
         finally:
             self.report_combo.blockSignals(False)
-        if self.reports:
-            self.load_selected_report(0)
+        # if self.reports:
+        #     self.load_selected_report(0)
 
     def load_selected_report(self, index):
         if index < 0 or index >= len(self.reports):

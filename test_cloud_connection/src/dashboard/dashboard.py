@@ -4680,6 +4680,28 @@ class Dashboard(QWidget):
                 self.date_btn.setEnabled(False)
                 self.date_btn.setStyleSheet(grey_style)
 
+            # Reset metrics and interpretation when disconnected
+            if hasattr(self, 'metric_labels'):
+                if 'heart_rate' in self.metric_labels:
+                    self.metric_labels['heart_rate'].setText("00 BPM")
+                if 'pr_interval' in self.metric_labels:
+                    self.metric_labels['pr_interval'].setText("0 ms")
+                if 'qrs_duration' in self.metric_labels:
+                    self.metric_labels['qrs_duration'].setText("0 ms")
+                if 'qtc_interval' in self.metric_labels:
+                    self.metric_labels['qtc_interval'].setText("0/0")
+            
+            if hasattr(self, 'current_heart_rate'):
+                self.current_heart_rate = 0
+            
+            if hasattr(self, 'conclusion_box'):
+                self.conclusion_box.setHtml("""
+                    <p style='color: #888; font-style: italic;'>
+                    No ECG data available yet.<br><br>
+                    Start an ECG test or enable demo mode to see your personalized analysis and recommendations.
+                    </p>
+                """)
+
     def update_internet_status(self):
         """Check internet status in background — never freeze UI."""
         # FIX: was socket.create_connection(timeout=2) on main thread → 2s freeze
