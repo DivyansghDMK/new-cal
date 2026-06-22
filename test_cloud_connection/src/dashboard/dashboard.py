@@ -1090,7 +1090,7 @@ class Dashboard(QWidget):
         self.conclusion_box.setHtml("""
             <p style='color: #888; font-style: italic;'>
             No ECG data available yet.<br><br>
-            Start an ECG test or enable demo mode to see your personalized analysis and recommendations.
+            Start an ECG test to see your personalized analysis and recommendations.
             </p>
         """)
         
@@ -4698,7 +4698,7 @@ class Dashboard(QWidget):
                 self.conclusion_box.setHtml("""
                     <p style='color: #888; font-style: italic;'>
                     No ECG data available yet.<br><br>
-                    Start an ECG test or enable demo mode to see your personalized analysis and recommendations.
+                    Start an ECG test to see your personalized analysis and recommendations.
                     </p>
                 """)
 

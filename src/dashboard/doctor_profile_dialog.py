@@ -92,7 +92,7 @@ class DoctorProfileDialog(QDialog):
 
     def __init__(self, username: str, user_details: Optional[Dict[str, Any]] = None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Doctor Profile")
+        self.setWindowTitle("Profile Management")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setMinimumWidth(520)
 
@@ -135,7 +135,7 @@ class DoctorProfileDialog(QDialog):
         layout.setSpacing(20)
 
         # Main Header
-        title = QLabel("Doctor Profile")
+        title = QLabel("Profile Management")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
             "font: 900 18pt 'Segoe UI', Arial; color: white; "
@@ -179,8 +179,8 @@ class DoctorProfileDialog(QDialog):
         add_form_row("Full Name", self.full_name_edit)
 
         self.doctor_name_edit = QLineEdit()
-        self.doctor_name_edit.setPlaceholderText("Enter your professional name")
-        add_form_row("Professional Name", self.doctor_name_edit)
+        self.doctor_name_edit.setPlaceholderText("Enter your Doctor name")
+        add_form_row("Doctor Name", self.doctor_name_edit)
 
         self.org_name_edit = QLineEdit()
         self.org_name_edit.setPlaceholderText("Clinic or Hospital name")
