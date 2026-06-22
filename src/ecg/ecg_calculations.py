@@ -403,7 +403,8 @@ def calculateAdaptiveWindows(heart_rate: int, rr_interval_sec: float,
     elif 150 < heart_rate <= 250:
         # FIX High-HR QRS clipping: verify S-wave capture by widening offset
         # qrsOffsetFromR: 25 -> 45 samples (5th arg), tSearchStart: 40 (6th arg)
-        return AdaptiveWindows(15, 35, 45, 20, 45, 40, min(200, int(rr_samples * 0.80)))
+        # FIX High-HR PR clipping: widen maxPtoQRS to allow realistic PR values
+        return AdaptiveWindows(20, 60, 70, 20, 45, 40, min(200, int(rr_samples * 0.80)))
     else:  # > 250 BPM
         return AdaptiveWindows( 10,  20,  25,  15,  20,  25, min(110, int(rr_samples * 0.75)))
 
@@ -536,24 +537,26 @@ def detectPWavesImproved(data: np.ndarray, r_peaks: np.ndarray,
                 p_peaks.append(-1)
                 continue
 
-            # At high HR (>= 130 BPM) restrict search to the closest 40% of
-            # the window so we don't pick up the T-wave of the previous beat.
-            if heart_rate >= 130:
+            # At high HR, restrict search to avoid the T-wave of the previous beat.
+            # Smoothly taper the window from 150 BPM (100% window) to 200 BPM (40% window).
+            if heart_rate >= 200:
                 window_len = p_search_end - p_search_start
                 p_search_start = max(p_search_start,
                                      p_search_end - int(window_len * 0.40))
+            elif heart_rate > 150:
+                window_len = p_search_end - p_search_start
+                pct = 1.0 - 0.6 * ((heart_rate - 150) / 50.0)
+                p_search_start = max(p_search_start,
+                                     p_search_end - int(window_len * pct))
 
             p_seg = data[p_search_start:p_search_end]
             if len(p_seg) == 0:
                 p_peaks.append(-1)
                 continue
 
-            # For high HR, use absolute max (P-wave is small but distinct)
-            if heart_rate > 150:
-                p_rel = np.argmax(np.abs(p_seg))
-            else:
-                # Normal HR: find positive peak (standard P-wave)
-                p_rel = np.argmax(p_seg)
+            # Always find the positive peak (standard P-wave). 
+            # Using np.abs at high HR was causing it to latch onto the negative Q-wave / QRS-onset!
+            p_rel = np.argmax(p_seg)
 
             p_peak = p_search_start + p_rel
             p_peaks.append(p_peak)
