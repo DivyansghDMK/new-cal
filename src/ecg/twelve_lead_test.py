@@ -6992,10 +6992,33 @@ class ECGTestPage(QWidget):
             if 'qtc_interval' in self.metric_labels:
                 self.metric_labels['qtc_interval'].setText("--/--")
         
-        # Clear all wave plot data
+        # Clear all wave plot data (buffers + visible curves)
         if hasattr(self, 'data'):
             self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
-        
+
+        # Visually wipe every plot curve immediately so old waves are not
+        # visible when the user reconnects the device for a fresh session.
+        if hasattr(self, 'data_lines'):
+            for line in self.data_lines:
+                try:
+                    line.setData([], [])
+                except Exception:
+                    pass
+
+        # Clear report/replay buffers so reconnection truly starts fresh
+        if hasattr(self, '_report_buffers'):
+            for buf in self._report_buffers:
+                try:
+                    buf.clear()
+                except Exception:
+                    pass
+        if hasattr(self, '_replay_buffers'):
+            for buf in self._replay_buffers:
+                try:
+                    buf.clear()
+                except Exception:
+                    pass
+
         # Reset last values
         self.last_heart_rate = 0
         self.last_pr_interval = 0

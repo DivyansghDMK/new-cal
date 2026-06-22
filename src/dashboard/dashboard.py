@@ -225,7 +225,7 @@ class SignInDialog(QDialog):
 
 class StyledMessageBox(QDialog):
     @staticmethod
-    def show_message(parent, title, message, is_critical=False):
+    def show_message(parent, title, message, is_critical=False, auto_close_ms=None):
         dialog = QDialog(parent)
         dialog.setWindowTitle(title)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -279,6 +279,13 @@ class StyledMessageBox(QDialog):
         btn_layout.addStretch()
         
         layout.addLayout(btn_layout)
+        
+        # Auto-close after the given number of milliseconds (same behaviour as
+        # the "Device connected" notification in on_scan_finished).
+        if auto_close_ms is not None:
+            from PyQt5.QtCore import QTimer as _QT
+            _QT.singleShot(int(auto_close_ms), dialog.accept)
+        
         dialog.exec_()
     
 class DashboardHomeWidget(QWidget):

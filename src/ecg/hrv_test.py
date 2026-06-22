@@ -739,7 +739,7 @@ class HRVTestWindow(QWidget):
             
             StyledMessageBox.show_message(self, "Capture Started",
                                   f"{self.selected_lead} capture started. It will automatically stop after {int(self.duration_minutes)} {self._minutes_word()}.",
-                                  is_critical=False)
+                                  is_critical=False, auto_close_ms=500)
             
         except Exception as e:
             StyledMessageBox.show_message(self, "Error",
