@@ -2403,26 +2403,68 @@ class HolterExpertReviewPanel(QWidget):
                 item.setForeground(QColor(UI_TEXT))
                 self._template_table.setItem(i, j, item)
 
+        # Compute tachy/brady durations from summary
+        _dur_sec = float(summary.get('duration_sec', 0) or 0)
+        _total_beats = int(summary.get('total_beats', 0) or 1)
+        # Use pre-computed sec values if available (set by _build_summary_from_metrics)
+        if 'tachy_sec' in summary:
+            _tachy_sec = float(summary['tachy_sec'] or 0)
+            _brady_sec = float(summary['brady_sec'] or 0)
+            _tachy_pct = float(summary.get('tachy_pct', 0) or 0)
+            _brady_pct = float(summary.get('brady_pct', 0) or 0)
+        else:
+            _tachy_beats = int(summary.get('tachy_beats', 0) or 0)
+            _brady_beats = int(summary.get('brady_beats', 0) or 0)
+            _avg_rr_sec = (_dur_sec / _total_beats) if _total_beats > 0 and _dur_sec > 0 else 0.0
+            _tachy_sec = _tachy_beats * _avg_rr_sec
+            _brady_sec = _brady_beats * _avg_rr_sec
+            _tachy_pct = (_tachy_beats / _total_beats * 100) if _total_beats > 0 else 0.0
+            _brady_pct = (_brady_beats / _total_beats * 100) if _total_beats > 0 else 0.0
+        def _fmt_dur(sec):
+            s = int(sec); h = s // 3600; m = (s % 3600) // 60; ss = s % 60
+            return f"{h:02d}:{m:02d}:{ss:02d}"
+        _tachy_str = f"{_fmt_dur(_tachy_sec)} {_tachy_pct:.2f}%"
+        _brady_str = f"{_fmt_dur(_brady_sec)} {_brady_pct:.2f}%"
+
+        # Sinus HR from summary (falls back to max_hr/min_hr)
+        _sinus_max = summary.get('sinus_max_hr', summary.get('max_hr', 0))
+        _sinus_min = summary.get('sinus_min_hr', summary.get('min_hr', 0))
+        _sinus_max_t = summary.get('sinus_max_hr_time', '')
+        _sinus_min_t = summary.get('sinus_min_hr_time', '')
+        _max_hr_t = summary.get('max_hr_time', '')
+        _min_hr_t = summary.get('min_hr_time', '')
+
+        # AF duration from arrhythmia_counts
+        _af_count = int((summary.get('arrhythmia_counts') or {}).get('AF', 0))
+        _af_chunk_dur = 4.0  # each metric chunk ~4s
+        _af_sec = _af_count * _af_chunk_dur
+        _af_pct = (_af_sec / _dur_sec * 100) if _dur_sec > 0 else 0.0
+        _af_str = f"{_fmt_dur(_af_sec)} {_af_pct:.2f}%" if _af_count > 0 else "—"
+
+        def _hr_with_time(hr, t):
+            hr_str = f"{int(round(float(hr or 0)))}bpm"
+            return f"{hr_str} {t}" if t else hr_str
+
         rows = [
             ("Total", f"{summary.get('total_beats', 0)}"),
             ("X Total", f"{summary.get('pauses', 0)}"),
             ("AVG HR", f"{summary.get('avg_hr', 0):.0f} bpm"),
-            ("Max HR", f"{summary.get('max_hr', 0):.0f} bpm"),
-            ("Min HR", f"{summary.get('min_hr', 0):.0f} bpm"),
-            ("Sinus Max HR", f"{summary.get('max_hr', 0):.0f} bpm"),
-            ("Sinus Min HR", f"{summary.get('min_hr', 0):.0f} bpm"),
-            ("During of Tachy.", "00:00:00 0.0%"),
-            ("During of Brady.", "00:00:00 0.0%"),
+            ("Max HR", _hr_with_time(summary.get('max_hr', 0), _max_hr_t)),
+            ("Min HR", _hr_with_time(summary.get('min_hr', 0), _min_hr_t)),
+            ("Sinus Max HR", _hr_with_time(_sinus_max, _sinus_max_t)),
+            ("Sinus Min HR", _hr_with_time(_sinus_min, _sinus_min_t)),
+            ("During of Tachy.", _tachy_str),
+            ("During of Brady.", _brady_str),
             ("V Total", f"{summary.get('ve_beats', 0)}"),
             ("S Total", f"{summary.get('sve_beats', 0)}"),
             ("AVG HR of Af/AF", "—"),
-            ("Duration of Af/AF", "—"),
+            ("Duration of Af/AF", _af_str),
             ("Paced Beats", "0"),
             ("Pacing AVG HR", "—"),
             ("Pacing Max HR", "—"),
             ("Pacing Min HR", "—"),
             ("Longest RR", f"{summary.get('longest_rr_ms', 0)/1000:.2f}s"),
-            ("RRI (≥2.0s)", f"{summary.get('pauses', 0)}"),
+            ("RRI (\u22652.0s)", f"{summary.get('pauses', 0)}"),
             ("ST Elevation", "—"),
             ("ST Depression", "—"),
         ]
@@ -4460,7 +4502,10 @@ class HolterMainWindow(QDialog):
         else:
             self._summary = self._build_summary_from_metrics()
         if metadata and isinstance(metadata.get("summary"), dict):
-            self._summary = dict(metadata.get("summary") or self._summary)
+            meta_sum = dict(metadata.get("summary"))
+            if self._summary:
+                meta_sum.update(self._summary)
+            self._summary = meta_sum
 
     def _build_summary_from_metrics(self) -> dict:
         if not self._metrics_list:
@@ -4475,30 +4520,46 @@ class HolterMainWindow(QDialog):
         arrhy_counts: Dict[str, int] = {}
         beat_class_totals: Dict[str, int] = {}
         template_counts = []
+        tachy_sec = 0.0
+        brady_sec = 0.0
         for m in ml:
             for a in m.get('arrhythmias', []):
                 arrhy_counts[a] = arrhy_counts.get(a, 0) + 1
             for cls, count in (m.get('beat_class_counts', {}) or {}).items():
                 beat_class_totals[cls] = beat_class_totals.get(cls, 0) + int(count or 0)
             template_counts.append(int(m.get('template_count', 0) or 0))
+            chunk_dur = float(m.get('duration', 4.0) or 4.0)
+            hr_m = float(m.get('hr_mean', 0) or 0)
+            if hr_m > 100:
+                tachy_sec += chunk_dur
+            elif 0 < hr_m < 60:
+                brady_sec += chunk_dur
         all_rr = [m.get('longest_rr', 0) for m in ml]
+        # Find max/min HR chunks for timestamps
+        max_hr_chunk = max((m for m in ml if m.get('hr_mean', 0) > 0), key=lambda m: m.get('hr_mean', 0), default={})
+        min_hr_chunk = min((m for m in ml if m.get('hr_mean', 0) > 0), key=lambda m: m.get('hr_mean', 0), default={})
+        max_hr_t = float(max_hr_chunk.get('t', 0.0) or 0.0)
+        min_hr_t = float(min_hr_chunk.get('t', 0.0) or 0.0)
         focus = derive_hr_focus_summary(ml)
+        total_dur = _metrics_duration_sec(ml)
+        tachy_pct = (tachy_sec / total_dur * 100) if total_dur > 0 else 0.0
+        brady_pct = (brady_sec / total_dur * 100) if total_dur > 0 else 0.0
         return {
-            'duration_sec': _metrics_duration_sec(ml),
+            'duration_sec': total_dur,
             'total_beats': sum(beat_counts),
             'avg_hr': float(np.mean(hr_vals)) if hr_vals else 0.0,
             'max_hr': float(np.max(hr_vals)) if hr_vals else 0.0,
             'min_hr': float(np.min(hr_vals)) if hr_vals else 0.0,
-            'max_hr_time': focus.get('max_hr_time', ''),
-            'max_hr_timestamp': focus.get('max_hr_timestamp', 0.0),
-            'min_hr_time': focus.get('min_hr_time', ''),
-            'min_hr_timestamp': focus.get('min_hr_timestamp', 0.0),
+            'max_hr_time': _sec_to_hms(max_hr_t),
+            'max_hr_timestamp': max_hr_t,
+            'min_hr_time': _sec_to_hms(min_hr_t),
+            'min_hr_timestamp': min_hr_t,
             'sinus_max_hr': focus.get('sinus_max_hr', float(np.max(hr_vals)) if hr_vals else 0.0),
             'sinus_min_hr': focus.get('sinus_min_hr', float(np.min(hr_vals)) if hr_vals else 0.0),
-            'sinus_max_hr_time': focus.get('sinus_max_hr_time', ''),
-            'sinus_max_hr_timestamp': focus.get('sinus_max_hr_timestamp', 0.0),
-            'sinus_min_hr_time': focus.get('sinus_min_hr_time', ''),
-            'sinus_min_hr_timestamp': focus.get('sinus_min_hr_timestamp', 0.0),
+            'sinus_max_hr_time': focus.get('sinus_max_hr_time', _sec_to_hms(max_hr_t)),
+            'sinus_max_hr_timestamp': focus.get('sinus_max_hr_timestamp', max_hr_t),
+            'sinus_min_hr_time': focus.get('sinus_min_hr_time', _sec_to_hms(min_hr_t)),
+            'sinus_min_hr_timestamp': focus.get('sinus_min_hr_timestamp', min_hr_t),
             'sdnn': float(np.mean(rr_stds)) if rr_stds else 0.0,
             'rmssd': float(np.mean(rmssds)) if rmssds else 0.0,
             'pnn50': float(np.mean(pnn50s)) if pnn50s else 0.0,
@@ -4507,6 +4568,10 @@ class HolterMainWindow(QDialog):
             'longest_rr_ms': max(all_rr) if all_rr else 0,
             'tachy_beats': sum(m.get('tachy_beats', 0) for m in ml),
             'brady_beats': sum(m.get('brady_beats', 0) for m in ml),
+            'tachy_sec': tachy_sec,
+            'brady_sec': brady_sec,
+            'tachy_pct': tachy_pct,
+            'brady_pct': brady_pct,
             'pauses': sum(m.get('pauses', 0) for m in ml),
             'avg_st_mv': float(np.mean([m.get('st_mv', 0) for m in ml])),
             'patient_info': self.patient_info,
@@ -5000,6 +5065,20 @@ class HolterMainWindow(QDialog):
             self._refresh_ui()
         if hasattr(self, '_wave_panel'):
             self._wave_panel.refresh_waveforms()
+        # Also refresh _replay_panel lead strips from live data on every tick
+        if hasattr(self, '_replay_panel') and not self._replay_engine and self._live_source is not None:
+            try:
+                raw = getattr(self._live_source, 'data', None)
+                if raw is not None and hasattr(raw, '__len__') and len(raw) > 0:
+                    import numpy as _np
+                    n_samp = max(len(raw[i]) for i in range(min(12, len(raw))))
+                    arr = _np.full((12, n_samp), 2048.0)
+                    for i in range(min(12, len(raw))):
+                        ch = _np.asarray(raw[i], dtype=float)
+                        arr[i, :len(ch)] = ch
+                    self._replay_panel.set_replay_frame(arr)
+            except Exception:
+                pass
         if snapshot is None and stats['elapsed'] % 15 < 2:
             self._load_session()
             self._refresh_ui()
@@ -5017,6 +5096,22 @@ class HolterMainWindow(QDialog):
             self._hrv_panel.update_hrv(self._metrics_list, self._summary)
         if hasattr(self, '_replay_panel'):
             self._replay_panel.update_lorenz(self._metrics_list)
+            self._replay_panel.update_summary(self._summary)
+            # During live recording (no replay engine), push current live ECG frame
+            if not self._replay_engine and self._live_source is not None:
+                try:
+                    raw = getattr(self._live_source, 'data', None)
+                    if raw is not None and hasattr(raw, '__len__') and len(raw) > 0:
+                        import numpy as _np
+                        # Build a 12-channel array from live_source.data
+                        n_samp = max(len(raw[i]) for i in range(min(12, len(raw))))
+                        arr = _np.full((12, n_samp), 2048.0)
+                        for i in range(min(12, len(raw))):
+                            ch = _np.asarray(raw[i], dtype=float)
+                            arr[i, :len(ch)] = ch
+                        self._replay_panel.set_replay_frame(arr)
+                except Exception:
+                    pass
         if hasattr(self, '_lorenz_panel'):
             self._lorenz_panel.update_lorenz(self._metrics_list)
         if hasattr(self, '_hist_panel'):

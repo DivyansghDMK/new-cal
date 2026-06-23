@@ -1183,6 +1183,49 @@ class LoginRegisterDialog(QDialog):
         # Ensure background is always visible
         self.ensure_background_visible()
 
+    def closeEvent(self, event):
+        """Ensure any hardware connection is explicitly closed when exiting the app from the login screen."""
+        try:
+            if hasattr(self, 'device_check_timer') and self.device_check_timer:
+                self.device_check_timer.stop()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'scan_worker') and self.scan_worker and self.scan_worker.isRunning():
+                self.scan_worker.requestInterruption()
+                self.scan_worker.terminate()
+        except Exception:
+            pass
+
+        # Forcefully send STOP and CLOSE to the saved port to free it
+        try:
+            if hasattr(self, 'settings_manager'):
+                saved_port = self.settings_manager.get_setting("serial_port")
+                if saved_port:
+                    import serial
+                    from ecg.serial.hardware_commands import HardwareCommandHandler
+                    print(f"Forcing hardware STOP and CLOSE on {saved_port} during app exit...")
+                    # Open port briefly just to send the commands
+                    ser = serial.Serial(saved_port, 115200, timeout=0.2, write_timeout=0.2)
+                    handler = HardwareCommandHandler(ser)
+                    handler.send_stop_command()
+                    handler.send_close_command()
+                    ser.close()
+                    print(f"COM port {saved_port} explicitly freed.")
+        except Exception as e:
+            print(f"Error sending exit commands on login screen close: {e}")
+
+        try:
+            from ecg.serial.serial_reader import GlobalHardwareManager
+            manager = GlobalHardwareManager()
+            if getattr(manager, 'reader', None):
+                manager.close_reader()
+        except Exception as e:
+            pass
+
+        super().closeEvent(event)
+
     def check_device_connection(self):
         """Monitor USB connection to auto-populate machine serial ID"""
         if self._device_scan_in_progress:
