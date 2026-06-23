@@ -332,8 +332,15 @@ class HolterStartDialog(QDialog):
         self._gender.addItems(["Select", "Male", "Female", "Other"])
         idx = self._gender.findText(info.get("gender", info.get("sex", "Select")))
         if idx >= 0: self._gender.setCurrentIndex(idx)
-        self._gender.setStyleSheet(f"QComboBox{{border:1px solid {COL_GREEN_DRK};border-radius:4px;padding:8px;"
-                                   f"font-size:13px;background:{COL_DARK};color:{COL_GREEN};}}")
+        self._gender.setStyleSheet(f"""
+            QComboBox {{
+                border:1px solid {COL_GREEN_DRK}; border-radius:4px; padding:8px;
+                background:{COL_DARK}; color:{COL_GREEN};
+            }}
+            QComboBox QAbstractItemView {{
+                background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
+            }}
+        """)
         pg_layout.addWidget(lbl_g, len(fields), 0)
         pg_layout.addWidget(self._gender, len(fields), 1)
         layout.addWidget(pg)
@@ -349,8 +356,15 @@ class HolterStartDialog(QDialog):
         dur_lbl.setStyleSheet(f"font-weight:bold;font-size:13px;color:{COL_GREEN};")
         self._duration = QComboBox()
         self._duration.addItems(["24 hours", "48 hours", "Custom"])
-        self._duration.setStyleSheet(f"border:1px solid {COL_GREEN_DRK};border-radius:4px;padding:8px;"
-                                     f"font-size:13px;background:{COL_DARK};color:{COL_GREEN};")
+        self._duration.setStyleSheet(f"""
+            QComboBox {{
+                border:1px solid {COL_GREEN_DRK}; border-radius:4px; padding:8px;
+                background:{COL_DARK}; color:{COL_GREEN};
+            }}
+            QComboBox QAbstractItemView {{
+                background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
+            }}
+        """)
         self._duration.currentTextChanged.connect(lambda t: self._custom_hours.setVisible(t == "Custom"))
         rg_layout.addWidget(dur_lbl, 0, 0)
         rg_layout.addWidget(self._duration, 0, 1)
@@ -2064,53 +2078,156 @@ class MagnifierOverlay(QWidget):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterRRTrendCanvas(QWidget):
-    """Compact RR trend strip used in expert review header."""
+    """Compact RR trend strip matching Holter Expert reference: dark bg, grid, Y-axis 0-2000ms, time labels."""
 
     def __init__(self, parent=None, title="RR Interval"):
         super().__init__(parent)
         self._title = title
-        self._points = []  # [(time_sec, rr_ms), ...]
-        self.setMinimumHeight(72)
-        self.setStyleSheet(f"background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:6px;")
+        self._points = []        # [(time_sec, rr_ms), ...]
+        self._start_epoch = None # unix epoch for beat 0, used for HH:MM labels
+        self._show_hr = False    # False=RR ms, True=HR bpm
+        self._selection_range = None  # (t_start, t_end) cyan box for zoom indicator
+        self.setMinimumHeight(80)
+        self.setStyleSheet("background:#0a1520;border:1px solid #1e3350;border-radius:4px;")
 
-    def set_points(self, points):
+    # ------------------------------------------------------------------ API --
+    def set_points(self, points, start_epoch=None):
         self._points = list(points or [])
+        if start_epoch is not None:
+            self._start_epoch = start_epoch
         self.update()
 
+    def set_selection(self, t_start, t_end):
+        """Mark a time window with a cyan box (used on the Full chart to show Recent window)."""
+        self._selection_range = (t_start, t_end)
+        self.update()
+
+    # ---------------------------------------------------------- paintEvent --
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(UI_PANEL))
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
         w, h = self.width(), self.height()
-        inner = QRect(10, 18, max(1, w - 20), max(1, h - 28))
-        painter.setPen(QPen(QColor(UI_BORDER), 1))
-        painter.drawRect(inner)
-        painter.setPen(QPen(QColor(UI_MUTED), 1))
-        painter.drawText(12, 13, self._title)
 
+        # ── Background ──────────────────────────────────────────────────────
+        painter.fillRect(self.rect(), QColor("#0a1520"))
+
+        # Margins: left for Y-axis, bottom for X-axis
+        LM, RM, TM, BM = 42, 6, 16, 18
+        iw = max(1, w - LM - RM)
+        ih = max(1, h - TM - BM)
+        inner = QRect(LM, TM, iw, ih)
+
+        # ── Title (top-left) ─────────────────────────────────────────────────
+        painter.setPen(QPen(QColor("#6a9ab8"), 1))
+        painter.setFont(QFont("Arial", 8, QFont.Normal))
+        painter.drawText(LM, 11, self._title)
+
+        # ── Y-axis config ────────────────────────────────────────────────────
+        if self._show_hr:
+            y_min, y_max = 20, 220
+            y_ticks = [40, 80, 120, 160, 200]
+        else:
+            y_min, y_max = 0, 2000
+            y_ticks = [0, 500, 1000, 1500, 2000]
+        y_rng = float(y_max - y_min)
+
+        def to_y(val):
+            v = max(y_min, min(y_max, val))
+            return inner.bottom() - int(((v - y_min) / y_rng) * ih)
+
+        # ── Horizontal grid lines + Y labels ─────────────────────────────────
+        painter.setFont(QFont("Arial", 7))
+        for yv in y_ticks:
+            yp = to_y(yv)
+            painter.setPen(QPen(QColor("#142030"), 1))
+            painter.drawLine(inner.left(), yp, inner.right(), yp)
+            painter.setPen(QPen(QColor("#4a6a80"), 1))
+            lbl = str(yv)
+            painter.drawText(2, yp + 4, lbl)
+
+        # ── No data message ──────────────────────────────────────────────────
         if not self._points:
-            painter.setPen(QPen(QColor(UI_MUTED), 1))
+            painter.setPen(QPen(QColor("#3a5a70"), 1))
+            painter.setFont(QFont("Arial", 9))
             painter.drawText(inner, Qt.AlignCenter, "No RR data")
+            painter.setPen(QPen(QColor("#1e3350"), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(inner)
             return
 
+        # ── Time range ───────────────────────────────────────────────────────
         t_vals = [p[0] for p in self._points]
-        rr_vals = [p[1] for p in self._points if p[1] > 0]
-        if not rr_vals:
-            return
-        t_min, t_max = min(t_vals), max(t_vals)
+        t_min = min(t_vals)
+        t_max = max(t_vals)
         if t_max <= t_min:
             t_max = t_min + 1.0
-        rr_min, rr_max = min(rr_vals), max(rr_vals)
-        rr_rng = max(1.0, rr_max - rr_min)
+        t_rng = float(t_max - t_min)
 
+        def to_x(t):
+            return inner.left() + int(((t - t_min) / t_rng) * iw)
+
+        # ── Vertical grid every ~2 hours ─────────────────────────────────────
+        grid_interval = 7200.0  # 2 hours in seconds
+        t_grid = (int(t_min / grid_interval) + 1) * grid_interval
+        while t_grid < t_max:
+            xp = to_x(t_grid)
+            painter.setPen(QPen(QColor("#142030"), 1))
+            painter.drawLine(xp, inner.top(), xp, inner.bottom())
+            t_grid += grid_interval
+
+        # ── Scatter dots ─────────────────────────────────────────────────────
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(UI_SUCCESS)))
-        for t, rr in self._points:
-            if rr <= 0:
-                continue
-            px = int(inner.left() + ((t - t_min) / (t_max - t_min)) * inner.width())
-            py = int(inner.bottom() - ((rr - rr_min) / rr_rng) * inner.height())
-            painter.drawEllipse(px - 1, py - 1, 3, 3)
+        painter.setBrush(QBrush(QColor("#00cc44")))
 
+        # Sub-sample for performance (max ~4000 dots)
+        step = max(1, len(self._points) // 4000)
+        for i in range(0, len(self._points), step):
+            t, rr = self._points[i]
+            if self._show_hr:
+                val = (60000.0 / rr) if rr > 0 else 0
+            else:
+                val = float(rr)
+            if val <= 0:
+                continue
+            px = to_x(t)
+            py = to_y(val)
+            painter.drawEllipse(px - 1, py - 1, 2, 2)
+
+        # ── Cyan selection box ───────────────────────────────────────────────
+        if self._selection_range is not None:
+            rs, re_t = self._selection_range
+            sx = max(inner.left(), min(inner.right(), to_x(rs)))
+            ex = max(inner.left(), min(inner.right(), to_x(re_t)))
+            painter.setPen(QPen(QColor("#00cccc"), 1))
+            painter.setBrush(QBrush(QColor(0, 204, 204, 30)))
+            painter.drawRect(sx, inner.top(), max(2, ex - sx), ih)
+
+        # ── X-axis time labels ───────────────────────────────────────────────
+        painter.setPen(QPen(QColor("#4a6a80"), 1))
+        painter.setFont(QFont("Arial", 7))
+        import datetime as _dt
+        n_xticks = max(2, min(8, iw // 75))
+        for i in range(n_xticks + 1):
+            frac = i / float(n_xticks)
+            t_at = t_min + frac * t_rng
+            xp = inner.left() + int(frac * iw)
+            painter.setPen(QPen(QColor("#1e3350"), 1))
+            painter.drawLine(xp, inner.bottom(), xp, inner.bottom() + 3)
+            painter.setPen(QPen(QColor("#4a6a80"), 1))
+            if self._start_epoch is not None:
+                ts = _dt.datetime.fromtimestamp(self._start_epoch + t_at)
+                label = ts.strftime("%H:%M")
+            else:
+                hrs = int(t_at // 3600)
+                mins = int((t_at % 3600) // 60)
+                label = f"{hrs:02d}:{mins:02d}"
+            painter.drawText(xp - 14, inner.bottom() + BM - 2, label)
+
+        # ── Border ───────────────────────────────────────────────────────────
+        painter.setPen(QPen(QColor("#1e3350"), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(inner)
 
 class HolterExpertReviewPanel(QWidget):
     """HolterExpert-inspired review layout: trend + Lorenz + strips + overview."""
@@ -2156,19 +2273,62 @@ class HolterExpertReviewPanel(QWidget):
         left_l.addWidget(self._template_table, 1)
         body.addWidget(left)
 
+        # ── Center: scrollable 12-lead ECG grid ──
         center = QFrame()
-        center.setStyleSheet(f"QFrame{{background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:8px;}}")
+        center.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {UI_BORDER};border-radius:8px;}}")
         center_l = QVBoxLayout(center)
-        center_l.setContentsMargins(8, 8, 8, 8)
-        center_l.setSpacing(6)
-        self._ch1 = ECGStripCanvas(height=170, color="#22E36E", pen_width=1.0)
-        self._ch2 = ECGStripCanvas(height=170, color="#22E36E", pen_width=1.0)
-        self._ch3 = ECGStripCanvas(height=170, color="#22E36E", pen_width=1.0)
-        self._mini = ECGStripCanvas(height=48, color="#1BC35F", pen_width=0.9)
-        center_l.addWidget(self._ch1, 1)
-        center_l.addWidget(self._ch2, 1)
-        center_l.addWidget(self._ch3, 1)
-        center_l.addWidget(self._mini)
+        center_l.setContentsMargins(4, 4, 4, 4)
+        center_l.setSpacing(0)
+
+        # 12-lead header
+        hdr = QLabel("12-Lead ECG Overview")
+        hdr.setStyleSheet(f"color:{UI_TEXT};font-size:11px;font-weight:700;padding:4px 6px;border:none;")
+        center_l.addWidget(hdr)
+
+        leads_scroll = QScrollArea()
+        leads_scroll.setWidgetResizable(True)
+        leads_scroll.setFrameShape(QFrame.NoFrame)
+        leads_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        leads_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        leads_scroll.setStyleSheet(f"QScrollArea{{background:{COL_BLACK};border:none;}}")
+        leads_container = QWidget()
+        leads_container.setStyleSheet(f"background:{COL_BLACK};")
+        leads_vbox = QVBoxLayout(leads_container)
+        leads_vbox.setContentsMargins(2, 2, 2, 2)
+        leads_vbox.setSpacing(2)
+
+        self._lead_names_12 = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
+        self._expert_lead_strips = {}  # lead_name -> ECGStripCanvas
+        for lead in self._lead_names_12:
+            row_h = QHBoxLayout()
+            row_h.setContentsMargins(0, 0, 0, 0)
+            row_h.setSpacing(4)
+            lbl = QLabel(lead)
+            lbl.setFixedWidth(34)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead)
+            strip.set_gain(1.0)
+            self._expert_lead_strips[lead] = strip
+            row_h.addWidget(lbl)
+            row_h.addWidget(strip, 1)
+            leads_vbox.addLayout(row_h)
+
+        leads_scroll.setWidget(leads_container)
+        center_l.addWidget(leads_scroll, 1)
+
+        # Rhythm strip at bottom (Lead II)
+        rhythm_row = QHBoxLayout()
+        rhythm_row.setSpacing(4)
+        rlbl = QLabel("II")
+        rlbl.setFixedWidth(34)
+        rlbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        rlbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
+        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9)
+        rhythm_row.addWidget(rlbl)
+        rhythm_row.addWidget(self._mini, 1)
+        center_l.addLayout(rhythm_row)
+
         body.addWidget(center)
 
         right = QFrame()
@@ -2203,9 +2363,26 @@ class HolterExpertReviewPanel(QWidget):
             step = (dur / n) if dur > 0 else 0.2
             for i, rr in enumerate(rr_list):
                 rr_points.append((t0 + i * step, float(rr)))
-        self._rr_trend_full.set_points(rr_points)
-        recent = rr_points[-1200:] if len(rr_points) > 1200 else rr_points
-        self._rr_trend_zoom.set_points(recent)
+
+
+
+        start_epoch = summary.get("start_time_epoch", None)
+        self._rr_trend_full.set_points(rr_points, start_epoch)
+        
+        # Recent is the last 4 hours (14400 seconds)
+        if rr_points:
+            t_max = rr_points[-1][0]
+            recent = [p for p in rr_points if p[0] >= t_max - 14400]
+            if not recent:
+                recent = rr_points[-4000:]
+        else:
+            recent = []
+            
+        self._rr_trend_zoom.set_points(recent, start_epoch)
+        
+        if recent and rr_points:
+            self._rr_trend_full.set_selection(recent[0][0], recent[-1][0])
+            
         x = [p[1] for p in recent[:-1]] if len(recent) > 1 else []
         y = [p[1] for p in recent[1:]] if len(recent) > 1 else []
         self._lorenz.set_data(x, y)
@@ -2232,8 +2409,18 @@ class HolterExpertReviewPanel(QWidget):
             ("AVG HR", f"{summary.get('avg_hr', 0):.0f} bpm"),
             ("Max HR", f"{summary.get('max_hr', 0):.0f} bpm"),
             ("Min HR", f"{summary.get('min_hr', 0):.0f} bpm"),
+            ("Sinus Max HR", f"{summary.get('max_hr', 0):.0f} bpm"),
+            ("Sinus Min HR", f"{summary.get('min_hr', 0):.0f} bpm"),
+            ("During of Tachy.", "00:00:00 0.0%"),
+            ("During of Brady.", "00:00:00 0.0%"),
             ("V Total", f"{summary.get('ve_beats', 0)}"),
             ("S Total", f"{summary.get('sve_beats', 0)}"),
+            ("AVG HR of Af/AF", "—"),
+            ("Duration of Af/AF", "—"),
+            ("Paced Beats", "0"),
+            ("Pacing AVG HR", "—"),
+            ("Pacing Max HR", "—"),
+            ("Pacing Min HR", "—"),
             ("Longest RR", f"{summary.get('longest_rr_ms', 0)/1000:.2f}s"),
             ("RRI (≥2.0s)", f"{summary.get('pauses', 0)}"),
             ("ST Elevation", "—"),
@@ -2253,13 +2440,17 @@ class HolterExpertReviewPanel(QWidget):
             return
         n = data.shape[1]
         x = np.arange(n, dtype=float) / 500.0
-        if data.shape[0] > 0:
-            self._ch1.set_data(x, data[0].copy())
-            self._mini.set_data(x, data[0].copy())
+        # Feed all 12 leads to the new lead-strip dict
+        for i, lead in enumerate(self._lead_names_12):
+            if i < data.shape[0]:
+                strip = self._expert_lead_strips.get(lead)
+                if strip:
+                    strip.set_data(x, data[i].copy())
+        # Rhythm strip: Lead II (index 1)
         if data.shape[0] > 1:
-            self._ch2.set_data(x, data[1].copy())
-        if data.shape[0] > 2:
-            self._ch3.set_data(x, data[2].copy())
+            self._mini.set_data(x, data[1].copy())
+        elif data.shape[0] > 0:
+            self._mini.set_data(x, data[0].copy())
 
     def _on_template_clicked(self, row, _col):
         if 0 <= row < len(self._template_rows):
@@ -2797,8 +2988,15 @@ class HolterRecordManagementPanel(QWidget):
         self._search.textChanged.connect(self.refresh_records)
         self._filter = QComboBox()
         self._filter.addItems(["All", "Today", "Yesterday", "This Week", "This Month", "This Year"])
-        self._filter.setStyleSheet(f"QComboBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
-                                   f"border-radius:4px;padding:6px;font-size:12px;}}")
+        self._filter.setStyleSheet(f"""
+            QComboBox {{
+                background:{COL_DARK}; color:{COL_GREEN}; border:1px solid {COL_GREEN_DRK};
+                border-radius:4px; padding:6px; font-size:12px;
+            }}
+            QComboBox QAbstractItemView {{
+                background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
+            }}
+        """)
         self._filter.currentTextChanged.connect(self.refresh_records)
         actions.addWidget(QLabel("Search:", styleSheet=f"color:{COL_GREEN};font-size:12px;"))
         actions.addWidget(self._search, 2)
@@ -2862,7 +3060,28 @@ class HolterRecordManagementPanel(QWidget):
             parts = name.split("_", 3)
             rec_time = "_".join(parts[:2]).replace("_", " ") if len(parts) >= 2 else name[:19]
             p_name = parts[-1].replace("_", " ") if len(parts) >= 3 else "Unknown"
-            row_values = [p_name, "-", "-", rec_time, "-", "3", rec_time, "Completed", "System", "-"]
+            dur_str = "-"
+            try:
+                session_json = os.path.join(session_dir, "session.json")
+                if os.path.exists(session_json):
+                    import json
+                    with open(session_json, 'r') as f:
+                        sdata = json.load(f)
+                    dur_sec = sdata.get('summary', {}).get('duration_sec', 0)
+                    if dur_sec > 0:
+                        h = int(dur_sec // 3600)
+                        m = int((dur_sec % 3600) // 60)
+                        s = int(dur_sec % 60)
+                        if h > 0:
+                            dur_str = f"{h}h {m:02d}m"
+                        elif m > 0:
+                            dur_str = f"{m}m {s:02d}s"
+                        else:
+                            dur_str = f"{s}s"
+            except Exception:
+                pass
+
+            row_values = [p_name, "-", "-", rec_time, dur_str, "3", rec_time, "Completed", "System", "-"]
             if query and not any(query in str(v).lower() for v in row_values): continue
             rows.append((row_values, session_dir))
 
@@ -2988,8 +3207,15 @@ class HolterHistogramPanel(QWidget):
         title_row.addWidget(title, 1)
         self._type_combo = QComboBox()
         self._type_combo.addItems(["RR Interval", "Heart Rate", "RRI Ratio"])
-        self._type_combo.setStyleSheet(f"QComboBox{{background:{COL_DARK};color:{COL_GREEN};"
-                                       f"border:1px solid {COL_GREEN_DRK};padding:4px;border-radius:4px;}}")
+        self._type_combo.setStyleSheet(f"""
+            QComboBox {{
+                background:{COL_DARK}; color:{COL_GREEN};
+                border:1px solid {COL_GREEN_DRK}; padding:4px; border-radius:4px;
+            }}
+            QComboBox QAbstractItemView {{
+                background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
+            }}
+        """)
         self._type_combo.currentTextChanged.connect(lambda _: self._draw())
         title_row.addWidget(self._type_combo)
         layout.addLayout(title_row)
@@ -3550,7 +3776,15 @@ class HolterEditEventPanel(QWidget):
         self._annot_auto.setStyleSheet(self._annot_event_id.styleSheet())
         self._annot_clin = QComboBox()
         self._annot_clin.addItems(["", "N", "S", "V", "AF", "Pause", "Tachy", "Brady", "Other"])
-        self._annot_clin.setStyleSheet(f"QComboBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        self._annot_clin.setStyleSheet(f"""
+            QComboBox {{
+                background:{COL_DARK}; color:{COL_GREEN}; border:1px solid {COL_GREEN_DRK};
+                padding:5px; border-radius:4px;
+            }}
+            QComboBox QAbstractItemView {{
+                background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
+            }}
+        """)
         self._annot_conf = QDoubleSpinBox()
         self._annot_conf.setRange(0.0, 1.0)
         self._annot_conf.setSingleStep(0.05)
@@ -4288,7 +4522,7 @@ class HolterMainWindow(QDialog):
             return -1
         target = (name or '').strip().lower()
         aliases = {
-            'overview': 'preview',
+            'overview': 'overview',
             'view': 'preview',
             'report': 'preview',
             'preview': 'preview',
@@ -4367,7 +4601,9 @@ class HolterMainWindow(QDialog):
         elif key in {'reanalysis', 'replay'}:
             self._refresh_current_session()
             self._focus_tab('REPLAY')
-        elif key in {'overview', 'preview', 'view', 'report', 'edit report'}:
+        elif key in {'overview'}:
+            self._focus_tab('OVERVIEW')
+        elif key in {'preview', 'view', 'report', 'edit report'}:
             self._focus_tab('Preview')
         elif key == 'template':
             self._focus_tab('TEMPLATE')
@@ -4549,6 +4785,12 @@ class HolterMainWindow(QDialog):
             }}
         """)
 
+        # ── OVERVIEW tab (12-lead scrollable expert view) ──
+        self._expert_panel = HolterExpertReviewPanel()
+        self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
+        self._expert_panel.seek_requested.connect(self._on_seek_requested)
+        self._tabs.addTab(self._expert_panel, "OVERVIEW")
+
         # Replay
         duration = self._summary.get('duration_sec', self._duration_hours * 3600)
         self._replay_panel = HolterReplayPanel(duration_sec=duration)
@@ -4620,10 +4862,8 @@ class HolterMainWindow(QDialog):
         self._report_table_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._report_table_panel, "REPORT TABLE")
 
-        # Expert Review (available but not in tabs)
-        self._expert_panel = HolterExpertReviewPanel()
-        self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
-        self._expert_panel.seek_requested.connect(self._on_seek_requested)
+        # Expert Review (OVERVIEW tab) already added as first tab above
+        # kept here as comment for clarity – see OVERVIEW tab creation at top of tabs section
 
         # HRV Analysis
         self._hrv_panel = HolterHRVPanel()
@@ -4646,6 +4886,16 @@ class HolterMainWindow(QDialog):
         self._insight_panel.update_text(self.patient_info, self._summary)
         scroll_insight.setWidget(self._insight_panel)
         self._tabs.addTab(scroll_insight, "Preview")
+
+        # Hide the bottom analysis tab bar when looking at global "RECORDINGS" tab to avoid confusion
+        def _on_tab_changed(index):
+            if self._tabs.tabText(index) == "RECORDINGS":
+                self._tabs.tabBar().setVisible(False)
+            else:
+                self._tabs.tabBar().setVisible(True)
+        self._tabs.currentChanged.connect(_on_tab_changed)
+        # Ensure initial state is correct
+        _on_tab_changed(self._tabs.currentIndex())
 
         right_layout.addWidget(self._tabs)
         self._tabs.currentChanged.connect(
