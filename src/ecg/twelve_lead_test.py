@@ -1599,7 +1599,7 @@ class ECGTestPage(QWidget):
 
     def _get_replay_view_seconds(self) -> float:
         try:
-            wave_speed = float(self.settings_manager.get_wave_speed())
+            wave_speed = 25.0 if getattr(self, '_overlay_active', False) else float(self.settings_manager.get_wave_speed())
         except Exception:
             wave_speed = 25.0
         wave_speed = max(1e-6, wave_speed)
@@ -4563,7 +4563,7 @@ class ECGTestPage(QWidget):
             print(" Plots not initialized yet, skipping title update")
             return
             
-        current_speed = self.settings_manager.get_wave_speed()
+        current_speed = 25.0 if getattr(self, '_overlay_active', False) else self.settings_manager.get_wave_speed()
         current_gain = self.settings_manager.get_wave_gain()
         
         print(f"Updating titles: Speed={current_speed}mm/s, Gain={current_gain}mm/mV")
@@ -4581,7 +4581,7 @@ class ECGTestPage(QWidget):
 
     def apply_display_settings(self):
         
-        wave_speed = self.settings_manager.get_wave_speed()
+        wave_speed = 25.0 if getattr(self, '_overlay_active', False) else self.settings_manager.get_wave_speed()
         wave_gain = self.settings_manager.get_wave_gain()
         
         # Higher speed = more samples per second = larger buffer for same time window
@@ -5699,7 +5699,7 @@ class ECGTestPage(QWidget):
             data = get_lead_data()
 
             current_gain = self.settings_manager.get_wave_gain()
-            current_speed = self.settings_manager.get_wave_speed()
+            current_speed = 25.0 if getattr(self, '_overlay_active', False) else self.settings_manager.get_wave_speed()
 
             # Robust: Only plot if enough data, else show blank
             if data and len(data) >= 10:
@@ -6026,7 +6026,7 @@ class ECGTestPage(QWidget):
                             self.axs[i].set_xlim(0, self.buffer_size)
                             
                             # Update plot title with current settings and signal source
-                            current_speed = self.settings_manager.get_wave_speed()
+                            current_speed = 25.0 if getattr(self, '_overlay_active', False) else self.settings_manager.get_wave_speed()
                             current_gain = self.settings_manager.get_wave_gain()
                             signal_type = "Body" if signal_source in ["human_body", "weak_body"] else "Hardware"
                             new_title = f"{lead} | Speed: {current_speed}mm/s | Gain: {current_gain}mm/mV | {signal_type}"
@@ -7422,7 +7422,7 @@ class ECGTestPage(QWidget):
                             self.axs[i].set_xlim(0, self.buffer_size)
 
                             # Update title with current settings
-                            current_speed = self.settings_manager.get_wave_speed()
+                            current_speed = 25.0 if getattr(self, '_overlay_active', False) else self.settings_manager.get_wave_speed()
                             current_gain = self.settings_manager.get_wave_gain()
                             self.axs[i].set_title(f"{lead} | Speed: {current_speed}mm/s | Gain: {current_gain}mm/mV", 
                                                 fontsize=8, color='#666', pad=10)
@@ -8248,7 +8248,7 @@ class ECGTestPage(QWidget):
         For demo mode, use same calculation as main 12 lead grid view to match wave peaks.
         """
         try:
-            wave_speed = float(self.settings_manager.get_wave_speed())
+            wave_speed = 25.0 if getattr(self, '_overlay_active', False) else float(self.settings_manager.get_wave_speed())
         except Exception:
             wave_speed = 25.0
 
@@ -8761,7 +8761,7 @@ class ECGTestPage(QWidget):
                     wave_speed_mm_s = 25.0
                     try:
                         if hasattr(self, "settings_manager"):
-                            wave_speed_mm_s = float(self.settings_manager.get_wave_speed())
+                            wave_speed_mm_s = 25.0 if getattr(self, '_overlay_active', False) else float(self.settings_manager.get_wave_speed())
                     except Exception:
                         wave_speed_mm_s = 25.0
 
@@ -9758,7 +9758,7 @@ class ECGTestPage(QWidget):
                 if not render_now:
                     return
                 try:
-                    wave_speed = float(self.settings_manager.get_wave_speed())
+                    wave_speed = 25.0 if getattr(self, '_overlay_active', False) else float(self.settings_manager.get_wave_speed())
                 except Exception:
                     wave_speed = 25.0
 
@@ -10226,7 +10226,7 @@ class ECGTestPage(QWidget):
                 
                 # Get current wave speed for time scaling
                 try:
-                    wave_speed = float(self.settings_manager.get_wave_speed())
+                    wave_speed = 25.0 if getattr(self, '_overlay_active', False) else float(self.settings_manager.get_wave_speed())
                 except Exception:
                     wave_speed = 25.0
                 
