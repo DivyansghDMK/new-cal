@@ -868,11 +868,10 @@ class HyperkalemiaTestWindow(QWidget):
             try:
                 if hasattr(self.serial_reader, "command_handler") and self.serial_reader.command_handler:
                     self.serial_reader.command_handler.send_stop_command()
-                    # Re-send START so the shared hardware stream keeps flowing
-                    # for other consumers (12-lead test, Dashboard, etc.)
-                    self.serial_reader.command_handler.send_start_command(quiet=True)
+                # Reset running state so other tests can send START command
+                self.serial_reader.running = False
             except Exception as e:
-                print(f"[HyperkalemiaTest] Error sending stop/start command: {e}")
+                print(f"[HyperkalemiaTest] Error sending stop command: {e}")
             self.serial_reader = None
         
         # ── Stop HolterBPMController ────────────────────────────────────────
