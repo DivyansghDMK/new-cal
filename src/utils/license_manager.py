@@ -770,7 +770,7 @@ def token_file_exists() -> bool:
 # Server Communication
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _post_json(endpoint: str, body: Dict, timeout: int = 12) -> Dict:
+def _post_json(endpoint: str, body: Dict, timeout: int = 5) -> Dict:
     """Send a signed JSON POST to the license server."""
     import urllib.request
     import urllib.error

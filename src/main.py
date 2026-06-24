@@ -2494,24 +2494,14 @@ def main():
         app.setApplicationName("ECG Monitor")
         app.setApplicationVersion(APP_VERSION)
 
-        try:
-            from utils.update_manager import check_and_install_update, report_update_completion
-
-            if check_and_install_update(parent=None, quiet=True):
-                logger.info(
-                    f"Update launched for channel={UPDATE_CHANNEL}, repo={GITHUB_REPOSITORY or 'unset'}"
-                )
-                return
-
-            report_update_completion(APP_VERSION, async_mode=True)
-        except Exception as e:
-            logger.warning(f"Update check failed: {e}")
-
-        # ── Pre-warm heavy imports in background ──────────────────────
-        # Skip this on low-spec machines to avoid an early CPU/RAM spike.
+        # ── Pre-warm heavy imports + WMI in background ──────────────
+        # Skip on low-spec machines to avoid an early CPU/RAM spike.
+        import threading as _startup_threading
         if not is_low_spec_mode():
-            # matplotlib, scipy, pyqtgraph take 2-5s on first import
-            # Start loading now so by the time user types password → cached
+            # matplotlib, scipy, pyqtgraph take 2-5s on first import.
+            # WMI hardware queries (BIOS/CPU/disk) can each take 1-2s.
+            # Start both NOW so results are cached by the time the user
+            # finishes typing their password.
             def _prewarm():
                 try:
                     import matplotlib; matplotlib.use('Agg')
@@ -2521,8 +2511,54 @@ def main():
                     import pyqtgraph
                 except Exception:
                     pass
-            import threading
-            threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
+
+            def _prewarm_wmi():
+                """Cache WMI hardware fields so startup license check is instant."""
+                try:
+                    from utils.license_manager import _collect_wmi_fields
+                    _collect_wmi_fields()
+                except Exception:
+                    pass
+
+            _startup_threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
+            _startup_threading.Thread(target=_prewarm_wmi, daemon=True, name="PrewarmWMI").start()
+        # ──────────────────────────────────────────────────────────────
+
+        # ── Non-blocking startup update check ────────────────────────
+        # Run the GitHub release check in a background thread and wait
+        # at most 2 seconds.  With no internet the old code would block
+        # for the full requests timeout (8 s) causing the black-screen
+        # gap before the login window appeared.
+        try:
+            from utils.update_manager import check_and_install_update, report_update_completion
+
+            _update_result = [None]
+            _update_done  = _startup_threading.Event()
+
+            def _run_update_check():
+                try:
+                    _update_result[0] = check_and_install_update(parent=None, quiet=True)
+                except Exception:
+                    _update_result[0] = False
+                finally:
+                    _update_done.set()
+
+            _startup_threading.Thread(
+                target=_run_update_check, daemon=True, name="StartupUpdateCheck"
+            ).start()
+            # Wait max 2 s — if no internet this returns almost instantly
+            # once the thread catches the connection error.
+            _update_done.wait(timeout=2.0)
+
+            if _update_result[0]:
+                logger.info(
+                    f"Update launched for channel={UPDATE_CHANNEL}, repo={GITHUB_REPOSITORY or 'unset'}"
+                )
+                return
+
+            report_update_completion(APP_VERSION, async_mode=True)
+        except Exception as e:
+            logger.warning(f"Update check failed: {e}")
         # ──────────────────────────────────────────────────────────────
 
         # ── Startup License Verification Enforcer ──
@@ -2531,7 +2567,37 @@ def main():
 
             stored_key = load_stored_key()
             if stored_key:
-                result = run_startup_checks(force_heartbeat=False)
+                # ── Run license check in background so no-internet ────────────
+                # doesn't freeze the main thread.  _post_json now times out in
+                # 5 s; we wait at most 4 s here so the login window never stalls
+                # longer than that.
+                _lic_result   = [None]
+                _lic_done     = _startup_threading.Event()
+
+                def _run_license_check():
+                    try:
+                        _lic_result[0] = run_startup_checks(force_heartbeat=False)
+                    except Exception as _le:
+                        logger.warning(f"License check thread error: {_le}")
+                    finally:
+                        _lic_done.set()
+
+                _startup_threading.Thread(
+                    target=_run_license_check, daemon=True, name="StartupLicenseCheck"
+                ).start()
+                # Wait max 4 s — covers most offline paths (5s _post_json timeout
+                # means the heartbeat will fail fast, the thread will finish in <5s)
+                _lic_done.wait(timeout=4.0)
+                result = _lic_result[0]
+                if result is None:
+                    # Still running (rare) — use a safe "offline ok" placeholder
+                    # so the login window shows immediately; the thread will keep
+                    # running in the background (it's daemon so it dies on exit).
+                    from utils.license_manager import StartupCheckResult as _SCR
+                    result = _SCR()
+                    result.ok = True
+                    result.offline_mode = True
+                    result.reason = "License check in progress..."
                 if not result.ok:
                     logger.warning(f"Startup license checks failed: {result.reason}")
                     is_explicit_revocation = (
