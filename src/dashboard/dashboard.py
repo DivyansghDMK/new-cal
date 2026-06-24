@@ -6575,13 +6575,16 @@ class Dashboard(QWidget):
         # so the 12-lead ECG view begins streaming the moment it opens.
         try:
             ecg = self.ecg_test_page
-            already_running = (
-                (hasattr(ecg, 'timer') and ecg.timer is not None and ecg.timer.isActive())
-                or (hasattr(ecg, 'serial_reader') and ecg.serial_reader is not None
-                    and getattr(ecg.serial_reader, 'running', False))
-                or (hasattr(ecg, 'demo_toggle') and ecg.demo_toggle is not None
-                    and ecg.demo_toggle.isChecked())
-            )
+            timer_active = (hasattr(ecg, 'timer') and ecg.timer is not None and ecg.timer.isActive())
+            reader_running = (hasattr(ecg, 'serial_reader') and ecg.serial_reader is not None
+                              and getattr(ecg.serial_reader, 'running', False))
+            demo_active = (hasattr(ecg, 'demo_toggle') and ecg.demo_toggle is not None
+                           and ecg.demo_toggle.isChecked())
+            # IMPORTANT: Require BOTH timer active AND reader running to skip auto-start.
+            # Using OR would incorrectly skip auto-start when timer was stopped by a
+            # stop_acquisition call (e.g., triggered after HRV/Hyperkalemia sends a
+            # STOP command to hardware) but serial_reader.running is still True.
+            already_running = demo_active or (timer_active and reader_running)
             if not already_running and hasattr(ecg, 'start_acquisition'):
                 # Small delay so the page fully renders before the connection
                 # worker starts (prevents UI jank on slow machines)
@@ -6591,6 +6594,7 @@ class Dashboard(QWidget):
         except Exception as _ae:
             print(f"[Dashboard] Auto-start skipped: {_ae}")
         # ─────────────────────────────────────────────────────────────────────────
+
 
     def go_to_dashboard(self):
         # # Close serial connection on ECG page to free up COM port
