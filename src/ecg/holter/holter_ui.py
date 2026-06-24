@@ -43,7 +43,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog, QDoubleSpinBox,
     QAbstractItemView, QToolButton, QButtonGroup
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect, QObject, QEvent
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
 try:
@@ -3175,8 +3175,9 @@ class HolterRecordManagementPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self._table.setVerticalScrollMode(QAbstractItemView.ScrollPerItem)
         self._table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self._table.verticalScrollBar().setSingleStep(1)
         self._table.itemSelectionChanged.connect(self._sync_selected_session)
         self._table.cellClicked.connect(self._open_row)
         self._table.doubleClicked.connect(self._on_double_click)
@@ -4956,6 +4957,39 @@ class HolterMainWindow(QDialog):
 
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
+        self._tabs.setUsesScrollButtons(True)
+
+        # Make the tab bar scrollable with the mouse wheel instead of changing tabs
+        class TabBarScroller(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Wheel:
+                    # In QTabBar, there is a private QScrollArea, but sending the wheel event 
+                    # as horizontal scroll to the tabbar doesn't always work cleanly.
+                    # Alternatively, if we just want to suppress changing tabs, we can return True,
+                    # but to scroll, we need to find the scroll buttons or adjust the scroll offset.
+                    # A simple way to trigger the internal scroll is to post a wheel event to the 
+                    # tab widget's internal scroll widget, but PyQt doesn't expose it easily.
+                    # Wait, if usesScrollButtons is True, QTabBar has two QToolButtons as children.
+                    # We can simulate clicks on them based on wheel direction.
+                    delta = event.angleDelta().y()
+                    if delta == 0:
+                        delta = event.angleDelta().x()
+                    if delta != 0:
+                        buttons = obj.findChildren(QToolButton)
+                        if len(buttons) >= 2:
+                            # Usually button 0 is left, 1 is right
+                            if delta > 0:
+                                buttons[0].click()
+                                buttons[0].click()
+                            else:
+                                buttons[1].click()
+                                buttons[1].click()
+                    return True # Consume event to prevent changing the selected tab
+                return super().eventFilter(obj, event)
+
+        self._tab_scroller = TabBarScroller(self)
+        self._tabs.tabBar().installEventFilter(self._tab_scroller)
+
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 background:{UI_BG};
