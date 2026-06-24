@@ -762,12 +762,13 @@ class HRVTestWindow(QWidget):
         
         if self.serial_reader:
             try:
-                # IMPORTANT: We don't close the shared reader here because other tests 
-                # (like 12-lead) might still be using it in the background.
-                # We just stop our reference to it.
-                pass
-            except:
-                pass
+                if hasattr(self.serial_reader, "command_handler") and self.serial_reader.command_handler:
+                    self.serial_reader.command_handler.send_stop_command()
+                    # Re-send START so the shared hardware stream keeps flowing
+                    # for other consumers (12-lead test, Dashboard, etc.)
+                    self.serial_reader.command_handler.send_start_command(quiet=True)
+            except Exception as e:
+                print(f"[HRVTest] Error sending stop/start command: {e}")
             self.serial_reader = None
         
         # ── Stop HolterBPMController ────────────────────────────────────────
