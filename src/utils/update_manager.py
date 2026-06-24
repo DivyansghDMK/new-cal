@@ -109,7 +109,7 @@ def _latest_release_for_channel(repo: str, channel: str) -> dict[str, Any] | Non
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "ECGMonitor-Updater",
     }
-    response = requests.get(url, headers=headers, timeout=8)
+    response = requests.get(url, headers=headers, timeout=3)
     response.raise_for_status()
     releases = response.json()
     prefix = f"{channel}-"
@@ -321,6 +321,7 @@ def check_and_install_update(parent=None, quiet: bool = False) -> bool:
                 "/CLOSEAPPLICATIONS",
             ],
             cwd=str(temp_dir),
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         return True
     except Exception:

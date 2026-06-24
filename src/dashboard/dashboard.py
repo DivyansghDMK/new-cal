@@ -400,7 +400,7 @@ class Dashboard(QWidget):
         self._rr_stability_counter = 0
         print("🔒 Stable RR tracking initialized")
         
-        self.setWindowTitle("ECG Monitor Dashboard")
+        self.setWindowTitle("CardioX Dashboard")
         self.setGeometry(100, 100, 1300, 900)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         self.setWindowState(Qt.WindowMaximized)
@@ -475,7 +475,7 @@ class Dashboard(QWidget):
         
         # --- Header ---
         header = QHBoxLayout()
-        logo = QLabel("ECG Monitor")
+        logo = QLabel("CardioX Dashboard")
         logo.setFont(QFont("Arial", 24, QFont.Bold))
         logo.setStyleSheet("color: #ff6600;")
         logo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -7041,31 +7041,33 @@ class Dashboard(QWidget):
                     try:
                         import sys
                         if sys.platform.startswith("win"):
-                            import subprocess
-
-                            # `ipconfig` is fast and doesn't require extra deps; run in background thread.
-                            p = subprocess.run(
-                                ["ipconfig"],
-                                capture_output=True,
-                                text=True,
-                                timeout=2,
-                                creationflags=subprocess.CREATE_NO_WINDOW
-                            )
-                            text = (p.stdout or "") + "\n" + (p.stderr or "")
-                            # Heuristic: if any *non-loopback* adapter block has an IP and is not media-disconnected,
-                            # assume connected. (Avoid false negatives when some other adapter is disconnected.)
-                            import re
-                            blocks = [b.strip() for b in re.split(r"\r?\n\r?\n+", text) if b.strip()]
-                            for block in blocks:
-                                lb = block.lower()
-                                if "loopback" in lb:
+                            # Get all local IP addresses in a pure-Python, zero-subprocess way.
+                            # This completely avoids spawning cmd.exe or ipconfig.exe, eliminating any console flashes.
+                            hostname = socket.gethostname()
+                            candidates = set()
+                            
+                            try:
+                                for info in socket.getaddrinfo(hostname, None):
+                                    ip = info[4][0]
+                                    if ip:
+                                        candidates.add(ip)
+                            except Exception:
+                                pass
+                                
+                            try:
+                                for ip in socket.gethostbyname_ex(hostname)[2]:
+                                    if ip:
+                                        candidates.add(ip)
+                            except Exception:
+                                pass
+                                
+                            for ip in candidates:
+                                ip_lower = ip.lower()
+                                if ip_lower.startswith("127.") or ip_lower == "::1" or "loopback" in ip_lower:
                                     continue
-                                if "media disconnected" in lb:
-                                    continue
-                                if ("ipv4 address" in lb) or ("ipv6 address" in lb):
-                                    online = True
-                                    source = "ipconfig"
-                                    break
+                                online = True
+                                source = "socket_local"
+                                break
                     except Exception:
                         online = False
 
