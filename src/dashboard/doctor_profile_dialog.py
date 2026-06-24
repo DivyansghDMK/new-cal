@@ -116,8 +116,8 @@ class DoctorProfileDialog(QDialog):
             QDialog { background: #f4f7f6; }
             QLabel { color: #101828; font-family: 'Segoe UI', Arial; }
             QLineEdit, QTextEdit {
-                font: 11pt 'Segoe UI', Arial; color: #101828; background: #fcfcfd; padding: 10px 14px;
-                border: 1px solid #d0d5dd; border-radius: 8px; min-height: 24px;
+                font: 11pt 'Segoe UI', Arial; color: #101828; background: #fcfcfd; padding: 8px 12px;
+                border: 1px solid #d0d5dd; border-radius: 8px;
             }
             QLineEdit:focus, QTextEdit:focus {
                 border: 2px solid #ff6600; background: #ffffff;

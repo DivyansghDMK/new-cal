@@ -260,6 +260,46 @@ def _table_style():
             border: 1px solid {UI_BORDER};
         }}
         QTableWidget::item {{ padding: 5px; border: none; }}
+        QScrollBar:vertical {{
+            border: none;
+            background: {UI_PANEL_ALT};
+            width: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {UI_BORDER};
+            min-height: 20px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: {UI_MUTED};
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+        QScrollBar:horizontal {{
+            border: none;
+            background: {UI_PANEL_ALT};
+            height: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {UI_BORDER};
+            min-width: 20px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background: {UI_MUTED};
+        }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            width: 0px;
+        }}
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+            background: none;
+        }}
     """
 
 
@@ -1288,10 +1328,70 @@ class HolterReplayPanel(QWidget):
         self._btn_hr.setStyleSheet(_style_active_btn() if mode == "HR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
 
     def _goto_time(self):
-        text, ok = QInputDialog.getText(self, "Goto Time", "Enter time (HH:MM:SS or seconds):")
-        if not ok or not text:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Go to Time")
+        dlg.setFixedSize(420, 160)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {UI_BG};
+                border: 1px solid {UI_BORDER};
+                border-radius: 10px;
+            }}
+            QLabel {{
+                color: {UI_TEXT};
+                font-size: 13px;
+                font-weight: bold;
+                border: none;
+                background: transparent;
+            }}
+            QLineEdit {{
+                background: {UI_PANEL};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 14px;
+                selection-background-color: {UI_ACCENT};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {UI_ACCENT};
+            }}
+        """)
+        v_layout = QVBoxLayout(dlg)
+        v_layout.setContentsMargins(20, 18, 20, 18)
+        v_layout.setSpacing(12)
+
+        lbl = QLabel("Enter time (HH:MM:SS or seconds):")
+        lbl.setStyleSheet(f"color:{UI_MUTED};font-size:12px;font-weight:normal;border:none;background:transparent;")
+        v_layout.addWidget(lbl)
+
+        inp = QLineEdit()
+        inp.setPlaceholderText("e.g.  01:23:45  or  83")
+        inp.setClearButtonEnabled(True)
+        v_layout.addWidget(inp)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch()
+        ok_btn = QPushButton("Go")
+        ok_btn.setFixedSize(90, 34)
+        ok_btn.setStyleSheet(_style_active_btn())
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedSize(90, 34)
+        cancel_btn.setStyleSheet(_style_btn())
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        v_layout.addLayout(btn_row)
+
+        ok_btn.clicked.connect(dlg.accept)
+        cancel_btn.clicked.connect(dlg.reject)
+        inp.returnPressed.connect(dlg.accept)
+
+        if dlg.exec_() != QDialog.Accepted:
             return
-        t = text.strip()
+        t = inp.text().strip()
+        if not t:
+            return
         sec = 0.0
         try:
             if ":" in t:
@@ -1305,7 +1405,22 @@ class HolterReplayPanel(QWidget):
             else:
                 sec = float(t)
         except Exception:
-            QMessageBox.warning(self, "Invalid Time", "Use HH:MM:SS, MM:SS, or seconds.")
+            warn = QDialog(self)
+            warn.setWindowTitle("Invalid Time")
+            warn.setFixedSize(340, 120)
+            warn.setStyleSheet(f"QDialog{{background:{UI_BG};border:1px solid {UI_BORDER};border-radius:8px;}} QLabel{{color:{UI_TEXT};font-size:12px;border:none;background:transparent;}}")
+            wl = QVBoxLayout(warn)
+            wl.setContentsMargins(18, 16, 18, 16)
+            wl.setSpacing(12)
+            wl.addWidget(QLabel("Use HH:MM:SS, MM:SS, or plain seconds."))
+            wb = QPushButton("OK")
+            wb.setStyleSheet(_style_btn())
+            wb.clicked.connect(warn.accept)
+            wr = QHBoxLayout()
+            wr.addStretch()
+            wr.addWidget(wb)
+            wl.addLayout(wr)
+            warn.exec_()
             return
         sec = max(0.0, min(sec, float(self.duration_sec)))
         self.seek_requested.emit(sec)
@@ -3060,6 +3175,8 @@ class HolterRecordManagementPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self._table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self._table.itemSelectionChanged.connect(self._sync_selected_session)
         self._table.cellClicked.connect(self._open_row)
         self._table.doubleClicked.connect(self._on_double_click)
@@ -3102,13 +3219,44 @@ class HolterRecordManagementPanel(QWidget):
             parts = name.split("_", 3)
             rec_time = "_".join(parts[:2]).replace("_", " ") if len(parts) >= 2 else name[:19]
             p_name = parts[-1].replace("_", " ") if len(parts) >= 3 else "Unknown"
+            age = "-"
+            gender = "-"
             dur_str = "-"
+            
+            import json
+            # Check patient.json first (created by Save dialog)
+            patient_json = os.path.join(session_dir, "patient.json")
+            if os.path.exists(patient_json):
+                try:
+                    with open(patient_json, 'r') as f:
+                        pdata = json.load(f)
+                    saved_name = pdata.get('name') or pdata.get('patient_name') or pdata.get('full_name')
+                    if saved_name and str(saved_name).strip() and str(saved_name).strip().lower() != "unknown":
+                        p_name = str(saved_name).strip()
+                    saved_age = pdata.get('age')
+                    if saved_age: age = str(saved_age)
+                    saved_gender = pdata.get('gender') or pdata.get('sex')
+                    if saved_gender: gender = str(saved_gender)
+                except Exception:
+                    pass
+
             try:
                 session_json = os.path.join(session_dir, "session.json")
                 if os.path.exists(session_json):
-                    import json
                     with open(session_json, 'r') as f:
                         sdata = json.load(f)
+                        
+                    # If we didn't find good name in patient.json, check session.json
+                    if p_name.lower() == "unknown":
+                        p_info = sdata.get('patient_info') or sdata.get('summary', {}).get('patient_info') or {}
+                        saved_name = p_info.get('name') or p_info.get('patient_name') or p_info.get('full_name')
+                        if saved_name and str(saved_name).strip() and str(saved_name).strip().lower() != "unknown":
+                            p_name = str(saved_name).strip()
+                        saved_age = p_info.get('age')
+                        if saved_age and age == "-": age = str(saved_age)
+                        saved_gender = p_info.get('gender') or p_info.get('sex')
+                        if saved_gender and gender == "-": gender = str(saved_gender)
+
                     dur_sec = sdata.get('summary', {}).get('duration_sec', 0)
                     if dur_sec > 0:
                         h = int(dur_sec // 3600)
@@ -3123,7 +3271,7 @@ class HolterRecordManagementPanel(QWidget):
             except Exception:
                 pass
 
-            row_values = [p_name, "-", "-", rec_time, dur_str, "3", rec_time, "Completed", "System", "-"]
+            row_values = [p_name, age, gender, rec_time, dur_str, "3", rec_time, "Completed", "System", "-"]
             if query and not any(query in str(v).lower() for v in row_values): continue
             rows.append((row_values, session_dir))
 
@@ -3760,7 +3908,7 @@ class HolterEditEventPanel(QWidget):
         ]):
             r, c = divmod(i, 2)
             l = QLabel(f"{lbl}:")
-            l.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:10px;border:none;")
+            l.setStyleSheet(f"color:{UI_MUTED};font-size:10px;font-weight:bold;letter-spacing:0.5px;border:none;")
             v = QLabel("—")
             v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
             sf_layout.addWidget(l, r*2, c)
@@ -4034,7 +4182,7 @@ class HolterEditStripsPanel(QWidget):
         ]):
             row, col = divmod(i, 2)
             l = QLabel(f"{label}:")
-            l.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:10px;font-weight:bold;border:none;")
+            l.setStyleSheet(f"color:{UI_MUTED};font-size:10px;font-weight:bold;letter-spacing:0.5px;border:none;")
             v = QLabel("—")
             v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
             sf_layout.addWidget(l, row * 2, col)

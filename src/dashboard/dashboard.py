@@ -719,12 +719,12 @@ class Dashboard(QWidget):
         self.date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.date_btn)
 
-        # --- Add Comprehensive ECG Analysis Button ---
-        self.holter_btn = QPushButton("Comprehensive ECG")
-        self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
-        self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
-        self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        greet_row.addWidget(self.holter_btn)
+        # # --- Add Comprehensive ECG Analysis Button ---
+        # self.holter_btn = QPushButton("Comprehensive ECG")
+        # self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
+        # self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
+        # self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # greet_row.addWidget(self.holter_btn)
 
         # --- Add Chatbot Button ---
         self.chatbot_btn = QPushButton("AI Chatbot")
@@ -3632,7 +3632,7 @@ class Dashboard(QWidget):
                     else:
                         cached = getattr(self, '_last_hr', None)
                         if cached:
-                            self.metric_labels['heart_rate'].setText(f"{cached} BPM (Unstable)")
+                            self.metric_labels['heart_rate'].setText(f"{cached} BPM")
                         else:
                             self.metric_labels['heart_rate'].setText("0 BPM")
                             
@@ -7049,6 +7049,7 @@ class Dashboard(QWidget):
                                 capture_output=True,
                                 text=True,
                                 timeout=2,
+                                creationflags=subprocess.CREATE_NO_WINDOW
                             )
                             text = (p.stdout or "") + "\n" + (p.stderr or "")
                             # Heuristic: if any *non-loopback* adapter block has an IP and is not media-disconnected,
