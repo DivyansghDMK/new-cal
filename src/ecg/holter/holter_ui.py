@@ -102,6 +102,59 @@ def _find_latest_completed_session(output_dir: str) -> str:
     return candidates[0][1]
 
 
+def _normalize_patient_info(info: Optional[dict]) -> dict:
+    normalized = dict(info or {})
+    if not normalized:
+        return {}
+
+    display_name = ""
+    for key in ("patient_name", "name", "full_name", "patientName"):
+        raw_value = normalized.get(key)
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip()
+        if value and value.lower() not in {"unknown", "unknown patient"}:
+            display_name = value
+            break
+
+    if display_name:
+        normalized["patient_name"] = display_name
+        normalized["name"] = display_name
+        normalized["full_name"] = display_name
+        normalized["patientName"] = display_name
+
+    return normalized
+
+
+def _load_patient_info_from_session(session_dir: str, fallback_info: Optional[dict] = None) -> dict:
+    merged = _normalize_patient_info(fallback_info)
+    if not session_dir:
+        return merged
+
+    metadata = read_session_metadata(session_dir) if session_dir else {}
+    if isinstance(metadata, dict):
+        patient_sources = [metadata.get("patient_info")]
+        summary = metadata.get("summary")
+        if isinstance(summary, dict):
+            patient_sources.append(summary.get("patient_info"))
+        for candidate in patient_sources:
+            if isinstance(candidate, dict) and candidate:
+                merged.update(_normalize_patient_info(candidate))
+
+    patient_json = os.path.join(session_dir, "patient.json")
+    if os.path.exists(patient_json):
+        try:
+            with open(patient_json, "r", encoding="utf-8") as handle:
+                patient_data = json.load(handle) or {}
+            if isinstance(patient_data, dict) and patient_data:
+                merged.update(_normalize_patient_info(patient_data))
+        except Exception:
+            pass
+
+    return _normalize_patient_info(merged)
+
+
+
 def _metrics_duration_sec(metrics_list: list) -> float:
     return float(sum(m.get('duration', 0.0) or 0.0 for m in metrics_list))
 
@@ -926,7 +979,7 @@ class HolterReplayPanel(QWidget):
         rb_l.setContentsMargins(6, 4, 6, 4)
         rb_l.setSpacing(4)
         self._ribbon_buttons = {}
-        for txt in ["Overview", "Template", "Histogram", "Lorenz", "Af Analysis", "Tend. Chart",
+        for txt in ["Overview", "Template", "Histogram", "Replay", "Af Analysis", "Tend. Chart",
                     "Pace Spike", "Edit Event", "Edit Strips", "Add Event", "Advance Tools",
                     "Record Settings", "Edit Report", "Preview", "Print", "Reanalysis", "Quit"]:
             b = QPushButton(txt)
@@ -1137,23 +1190,22 @@ class HolterReplayPanel(QWidget):
 
         # Transport + controls row
         ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(6)
+        ctrl_row.setSpacing(8)
 
         self._play_btn = QPushButton("▶ Play")
         self._play_btn.setStyleSheet(_style_btn())
         self._play_btn.setFixedHeight(30)
-        self._play_btn.setMinimumWidth(80)
+        self._play_btn.setMinimumWidth(92)
         self._play_btn.clicked.connect(self._toggle_playback)
         ctrl_row.addWidget(self._play_btn)
 
         for speed_lbl in ["0.5x", "1x", "2x", "4x"]:
             btn = QPushButton(speed_lbl)
             btn.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(40)
+            btn.setFixedHeight(30)
+            btn.setMinimumWidth(50)
             btn.clicked.connect(lambda _, s=speed_lbl: self._set_speed(s))
             ctrl_row.addWidget(btn)
-
         sep = QLabel("|")
         sep.setStyleSheet(f"color:{COL_GREEN_DRK};")
         ctrl_row.addWidget(sep)
@@ -1189,24 +1241,40 @@ class HolterReplayPanel(QWidget):
         toolbar = QFrame()
         toolbar.setStyleSheet(f"QFrame{{background:{COL_BLACK};border-top:1px solid {COL_GREEN_DRK};}}")
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(4, 4, 4, 4)
-        toolbar_layout.setSpacing(4)
+        toolbar_layout.setContentsMargins(5, 4, 5, 4)
+        toolbar_layout.setSpacing(5)
         self._tool_btns = {}
+        tool_min_widths = {
+            "Patient information": 140,
+            "Full Disc.": 90,
+            "Goto Template": 114,
+            "Measuring Ruler": 120,
+            "Parallel Ruler": 112,
+            "Magnifying Glass": 126,
+            "Gain Settings": 110,
+            "Paper speed:25mm/s": 144,
+            "Add Event(space)": 130,
+            "Adjust strip position": 146,
+            "Strip Length:10s": 120,
+        }
         for tool in ["Patient information", "Full Disc.", "Goto Template"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
-                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"border-radius:4px;padding:4px 8px;font-size:10px;}}"
                                f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.setMinimumHeight(30)
+            tbtn.setMinimumWidth(tool_min_widths.get(tool, 110))
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
-
         for tool in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass", "Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:10s"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
-                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"border-radius:4px;padding:4px 8px;font-size:10px;}}"
                                f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.setMinimumHeight(30)
+            tbtn.setMinimumWidth(tool_min_widths.get(tool, 110))
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
@@ -4594,7 +4662,7 @@ class HolterMainWindow(QDialog):
         self.setStyleSheet(f"QDialog{{background:{UI_BG};}}")
 
         self.session_dir = session_dir
-        self.patient_info = patient_info or (writer.patient_info if writer else {})
+        self.patient_info = _normalize_patient_info(patient_info or (writer.patient_info if writer else {}))
         self._writer = writer
         self._live_source = live_source
         self._duration_hours = duration_hours
@@ -4620,10 +4688,7 @@ class HolterMainWindow(QDialog):
     def _load_session(self):
         self._metrics_list = []
         metadata = read_session_metadata(self.session_dir) if self.session_dir else {}
-        if metadata:
-            session_patient = metadata.get("patient_info") or {}
-            if isinstance(session_patient, dict) and session_patient:
-                self.patient_info = dict(session_patient)
+        self.patient_info = _load_patient_info_from_session(self.session_dir, self.patient_info)
         layered_metrics = load_metrics(self.session_dir) if self.session_dir else []
         if layered_metrics:
             self._metrics_list = layered_metrics
@@ -4655,6 +4720,8 @@ class HolterMainWindow(QDialog):
             if self._summary:
                 meta_sum.update(self._summary)
             self._summary = meta_sum
+        if self._summary is not None:
+            self._summary["patient_info"] = dict(self.patient_info or {})
 
     def _build_summary_from_metrics(self) -> dict:
         if not self._metrics_list:
@@ -4752,6 +4819,7 @@ class HolterMainWindow(QDialog):
             'recordings': 'recordings',
             'record settings': 'recordings',
             'replay': 'replay',
+            'lorenz': 'replay',
         }
         target = aliases.get(target, target)
         for idx in range(self._tabs.count()):
@@ -4824,7 +4892,7 @@ class HolterMainWindow(QDialog):
         elif key == 'histogram':
             self._focus_tab('HISTOGRAM')
         elif key == 'lorenz':
-            self._focus_tab('LORENZ')
+            self._focus_tab('REPLAY')
         elif key == 'af analysis':
             self._focus_tab('AF ANALYSIS')
         elif key in {'tend. chart', 'st tendency'}:
@@ -5048,6 +5116,7 @@ class HolterMainWindow(QDialog):
         self._replay_panel.update_lorenz(self._metrics_list)
         self._replay_panel.update_summary(self._summary)
         self._tabs.addTab(self._replay_panel, "REPLAY")
+        self._lorenz_panel = self._replay_panel
 
         # Beat Templates
         self._template_panel = HolterBeatTemplatePanel()
@@ -5060,14 +5129,6 @@ class HolterMainWindow(QDialog):
         self._hist_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
-        # Dedicated Lorenz workspace
-        self._lorenz_panel = HolterReplayPanel(duration_sec=duration)
-        if self._replay_engine:
-            self._lorenz_panel.set_replay_engine(self._replay_engine)
-            self._lorenz_panel.seek_requested.connect(self._on_seek_requested)
-        self._lorenz_panel.section_requested.connect(self._on_workspace_section_requested)
-        self._lorenz_panel.update_lorenz(self._metrics_list)
-        self._tabs.addTab(self._lorenz_panel, "LORENZ")
 
         # AF Analysis
         self._af_panel = HolterAFPanel()
@@ -5294,8 +5355,6 @@ class HolterMainWindow(QDialog):
                         self._replay_panel.set_replay_frame(arr)
                 except Exception:
                     pass
-        if hasattr(self, '_lorenz_panel'):
-            self._lorenz_panel.update_lorenz(self._metrics_list)
         if hasattr(self, '_hist_panel'):
             self._hist_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_af_panel'):
@@ -5477,8 +5536,8 @@ class HolterMainWindow(QDialog):
         self._last_live_seq = -1
         if session_dir:
             self.session_dir = session_dir
-        if patient_info:
-            self.patient_info = patient_info
+        if patient_info is not None:
+            self.patient_info = _normalize_patient_info(patient_info)
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
         if writer and not hasattr(self, '_status_bar'):
@@ -5495,8 +5554,7 @@ class HolterMainWindow(QDialog):
     def load_completed_session(self, session_dir: str, patient_info: dict = None):
         self.session_dir = session_dir
         self._last_live_seq = -1
-        if patient_info:
-            self.patient_info = patient_info
+        self.patient_info = _normalize_patient_info(patient_info or {})
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
         self._writer = None
@@ -5511,8 +5569,6 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
-        if hasattr(self, '_lorenz_panel') and getattr(self, '_replay_engine', None):
-            self._lorenz_panel.set_replay_engine(self._replay_engine)
         self._refresh_ui()
         if hasattr(self, '_tabs'):
             self._tabs.setCurrentIndex(0)
@@ -5529,3 +5585,4 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
