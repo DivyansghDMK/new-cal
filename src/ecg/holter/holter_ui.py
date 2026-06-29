@@ -962,6 +962,8 @@ class HolterReplayPanel(QWidget):
         self.setStyleSheet(f"background:{COL_DARK};")
         self._replay_engine = None
         self._tool_engine = ECGToolEngine()
+        self._current_replay_frame = None
+        self._selected_lead_idx = 1
         self._build_ui()
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
@@ -982,7 +984,7 @@ class HolterReplayPanel(QWidget):
         self._ribbon_buttons = {}
         for txt in ["Overview", "Template", "Histogram", "Replay", "Af Analysis", "Tend. Chart",
                     "Pace Spike", "Edit Event", "Edit Strips", "Add Event", "Advance Tools",
-                    "Record Settings", "Edit Report", "Preview", "Print", "Reanalysis", "Quit"]:
+                    "Record Settings", "Edit Report", "Print", "Reanalysis", "Quit"]:
             b = QPushButton(txt)
             b.setFixedHeight(30)
             b.setStyleSheet(_style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
@@ -1133,12 +1135,14 @@ class HolterReplayPanel(QWidget):
 
         # Full-width rhythm strip (Lead II) at bottom
         rhythm_row = QHBoxLayout()
+        rhythm_row.setContentsMargins(0, 0, 0, 0)
         rhythm_row.setSpacing(4)
         rhythm_lbl = QLabel("II")
+        self._mini_lead_lbl = rhythm_lbl
         rhythm_lbl.setFixedWidth(34)
         rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini_strip = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9)
+        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9)
         rhythm_row.addWidget(rhythm_lbl)
         rhythm_row.addWidget(self._mini_strip, 1)
         ecg_right_layout.addLayout(rhythm_row)
@@ -1191,12 +1195,12 @@ class HolterReplayPanel(QWidget):
 
         # Transport + controls row
         ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(8)
+        ctrl_row.setSpacing(10)
 
         self._play_btn = QPushButton("▶ Play")
         self._play_btn.setStyleSheet(_style_btn())
         self._play_btn.setFixedHeight(30)
-        self._play_btn.setMinimumWidth(92)
+        self._play_btn.setMinimumWidth(100)
         self._play_btn.clicked.connect(self._toggle_playback)
         ctrl_row.addWidget(self._play_btn)
 
@@ -1204,7 +1208,7 @@ class HolterReplayPanel(QWidget):
             btn = QPushButton(speed_lbl)
             btn.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
             btn.setFixedHeight(30)
-            btn.setMinimumWidth(50)
+            btn.setMinimumWidth(56)
             btn.clicked.connect(lambda _, s=speed_lbl: self._set_speed(s))
             ctrl_row.addWidget(btn)
         sep = QLabel("|")
@@ -1212,17 +1216,18 @@ class HolterReplayPanel(QWidget):
         ctrl_row.addWidget(sep)
 
         lbl_lead = QLabel("Lead:")
-        lbl_lead.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;border:none;")
+        lbl_lead.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;border:none;font-size:13px;")
         ctrl_row.addWidget(lbl_lead)
         self._lead_combo = QComboBox()
         self._lead_combo.addItems(["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"])
         self._lead_combo.setCurrentIndex(1)
+        self._lead_combo.setFixedWidth(70)
         self._lead_combo.setStyleSheet(f"background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
                                        f"padding:4px;border-radius:4px;font-weight:bold;")
-        self._lead_combo.currentIndexChanged.connect(self.lead_changed)
+        self._lead_combo.currentIndexChanged.connect(self._on_lead_changed)
         ctrl_row.addWidget(self._lead_combo)
 
-        ctrl_row.addSpacing(12)
+        ctrl_row.addSpacing(22)
 
         # Event jump buttons
         for lbl_txt, ev, d in [("◀ AF","AF","prev"),("AF ▶","AF","next"),
@@ -1230,8 +1235,9 @@ class HolterReplayPanel(QWidget):
                                ("◀ Tachy","Tachy","prev"),("Tachy ▶","Tachy","next")]:
             btn = QPushButton(lbl_txt)
             btn.setStyleSheet(_style_btn(COL_BLACK, COL_GREEN, COL_GREEN_DRK))
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(30)
             ev_c, d_c = ev, d
+            btn.setMinimumWidth(78)
             btn.clicked.connect(lambda _, e=ev_c, dd=d_c: self._jump_event(e, dd))
             ctrl_row.addWidget(btn)
 
@@ -1759,6 +1765,19 @@ class HolterReplayPanel(QWidget):
         self._pos_label.setText(_sec_to_hms(value))
         self.seek_requested.emit(float(value))
 
+    def _on_lead_changed(self, idx: int):
+        self._selected_lead_idx = max(0, int(idx))
+        frame = getattr(self, "_current_replay_frame", None)
+        if frame is not None:
+            try:
+                self.set_replay_frame(frame)
+            except Exception:
+                pass
+        try:
+            self.lead_changed.emit(int(idx))
+        except Exception:
+            pass
+
     def _on_position_update(self, current_sec, duration_sec):
         self._slider.blockSignals(True)
         self._slider.setValue(int(current_sec))
@@ -1823,6 +1842,7 @@ class HolterReplayPanel(QWidget):
         if data is None or data.shape[0] < 12:
             return
 
+        self._current_replay_frame = data
         strip_len = int(max(1, getattr(self, "_strip_length_sec", 10.0)) * 500)
         if data.shape[1] > strip_len:
             data = data[:, -strip_len:]
@@ -1860,9 +1880,17 @@ class HolterReplayPanel(QWidget):
             if idx < data.shape[0] and lead in lead_strips:
                 lead_strips[lead].set_data(x, data[idx].copy())
 
-        # Mini strip shows Lead II
-        if hasattr(self, "_mini_strip") and data.shape[0] > 1:
-            self._mini_strip.set_data(x, data[1].copy())
+        # Mini strip follows the selected lead from the dropdown
+        if hasattr(self, "_mini_strip") and data.shape[0] > 0:
+            lead_idx = max(0, min(int(getattr(self, "_selected_lead_idx", 1)), data.shape[0] - 1))
+            selected_lead = self._lead_combo.currentText() if hasattr(self, "_lead_combo") else lead_names[lead_idx]
+            self._mini_strip.set_data(x, data[lead_idx].copy())
+            try:
+                self._mini_strip.lead_name = selected_lead
+            except Exception:
+                pass
+            if hasattr(self, "_mini_lead_lbl"):
+                self._mini_lead_lbl.setText(selected_lead)
 
         # Template thumbnails (use first 4 leads: I, II, III, aVR)
         for i, ts in enumerate(getattr(self, "_template_thumbs", [])):
@@ -4406,7 +4434,13 @@ class HolterEditEventPanel(QWidget):
                 strip.set_data(x, data[i].copy())
         if N > 0:
             self._thumb.set_data(x[:500], data[0,:500].copy() if 500 < N else data[0].copy())
-            self._mini.set_data(x, data[0].copy())
+            lead_idx = max(0, min(int(getattr(self, "_selected_lead_idx", 1)), data.shape[0] - 1))
+            mini_data = data[lead_idx].copy()
+            self._mini.set_data(x, mini_data)
+            try:
+                self._mini.lead_name = self._lead_combo.currentText()
+            except Exception:
+                pass
 
 
 class ClickableSummaryTile(QFrame):
@@ -5138,7 +5172,7 @@ class HolterMainWindow(QDialog):
             top_browse.setEnabled(bool(enabled))
 
     def _generate_from_current(self):
-        self._focus_tab('Preview')
+        self._focus_tab('PREVIEW')
         self._generate_report()
 
     def _refresh_current_session(self):
@@ -5155,7 +5189,7 @@ class HolterMainWindow(QDialog):
         elif key in {'overview'}:
             self._focus_tab('OVERVIEW')
         elif key in {'preview', 'view', 'report', 'edit report'}:
-            self._focus_tab('Preview')
+            self._focus_tab('PREVIEW')
         elif key == 'template':
             self._focus_tab('TEMPLATE')
         elif key == 'histogram':
@@ -5463,14 +5497,27 @@ class HolterMainWindow(QDialog):
         self._insight_panel = HolterInsightPanel()
         self._insight_panel.update_text(self.patient_info, self._summary)
         scroll_insight.setWidget(self._insight_panel)
-        self._tabs.addTab(scroll_insight, "Preview")
+        self._tabs.addTab(scroll_insight, "PREVIEW")
+        self._tabs.addTab(QWidget(), "PRINT")
+        self._tabs.addTab(QWidget(), "REANALYSIS")
+        self._tabs.addTab(QWidget(), "QUIT")
 
         # Hide the bottom analysis tab bar when looking at global "RECORDINGS" tab to avoid confusion
         def _on_tab_changed(index):
-            if self._tabs.tabText(index) == "RECORDINGS":
+            tab_name = self._tabs.tabText(index)
+            if tab_name == "RECORDINGS":
                 self._tabs.tabBar().setVisible(False)
             else:
                 self._tabs.tabBar().setVisible(True)
+            if tab_name == "PRINT":
+                QTimer.singleShot(0, self._generate_report)
+                self._focus_tab("PREVIEW")
+            elif tab_name == "REANALYSIS":
+                QTimer.singleShot(0, lambda: self._on_workspace_section_requested("reanalysis"))
+                self._focus_tab("PREVIEW")
+            elif tab_name == "QUIT":
+                QTimer.singleShot(0, self.close)
+                self._focus_tab("PREVIEW")
         self._tabs.currentChanged.connect(_on_tab_changed)
         # Ensure initial state is correct
         _on_tab_changed(self._tabs.currentIndex())
@@ -5484,7 +5531,7 @@ class HolterMainWindow(QDialog):
         self._action_buttons["Browse"].clicked.connect(self._open_recordings_folder)
         self._action_buttons["Search"].clicked.connect(self._search_recordings)
         self._action_buttons["Analyse"].clicked.connect(lambda: self._focus_tab("REPLAY"))
-        self._action_buttons["View"].clicked.connect(lambda: self._focus_tab("Preview"))
+        self._action_buttons["View"].clicked.connect(lambda: self._focus_tab("PREVIEW"))
         self._action_buttons["Import"].clicked.connect(self._import_recording)
         self._action_buttons["Backup"].clicked.connect(self._backup_recordings)
         self._action_buttons["Delete"].clicked.connect(self._delete_recording)
@@ -5867,6 +5914,8 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
+
 
 
 
