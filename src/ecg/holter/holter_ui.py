@@ -102,6 +102,59 @@ def _find_latest_completed_session(output_dir: str) -> str:
     return candidates[0][1]
 
 
+def _normalize_patient_info(info: Optional[dict]) -> dict:
+    normalized = dict(info or {})
+    if not normalized:
+        return {}
+
+    display_name = ""
+    for key in ("patient_name", "name", "full_name", "patientName"):
+        raw_value = normalized.get(key)
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip()
+        if value and value.lower() not in {"unknown", "unknown patient"}:
+            display_name = value
+            break
+
+    if display_name:
+        normalized["patient_name"] = display_name
+        normalized["name"] = display_name
+        normalized["full_name"] = display_name
+        normalized["patientName"] = display_name
+
+    return normalized
+
+
+def _load_patient_info_from_session(session_dir: str, fallback_info: Optional[dict] = None) -> dict:
+    merged = _normalize_patient_info(fallback_info)
+    if not session_dir:
+        return merged
+
+    metadata = read_session_metadata(session_dir) if session_dir else {}
+    if isinstance(metadata, dict):
+        patient_sources = [metadata.get("patient_info")]
+        summary = metadata.get("summary")
+        if isinstance(summary, dict):
+            patient_sources.append(summary.get("patient_info"))
+        for candidate in patient_sources:
+            if isinstance(candidate, dict) and candidate:
+                merged.update(_normalize_patient_info(candidate))
+
+    patient_json = os.path.join(session_dir, "patient.json")
+    if os.path.exists(patient_json):
+        try:
+            with open(patient_json, "r", encoding="utf-8") as handle:
+                patient_data = json.load(handle) or {}
+            if isinstance(patient_data, dict) and patient_data:
+                merged.update(_normalize_patient_info(patient_data))
+        except Exception:
+            pass
+
+    return _normalize_patient_info(merged)
+
+
+
 def _metrics_duration_sec(metrics_list: list) -> float:
     return float(sum(m.get('duration', 0.0) or 0.0 for m in metrics_list))
 
@@ -693,7 +746,6 @@ class HolterSummaryCards(QFrame):
         self._value_labels["sdnn"].setText(f"{s.get('sdnn', 0):.1f}")
         self._value_labels["rmssd"].setText(f"{s.get('rmssd', 0):.1f}")
         self._value_labels["longest_rr"].setText(f"{s.get('longest_rr_ms', 0) / 1000:.2f}")
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._relayout_cards()
@@ -897,6 +949,7 @@ class HolterHRVPanel(QWidget):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterReplayPanel(QWidget):
+    playback_state_changed = pyqtSignal(bool)
     seek_requested = pyqtSignal(float)
     lead_changed   = pyqtSignal(int)
     section_requested = pyqtSignal(str)
@@ -913,6 +966,7 @@ class HolterReplayPanel(QWidget):
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
         self._magnifier_overlay.hide()
+        self._install_magnifier_dismiss_filters()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -926,7 +980,7 @@ class HolterReplayPanel(QWidget):
         rb_l.setContentsMargins(6, 4, 6, 4)
         rb_l.setSpacing(4)
         self._ribbon_buttons = {}
-        for txt in ["Overview", "Template", "Histogram", "Lorenz", "Af Analysis", "Tend. Chart",
+        for txt in ["Overview", "Template", "Histogram", "Replay", "Af Analysis", "Tend. Chart",
                     "Pace Spike", "Edit Event", "Edit Strips", "Add Event", "Advance Tools",
                     "Record Settings", "Edit Report", "Preview", "Print", "Reanalysis", "Quit"]:
             b = QPushButton(txt)
@@ -1137,23 +1191,22 @@ class HolterReplayPanel(QWidget):
 
         # Transport + controls row
         ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(6)
+        ctrl_row.setSpacing(8)
 
         self._play_btn = QPushButton("▶ Play")
         self._play_btn.setStyleSheet(_style_btn())
         self._play_btn.setFixedHeight(30)
-        self._play_btn.setMinimumWidth(80)
+        self._play_btn.setMinimumWidth(92)
         self._play_btn.clicked.connect(self._toggle_playback)
         ctrl_row.addWidget(self._play_btn)
 
         for speed_lbl in ["0.5x", "1x", "2x", "4x"]:
             btn = QPushButton(speed_lbl)
             btn.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
-            btn.setFixedHeight(28)
-            btn.setFixedWidth(40)
+            btn.setFixedHeight(30)
+            btn.setMinimumWidth(50)
             btn.clicked.connect(lambda _, s=speed_lbl: self._set_speed(s))
             ctrl_row.addWidget(btn)
-
         sep = QLabel("|")
         sep.setStyleSheet(f"color:{COL_GREEN_DRK};")
         ctrl_row.addWidget(sep)
@@ -1189,24 +1242,40 @@ class HolterReplayPanel(QWidget):
         toolbar = QFrame()
         toolbar.setStyleSheet(f"QFrame{{background:{COL_BLACK};border-top:1px solid {COL_GREEN_DRK};}}")
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(4, 4, 4, 4)
-        toolbar_layout.setSpacing(4)
+        toolbar_layout.setContentsMargins(5, 4, 5, 4)
+        toolbar_layout.setSpacing(5)
         self._tool_btns = {}
+        tool_min_widths = {
+            "Patient information": 140,
+            "Full Disc.": 90,
+            "Goto Template": 114,
+            "Measuring Ruler": 120,
+            "Parallel Ruler": 112,
+            "Magnifying Glass": 126,
+            "Gain Settings": 110,
+            "Paper speed:25mm/s": 144,
+            "Add Event(space)": 130,
+            "Adjust strip position": 146,
+            "Strip Length:10s": 120,
+        }
         for tool in ["Patient information", "Full Disc.", "Goto Template"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
-                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"border-radius:4px;padding:4px 8px;font-size:10px;}}"
                                f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.setMinimumHeight(30)
+            tbtn.setMinimumWidth(tool_min_widths.get(tool, 110))
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
-
         for tool in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass", "Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:10s"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
-                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"border-radius:4px;padding:4px 8px;font-size:10px;}}"
                                f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.setMinimumHeight(30)
+            tbtn.setMinimumWidth(tool_min_widths.get(tool, 110))
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
@@ -1215,6 +1284,41 @@ class HolterReplayPanel(QWidget):
         )
         toolbar_layout.addStretch()
         layout.addWidget(toolbar)
+
+
+
+    def _install_magnifier_dismiss_filters(self):
+        """Dismiss the magnifier on any non-wave click inside the replay panel."""
+        self.installEventFilter(self)
+        for widget in self.findChildren(QWidget):
+            widget.installEventFilter(self)
+
+    def _clear_magnifier_if_needed(self, event) -> bool:
+        if event.type() != QEvent.MouseButtonPress or event.button() != Qt.LeftButton:
+            return False
+        overlay = getattr(self, "_magnifier_overlay", None)
+        if overlay is None or not getattr(overlay, "_visible", False):
+            return False
+        source = self.sender()
+        if isinstance(source, ECGStripCanvas):
+            return False
+        overlay.clear_focus()
+        for strip in getattr(self, "_ch_strips", []):
+            if hasattr(strip, "_magnify_locked"):
+                strip._magnify_locked = False
+                strip._magnify_pos = None
+                strip.update()
+        mini_strip = getattr(self, "_mini_strip", None)
+        if mini_strip is not None and hasattr(mini_strip, "_magnify_locked"):
+            mini_strip._magnify_locked = False
+            mini_strip._magnify_pos = None
+            mini_strip.update()
+        return False
+
+    def eventFilter(self, obj, event):
+        if self._clear_magnifier_if_needed(event):
+            return False
+        return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1230,7 +1334,20 @@ class HolterReplayPanel(QWidget):
         if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
             self._magnifier_overlay.clear_focus(source_widget)
 
+    def clear_strip_tools(self, source_widget=None):
+        """Clear transient ruler/caliper overlays and any locked magnifier."""
+        self.clear_magnifier_focus(source_widget)
+        for strip in getattr(self, "_ch_strips", []):
+            if hasattr(strip, "clear_interaction"):
+                strip.clear_interaction()
+        mini_strip = getattr(self, "_mini_strip", None)
+        if mini_strip is not None and hasattr(mini_strip, "clear_interaction"):
+            mini_strip.clear_interaction()
+
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
+        if "Patient information" in tool_name:
+            self._show_patient_information()
+            return
         if "Goto Template" in tool_name:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
@@ -1321,11 +1438,190 @@ class HolterReplayPanel(QWidget):
         self._btn_time_whole.setStyleSheet(_style_active_btn() if scope == "whole" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_time_share.setStyleSheet(_style_active_btn() if scope == "share" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._strip_length_sec = 10.0 if scope == "whole" else 3.6
+        self._refresh_wave_window()
+
+    def _refresh_wave_window(self):
+        if getattr(self, '_replay_engine', None):
+            try:
+                current_pos = float(self._replay_engine.current_position())
+                self._replay_engine.seek(current_pos)
+                self._replay_panel.set_replay_frame(
+                    self._replay_engine.get_all_leads_data(window_sec=float(self._strip_length_sec))
+                )
+            except Exception:
+                pass
+        elif getattr(self, '_live_source', None) is not None and hasattr(self, '_replay_panel'):
+            try:
+                raw = getattr(self._live_source, 'data', None)
+                if raw is not None and hasattr(raw, '__len__') and len(raw) > 0:
+                    import numpy as _np
+                    n_samp = max(len(raw[i]) for i in range(min(12, len(raw))))
+                    arr = _np.full((12, n_samp), 2048.0)
+                    for i in range(min(12, len(raw))):
+                        ch = _np.asarray(raw[i], dtype=float)
+                        arr[i, :len(ch)] = ch
+                    self._replay_panel.set_replay_frame(arr)
+            except Exception:
+                pass
 
     def _set_rr_mode(self, mode: str):
         self._rr_mode = mode
         self._btn_rr.setStyleSheet(_style_active_btn() if mode == "RR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_hr.setStyleSheet(_style_active_btn() if mode == "HR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
+
+    def _build_info_table(self, rows):
+        table = QTableWidget(len(rows), 2)
+        table.setHorizontalHeaderLabels(["Field", "Value"])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setFocusPolicy(Qt.NoFocus)
+        table.setStyleSheet(_table_style())
+        table.setAlternatingRowColors(True)
+        for row, (label, value) in enumerate(rows):
+            label_item = QTableWidgetItem(str(label))
+            label_item.setForeground(QColor(UI_TEXT))
+            value_item = QTableWidgetItem(str(value))
+            value_item.setForeground(QColor(COL_WHITE))
+            table.setItem(row, 0, label_item)
+            table.setItem(row, 1, value_item)
+        table.resizeRowsToContents()
+        return table
+
+    def _show_patient_information(self):
+        summary = dict(getattr(self, "_summary", {}) or {})
+        engine = getattr(self, "_replay_engine", None)
+        session_dir = summary.get("session_dir", "") or ""
+        if not session_dir and engine is not None:
+            session_dir = os.path.dirname(getattr(engine, "ecgh_path", "") or "")
+        metadata = read_session_metadata(session_dir) if session_dir else {}
+        if isinstance(metadata, dict):
+            meta_summary = metadata.get("summary")
+            if isinstance(meta_summary, dict):
+                merged = dict(meta_summary)
+                merged.update(summary)
+                summary = merged
+            meta_patient = metadata.get("patient_info")
+            if isinstance(meta_patient, dict) and meta_patient:
+                summary["patient_info"] = dict(meta_patient)
+
+        patient_info = _normalize_patient_info(
+            summary.get("patient_info") or getattr(engine, "patient_info", {}) or {}
+        )
+
+        if not summary and not patient_info:
+            QMessageBox.information(self, "Patient information", "No recording is loaded.")
+            return
+
+        session_name = os.path.basename(session_dir) if session_dir else "Current session"
+        record_time = session_name
+        parts = session_name.split("_", 3)
+        if len(parts) >= 2:
+            record_time = "_".join(parts[:2]).replace("_", " ")
+
+        def fmt_num(value, suffix="", digits=1):
+            try:
+                return f"{float(value):.{digits}f}{suffix}"
+            except Exception:
+                return "—" if value in (None, "") else f"{value}{suffix}"
+
+        def fmt_duration(seconds):
+            try:
+                sec = max(0, int(float(seconds)))
+            except Exception:
+                return "—"
+            h = sec // 3600
+            m = (sec % 3600) // 60
+            s = sec % 60
+            if h > 0:
+                return f"{h}h {m:02d}m"
+            if m > 0:
+                return f"{m}m {s:02d}s"
+            return f"{s}s"
+
+        patient_rows = [
+            ("Patient Name", patient_info.get("patient_name") or patient_info.get("name") or "—"),
+            ("Age", patient_info.get("age", "—")),
+            ("Gender", patient_info.get("gender") or patient_info.get("sex") or "—"),
+            ("Doctor", patient_info.get("doctor") or "—"),
+            ("Email", patient_info.get("email") or "—"),
+            ("Phone", patient_info.get("doctor_mobile") or patient_info.get("phone") or "—"),
+            ("Organisation", patient_info.get("org") or patient_info.get("Org.") or "—"),
+            ("Study Duration", fmt_duration(summary.get("duration_sec", 0))),
+        ]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Patient Information")
+        dlg.setMinimumSize(760, 620)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {UI_BG};
+                color: {UI_TEXT};
+            }}
+            QLabel {{
+                border: none;
+                background: transparent;
+            }}
+            QGroupBox {{
+                color: {COL_GREEN};
+                font-weight: 700;
+                border: 1px solid {COL_GREEN_DRK};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 16px;
+                background: {COL_BLACK};
+            }}
+            QHeaderView::section {{
+                background: {UI_PANEL_ALT};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                padding: 6px;
+                font-weight: 700;
+            }}
+        """)
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Patient Information")
+        title.setStyleSheet(f"font-size:18px;font-weight:700;color:{UI_TEXT};")
+        outer.addWidget(title)
+
+        subtitle = QLabel(f"Selected recording: {session_name}")
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(f"color:{UI_MUTED};font-size:12px;")
+        outer.addWidget(subtitle)
+
+        patient_box = QGroupBox("Patient Details")
+        patient_box.setStyleSheet(f"""
+            QGroupBox {{
+                color: {UI_TEXT};
+                font-weight: 700;
+                border: 1px solid {UI_BORDER};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 16px;
+                background: {UI_PANEL};
+            }}
+        """)
+        patient_layout = QVBoxLayout(patient_box)
+        patient_layout.setContentsMargins(10, 16, 10, 10)
+        patient_layout.addWidget(self._build_info_table(patient_rows))
+        outer.addWidget(patient_box)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setFixedSize(94, 32)
+        close_btn.setStyleSheet(_style_btn())
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(close_btn)
+        outer.addLayout(btn_row)
+
+        dlg.exec_()
 
     def _goto_time(self):
         dlg = QDialog(self)
@@ -1426,6 +1722,8 @@ class HolterReplayPanel(QWidget):
         self.seek_requested.emit(sec)
 
     def update_summary(self, summary: dict):
+        self._summary = dict(summary or {})
+        self._patient_info = _normalize_patient_info(self._summary.get('patient_info') or getattr(self._replay_engine, 'patient_info', {}) or {})
         if hasattr(self, '_summary_labels'):
             def set_lbl(k, v):
                 if k in self._summary_labels: self._summary_labels[k].setText(str(v))
@@ -1773,6 +2071,14 @@ class ECGStripCanvas(QWidget):
         if host is not None and self._mode == TOOL_MAGNIFY and canonical_tool(mode) != TOOL_MAGNIFY:
             host.clear_magnifier_focus(self)
         self._mode = canonical_tool(mode)
+        self._start_pos = None
+        self._curr_pos = None
+        self._hover_pos = None
+        self._magnify_locked = False
+        self._magnify_pos = None
+        self.update()
+
+    def clear_interaction(self):
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
@@ -4594,7 +4900,7 @@ class HolterMainWindow(QDialog):
         self.setStyleSheet(f"QDialog{{background:{UI_BG};}}")
 
         self.session_dir = session_dir
-        self.patient_info = patient_info or (writer.patient_info if writer else {})
+        self.patient_info = _normalize_patient_info(patient_info or (writer.patient_info if writer else {}))
         self._writer = writer
         self._live_source = live_source
         self._duration_hours = duration_hours
@@ -4620,10 +4926,7 @@ class HolterMainWindow(QDialog):
     def _load_session(self):
         self._metrics_list = []
         metadata = read_session_metadata(self.session_dir) if self.session_dir else {}
-        if metadata:
-            session_patient = metadata.get("patient_info") or {}
-            if isinstance(session_patient, dict) and session_patient:
-                self.patient_info = dict(session_patient)
+        self.patient_info = _load_patient_info_from_session(self.session_dir, self.patient_info)
         layered_metrics = load_metrics(self.session_dir) if self.session_dir else []
         if layered_metrics:
             self._metrics_list = layered_metrics
@@ -4655,6 +4958,8 @@ class HolterMainWindow(QDialog):
             if self._summary:
                 meta_sum.update(self._summary)
             self._summary = meta_sum
+        if self._summary is not None:
+            self._summary["patient_info"] = dict(self.patient_info or {})
 
     def _build_summary_from_metrics(self) -> dict:
         if not self._metrics_list:
@@ -4752,6 +5057,7 @@ class HolterMainWindow(QDialog):
             'recordings': 'recordings',
             'record settings': 'recordings',
             'replay': 'replay',
+            'lorenz': 'replay',
         }
         target = aliases.get(target, target)
         for idx in range(self._tabs.count()):
@@ -4768,9 +5074,13 @@ class HolterMainWindow(QDialog):
         return getattr(self, '_record_mgmt_panel', None)
 
     def _open_recordings_folder(self):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
 
     def _search_recordings(self):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_search'):
@@ -4778,6 +5088,8 @@ class HolterMainWindow(QDialog):
             panel._search.selectAll()
 
     def _apply_recordings_filter(self, label: str):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_filter'):
@@ -4786,19 +5098,44 @@ class HolterMainWindow(QDialog):
                 panel._filter.setCurrentIndex(idx)
 
     def _import_recording(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_import_session'):
             panel._import_session()
 
     def _backup_recordings(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_backup_root'):
             panel._backup_root()
 
     def _delete_recording(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_delete_session'):
             panel._delete_session()
+
+    def _is_replay_active(self) -> bool:
+        panel = getattr(self, "_replay_panel", None)
+        engine = getattr(self, "_replay_engine", None)
+        return bool(panel and engine and engine.is_playing())
+
+    def _set_record_browser_enabled(self, enabled: bool):
+        panel = self._recordings_panel()
+        if panel is not None:
+            for name in ("Browse", "Import", "Export", "Backup", "Delete"):
+                btn = getattr(panel, "_action_buttons", {}).get(name)
+                if btn is not None:
+                    btn.setEnabled(bool(enabled))
+            table = getattr(panel, "_table", None)
+            if table is not None:
+                table.setEnabled(bool(enabled))
+        top_browse = getattr(self, "_action_buttons", {}).get("Browse")
+        if top_browse is not None:
+            top_browse.setEnabled(bool(enabled))
 
     def _generate_from_current(self):
         self._focus_tab('Preview')
@@ -4824,7 +5161,7 @@ class HolterMainWindow(QDialog):
         elif key == 'histogram':
             self._focus_tab('HISTOGRAM')
         elif key == 'lorenz':
-            self._focus_tab('LORENZ')
+            self._focus_tab('REPLAY')
         elif key == 'af analysis':
             self._focus_tab('AF ANALYSIS')
         elif key in {'tend. chart', 'st tendency'}:
@@ -5045,9 +5382,11 @@ class HolterMainWindow(QDialog):
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._replay_panel.section_requested.connect(self._on_workspace_section_requested)
+        self._replay_panel.playback_state_changed.connect(self._set_record_browser_enabled)
         self._replay_panel.update_lorenz(self._metrics_list)
         self._replay_panel.update_summary(self._summary)
         self._tabs.addTab(self._replay_panel, "REPLAY")
+        self._lorenz_panel = self._replay_panel
 
         # Beat Templates
         self._template_panel = HolterBeatTemplatePanel()
@@ -5060,14 +5399,6 @@ class HolterMainWindow(QDialog):
         self._hist_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
-        # Dedicated Lorenz workspace
-        self._lorenz_panel = HolterReplayPanel(duration_sec=duration)
-        if self._replay_engine:
-            self._lorenz_panel.set_replay_engine(self._replay_engine)
-            self._lorenz_panel.seek_requested.connect(self._on_seek_requested)
-        self._lorenz_panel.section_requested.connect(self._on_workspace_section_requested)
-        self._lorenz_panel.update_lorenz(self._metrics_list)
-        self._tabs.addTab(self._lorenz_panel, "LORENZ")
 
         # AF Analysis
         self._af_panel = HolterAFPanel()
@@ -5294,8 +5625,6 @@ class HolterMainWindow(QDialog):
                         self._replay_panel.set_replay_frame(arr)
                 except Exception:
                     pass
-        if hasattr(self, '_lorenz_panel'):
-            self._lorenz_panel.update_lorenz(self._metrics_list)
         if hasattr(self, '_hist_panel'):
             self._hist_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_af_panel'):
@@ -5477,8 +5806,8 @@ class HolterMainWindow(QDialog):
         self._last_live_seq = -1
         if session_dir:
             self.session_dir = session_dir
-        if patient_info:
-            self.patient_info = patient_info
+        if patient_info is not None:
+            self.patient_info = _normalize_patient_info(patient_info)
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
         if writer and not hasattr(self, '_status_bar'):
@@ -5495,10 +5824,21 @@ class HolterMainWindow(QDialog):
     def load_completed_session(self, session_dir: str, patient_info: dict = None):
         self.session_dir = session_dir
         self._last_live_seq = -1
-        if patient_info:
-            self.patient_info = patient_info
+        self.patient_info = _normalize_patient_info(patient_info or {})
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
+        if getattr(self, "_replay_engine", None) and self._replay_engine.is_playing():
+            self._replay_engine.pause()
+        if hasattr(self, "_replay_panel"):
+            try:
+                self._replay_panel._slider.blockSignals(True)
+                self._replay_panel._slider.setValue(0)
+                self._replay_panel._slider.blockSignals(False)
+                self._replay_panel._pos_label.setText(_sec_to_hms(0))
+                self._replay_panel._play_btn.setText("Play")
+            except Exception:
+                pass
+            self._set_record_browser_enabled(True)
         self._writer = None
         self._load_session()
         if hasattr(self, '_record_mgmt_panel'):
@@ -5511,8 +5851,6 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
-        if hasattr(self, '_lorenz_panel') and getattr(self, '_replay_engine', None):
-            self._lorenz_panel.set_replay_engine(self._replay_engine)
         self._refresh_ui()
         if hasattr(self, '_tabs'):
             self._tabs.setCurrentIndex(0)
@@ -5529,3 +5867,14 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
+
+
+
+
+
+
+
+
+
+

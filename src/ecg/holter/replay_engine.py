@@ -216,7 +216,7 @@ class HolterReplayEngine:
         Returns window_sec of data for the given lead starting at current position.
         Returns shape (N,) float32 array.
         """
-        start = max(0.0, self._current_sec - window_sec / 2)
+        start = max(0.0, self._current_sec)
         end = start + window_sec
         data = self._reader.read_range(start, end)
         if data.shape[0] > lead_idx:
@@ -225,7 +225,7 @@ class HolterReplayEngine:
 
     def get_all_leads_data(self, window_sec: float = 10.0) -> np.ndarray:
         """Returns (12, N) array for current window."""
-        start = max(0.0, self._current_sec - window_sec / 2)
+        start = max(0.0, self._current_sec)
         end = start + window_sec
         return self._reader.read_range(start, end)
 
