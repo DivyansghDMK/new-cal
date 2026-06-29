@@ -962,6 +962,10 @@ class HolterReplayPanel(QWidget):
         self.setStyleSheet(f"background:{COL_DARK};")
         self._replay_engine = None
         self._tool_engine = ECGToolEngine()
+        self._current_replay_frame = None
+        self._selected_lead_idx = 1
+        self._slider_units_per_sec = 100
+        self._last_slider_seek_raw = None
         self._build_ui()
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
@@ -982,7 +986,7 @@ class HolterReplayPanel(QWidget):
         self._ribbon_buttons = {}
         for txt in ["Overview", "Template", "Histogram", "Replay", "Af Analysis", "Tend. Chart",
                     "Pace Spike", "Edit Event", "Edit Strips", "Add Event", "Advance Tools",
-                    "Record Settings", "Edit Report", "Preview", "Print", "Reanalysis", "Quit"]:
+                    "Record Settings", "Edit Report", "Print", "Reanalysis", "Quit"]:
             b = QPushButton(txt)
             b.setFixedHeight(30)
             b.setStyleSheet(_style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
@@ -1133,12 +1137,14 @@ class HolterReplayPanel(QWidget):
 
         # Full-width rhythm strip (Lead II) at bottom
         rhythm_row = QHBoxLayout()
+        rhythm_row.setContentsMargins(0, 0, 0, 0)
         rhythm_row.setSpacing(4)
         rhythm_lbl = QLabel("II")
+        self._mini_lead_lbl = rhythm_lbl
         rhythm_lbl.setFixedWidth(34)
         rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini_strip = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9)
+        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9)
         rhythm_row.addWidget(rhythm_lbl)
         rhythm_row.addWidget(self._mini_strip, 1)
         ecg_right_layout.addLayout(rhythm_row)
@@ -1174,14 +1180,16 @@ class HolterReplayPanel(QWidget):
         self._time_start_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:12px;border:none;")
         slider_row.addWidget(self._time_start_label)
         self._slider = QSlider(Qt.Horizontal)
-        self._slider.setRange(0, int(self.duration_sec))
+        self._slider.setRange(0, self._slider_sec_to_value(self.duration_sec))
         self._slider.setStyleSheet(f"""
             QSlider::groove:horizontal{{height:8px;background:{COL_DARK};border:1px solid {COL_GREEN_DRK};border-radius:4px;}}
             QSlider::handle:horizontal{{background:{COL_GREEN};border:1px solid {COL_WHITE};border-radius:9px;
                 width:18px;height:18px;margin:-6px 0;}}
             QSlider::sub-page:horizontal{{background:{COL_GREEN_DRK};border-radius:4px;}}
         """)
+        self._slider.setTracking(True)
         self._slider.valueChanged.connect(self._on_slider)
+        self._slider.sliderMoved.connect(self._on_slider)
         slider_row.addWidget(self._slider, 1)
         self._pos_label = QLabel("00:00:00")
         self._pos_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:14px;font-weight:bold;"
@@ -1191,12 +1199,12 @@ class HolterReplayPanel(QWidget):
 
         # Transport + controls row
         ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(8)
+        ctrl_row.setSpacing(10)
 
         self._play_btn = QPushButton("▶ Play")
         self._play_btn.setStyleSheet(_style_btn())
         self._play_btn.setFixedHeight(30)
-        self._play_btn.setMinimumWidth(92)
+        self._play_btn.setMinimumWidth(100)
         self._play_btn.clicked.connect(self._toggle_playback)
         ctrl_row.addWidget(self._play_btn)
 
@@ -1204,7 +1212,7 @@ class HolterReplayPanel(QWidget):
             btn = QPushButton(speed_lbl)
             btn.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
             btn.setFixedHeight(30)
-            btn.setMinimumWidth(50)
+            btn.setMinimumWidth(56)
             btn.clicked.connect(lambda _, s=speed_lbl: self._set_speed(s))
             ctrl_row.addWidget(btn)
         sep = QLabel("|")
@@ -1212,17 +1220,18 @@ class HolterReplayPanel(QWidget):
         ctrl_row.addWidget(sep)
 
         lbl_lead = QLabel("Lead:")
-        lbl_lead.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;border:none;")
+        lbl_lead.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;border:none;font-size:13px;")
         ctrl_row.addWidget(lbl_lead)
         self._lead_combo = QComboBox()
         self._lead_combo.addItems(["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"])
         self._lead_combo.setCurrentIndex(1)
+        self._lead_combo.setFixedWidth(70)
         self._lead_combo.setStyleSheet(f"background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
                                        f"padding:4px;border-radius:4px;font-weight:bold;")
-        self._lead_combo.currentIndexChanged.connect(self.lead_changed)
+        self._lead_combo.currentIndexChanged.connect(self._on_lead_changed)
         ctrl_row.addWidget(self._lead_combo)
 
-        ctrl_row.addSpacing(12)
+        ctrl_row.addSpacing(22)
 
         # Event jump buttons
         for lbl_txt, ev, d in [("◀ AF","AF","prev"),("AF ▶","AF","next"),
@@ -1230,8 +1239,9 @@ class HolterReplayPanel(QWidget):
                                ("◀ Tachy","Tachy","prev"),("Tachy ▶","Tachy","next")]:
             btn = QPushButton(lbl_txt)
             btn.setStyleSheet(_style_btn(COL_BLACK, COL_GREEN, COL_GREEN_DRK))
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(30)
             ev_c, d_c = ev, d
+            btn.setMinimumWidth(78)
             btn.clicked.connect(lambda _, e=ev_c, dd=d_c: self._jump_event(e, dd))
             ctrl_row.addWidget(btn)
 
@@ -1405,9 +1415,14 @@ class HolterReplayPanel(QWidget):
             # Adjust strip_length_sec so the replay engine delivers the right amount of data.
             # Reference: 25mm/s = 10s window; scale inversely with speed.
             self._strip_length_sec = 10.0 * (25.0 / max(1.0, float(val)))
+            if getattr(self, "_replay_engine", None):
+                try:
+                    self._replay_engine.set_window_length(self._strip_length_sec)
+                except Exception:
+                    pass
             # Re-seek to force data reload with the new strip length
             try:
-                current_pos = float(self._slider.value())
+                current_pos = self._slider_value_to_sec(self._slider.value())
                 self.seek_requested.emit(current_pos)
             except Exception:
                 pass
@@ -1419,6 +1434,11 @@ class HolterReplayPanel(QWidget):
             self._curr_length_idx = next_l
             val = lengths[next_l]
             self._strip_length_sec = float(val)
+            if getattr(self, "_replay_engine", None):
+                try:
+                    self._replay_engine.set_window_length(self._strip_length_sec)
+                except Exception:
+                    pass
             if btn: btn.setText(f"Strip Length:{val}s")
             return
 
@@ -1438,6 +1458,11 @@ class HolterReplayPanel(QWidget):
         self._btn_time_whole.setStyleSheet(_style_active_btn() if scope == "whole" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_time_share.setStyleSheet(_style_active_btn() if scope == "share" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._strip_length_sec = 10.0 if scope == "whole" else 3.6
+        if getattr(self, "_replay_engine", None):
+            try:
+                self._replay_engine.set_window_length(self._strip_length_sec)
+            except Exception:
+                pass
         self._refresh_wave_window()
 
     def _refresh_wave_window(self):
@@ -1742,10 +1767,19 @@ class HolterReplayPanel(QWidget):
             set_lbl("sdnn", f"{summary.get('sdnn', 0)} ms")
             set_lbl("rmssd", f"{summary.get('rmssd', 0)} ms")
 
+    def _slider_sec_to_value(self, seconds: float) -> int:
+        units = max(1, int(getattr(self, "_slider_units_per_sec", 100)))
+        return int(round(max(0.0, float(seconds)) * units))
+
+    def _slider_value_to_sec(self, value: int) -> float:
+        units = max(1, int(getattr(self, "_slider_units_per_sec", 100)))
+        return max(0.0, float(value) / float(units))
+
     def set_replay_engine(self, engine):
         self._replay_engine = engine
-        self._slider.setRange(0, int(engine.duration_sec))
+        self._slider.setRange(0, self._slider_sec_to_value(engine.duration_sec))
         engine.set_position_callback(self._on_position_update)
+        engine.set_window_length(getattr(self, "_strip_length_sec", 10.0))
         
         # Wire up data callback safely for thread-safe playback updates
         try:
@@ -1756,12 +1790,31 @@ class HolterReplayPanel(QWidget):
         engine.set_data_callback(lambda data: self.frame_received.emit(data))
 
     def _on_slider(self, value):
-        self._pos_label.setText(_sec_to_hms(value))
-        self.seek_requested.emit(float(value))
+        raw = int(value)
+        sec = self._slider_value_to_sec(raw)
+        self._pos_label.setText(_sec_to_hms(sec))
+        if self._last_slider_seek_raw == raw:
+            return
+        self._last_slider_seek_raw = raw
+        self.seek_requested.emit(float(sec))
+
+    def _on_lead_changed(self, idx: int):
+        self._selected_lead_idx = max(0, int(idx))
+        frame = getattr(self, "_current_replay_frame", None)
+        if frame is not None:
+            try:
+                self.set_replay_frame(frame)
+            except Exception:
+                pass
+        try:
+            self.lead_changed.emit(int(idx))
+        except Exception:
+            pass
 
     def _on_position_update(self, current_sec, duration_sec):
+        self._last_slider_seek_raw = self._slider_sec_to_value(current_sec)
         self._slider.blockSignals(True)
-        self._slider.setValue(int(current_sec))
+        self._slider.setValue(self._slider_sec_to_value(current_sec))
         self._slider.blockSignals(False)
         self._pos_label.setText(_sec_to_hms(current_sec))
 
@@ -1823,6 +1876,7 @@ class HolterReplayPanel(QWidget):
         if data is None or data.shape[0] < 12:
             return
 
+        self._current_replay_frame = data
         strip_len = int(max(1, getattr(self, "_strip_length_sec", 10.0)) * 500)
         if data.shape[1] > strip_len:
             data = data[:, -strip_len:]
@@ -1860,9 +1914,17 @@ class HolterReplayPanel(QWidget):
             if idx < data.shape[0] and lead in lead_strips:
                 lead_strips[lead].set_data(x, data[idx].copy())
 
-        # Mini strip shows Lead II
-        if hasattr(self, "_mini_strip") and data.shape[0] > 1:
-            self._mini_strip.set_data(x, data[1].copy())
+        # Mini strip follows the selected lead from the dropdown
+        if hasattr(self, "_mini_strip") and data.shape[0] > 0:
+            lead_idx = max(0, min(int(getattr(self, "_selected_lead_idx", 1)), data.shape[0] - 1))
+            selected_lead = self._lead_combo.currentText() if hasattr(self, "_lead_combo") else lead_names[lead_idx]
+            self._mini_strip.set_data(x, data[lead_idx].copy())
+            try:
+                self._mini_strip.lead_name = selected_lead
+            except Exception:
+                pass
+            if hasattr(self, "_mini_lead_lbl"):
+                self._mini_lead_lbl.setText(selected_lead)
 
         # Template thumbnails (use first 4 leads: I, II, III, aVR)
         for i, ts in enumerate(getattr(self, "_template_thumbs", [])):
@@ -4406,7 +4468,13 @@ class HolterEditEventPanel(QWidget):
                 strip.set_data(x, data[i].copy())
         if N > 0:
             self._thumb.set_data(x[:500], data[0,:500].copy() if 500 < N else data[0].copy())
-            self._mini.set_data(x, data[0].copy())
+            lead_idx = max(0, min(int(getattr(self, "_selected_lead_idx", 1)), data.shape[0] - 1))
+            mini_data = data[lead_idx].copy()
+            self._mini.set_data(x, mini_data)
+            try:
+                self._mini.lead_name = self._lead_combo.currentText()
+            except Exception:
+                pass
 
 
 class ClickableSummaryTile(QFrame):
@@ -5138,7 +5206,7 @@ class HolterMainWindow(QDialog):
             top_browse.setEnabled(bool(enabled))
 
     def _generate_from_current(self):
-        self._focus_tab('Preview')
+        self._focus_tab('PREVIEW')
         self._generate_report()
 
     def _refresh_current_session(self):
@@ -5155,7 +5223,7 @@ class HolterMainWindow(QDialog):
         elif key in {'overview'}:
             self._focus_tab('OVERVIEW')
         elif key in {'preview', 'view', 'report', 'edit report'}:
-            self._focus_tab('Preview')
+            self._focus_tab('PREVIEW')
         elif key == 'template':
             self._focus_tab('TEMPLATE')
         elif key == 'histogram':
@@ -5463,14 +5531,27 @@ class HolterMainWindow(QDialog):
         self._insight_panel = HolterInsightPanel()
         self._insight_panel.update_text(self.patient_info, self._summary)
         scroll_insight.setWidget(self._insight_panel)
-        self._tabs.addTab(scroll_insight, "Preview")
+        self._tabs.addTab(scroll_insight, "PREVIEW")
+        self._tabs.addTab(QWidget(), "PRINT")
+        self._tabs.addTab(QWidget(), "REANALYSIS")
+        self._tabs.addTab(QWidget(), "QUIT")
 
         # Hide the bottom analysis tab bar when looking at global "RECORDINGS" tab to avoid confusion
         def _on_tab_changed(index):
-            if self._tabs.tabText(index) == "RECORDINGS":
+            tab_name = self._tabs.tabText(index)
+            if tab_name == "RECORDINGS":
                 self._tabs.tabBar().setVisible(False)
             else:
                 self._tabs.tabBar().setVisible(True)
+            if tab_name == "PRINT":
+                QTimer.singleShot(0, self._generate_report)
+                self._focus_tab("PREVIEW")
+            elif tab_name == "REANALYSIS":
+                QTimer.singleShot(0, lambda: self._on_workspace_section_requested("reanalysis"))
+                self._focus_tab("PREVIEW")
+            elif tab_name == "QUIT":
+                QTimer.singleShot(0, self.close)
+                self._focus_tab("PREVIEW")
         self._tabs.currentChanged.connect(_on_tab_changed)
         # Ensure initial state is correct
         _on_tab_changed(self._tabs.currentIndex())
@@ -5484,7 +5565,7 @@ class HolterMainWindow(QDialog):
         self._action_buttons["Browse"].clicked.connect(self._open_recordings_folder)
         self._action_buttons["Search"].clicked.connect(self._search_recordings)
         self._action_buttons["Analyse"].clicked.connect(lambda: self._focus_tab("REPLAY"))
-        self._action_buttons["View"].clicked.connect(lambda: self._focus_tab("Preview"))
+        self._action_buttons["View"].clicked.connect(lambda: self._focus_tab("PREVIEW"))
         self._action_buttons["Import"].clicked.connect(self._import_recording)
         self._action_buttons["Backup"].clicked.connect(self._backup_recordings)
         self._action_buttons["Delete"].clicked.connect(self._delete_recording)
@@ -5498,12 +5579,29 @@ class HolterMainWindow(QDialog):
 
     # ── Callbacks ──────────────────────────────────────────────────────────────
 
+    def _current_replay_window_sec(self) -> float:
+        panel = getattr(self, '_replay_panel', None)
+        if panel is not None:
+            try:
+                return float(getattr(panel, '_strip_length_sec', 10.0) or 10.0)
+            except Exception:
+                pass
+        return float(getattr(self, '_strip_length_sec', 10.0) or 10.0)
+
+    def _sync_replay_window_length(self):
+        if getattr(self, '_replay_engine', None) and hasattr(self._replay_engine, 'set_window_length'):
+            try:
+                self._replay_engine.set_window_length(self._current_replay_window_sec())
+            except Exception:
+                pass
+
     def _on_seek_requested(self, target_sec: float):
         if self._replay_engine:
+            self._sync_replay_window_length()
             self._replay_engine.seek(target_sec)
             try:
                 # Use the replay panel's current strip length (changes with paper speed)
-                window_sec = getattr(getattr(self, '_replay_panel', None), '_strip_length_sec', 10.0) or 10.0
+                window_sec = self._current_replay_window_sec()
                 data = self._replay_engine.get_all_leads_data(window_sec=float(window_sec))
                 if hasattr(self, '_wave_panel'):
                     self._wave_panel.set_replay_frame(data)
@@ -5655,12 +5753,12 @@ class HolterMainWindow(QDialog):
             self._wave_panel.refresh_waveforms()
         if hasattr(self, '_expert_panel') and self._replay_engine:
             try:
-                self._expert_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
+                self._expert_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=self._current_replay_window_sec()))
             except Exception:
                 pass
         if self._replay_engine:
             try:
-                self._broadcast_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
+                self._broadcast_replay_frame(self._replay_engine.get_all_leads_data(window_sec=self._current_replay_window_sec()))
             except Exception:
                 pass
 
@@ -5832,7 +5930,7 @@ class HolterMainWindow(QDialog):
         if hasattr(self, "_replay_panel"):
             try:
                 self._replay_panel._slider.blockSignals(True)
-                self._replay_panel._slider.setValue(0)
+                self._replay_panel._slider.setValue(self._replay_panel._slider_sec_to_value(0))
                 self._replay_panel._slider.blockSignals(False)
                 self._replay_panel._pos_label.setText(_sec_to_hms(0))
                 self._replay_panel._play_btn.setText("Play")
@@ -5867,6 +5965,8 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
+
 
 
 
