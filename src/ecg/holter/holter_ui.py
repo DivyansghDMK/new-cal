@@ -1299,6 +1299,9 @@ class HolterReplayPanel(QWidget):
             self._magnifier_overlay.clear_focus(source_widget)
 
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
+        if "Patient information" in tool_name:
+            self._show_patient_information()
+            return
         if "Goto Template" in tool_name:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
@@ -1389,11 +1392,190 @@ class HolterReplayPanel(QWidget):
         self._btn_time_whole.setStyleSheet(_style_active_btn() if scope == "whole" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_time_share.setStyleSheet(_style_active_btn() if scope == "share" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._strip_length_sec = 10.0 if scope == "whole" else 3.6
+        self._refresh_wave_window()
+
+    def _refresh_wave_window(self):
+        if getattr(self, '_replay_engine', None):
+            try:
+                current_pos = float(self._replay_engine.current_position())
+                self._replay_engine.seek(current_pos)
+                self._replay_panel.set_replay_frame(
+                    self._replay_engine.get_all_leads_data(window_sec=float(self._strip_length_sec))
+                )
+            except Exception:
+                pass
+        elif getattr(self, '_live_source', None) is not None and hasattr(self, '_replay_panel'):
+            try:
+                raw = getattr(self._live_source, 'data', None)
+                if raw is not None and hasattr(raw, '__len__') and len(raw) > 0:
+                    import numpy as _np
+                    n_samp = max(len(raw[i]) for i in range(min(12, len(raw))))
+                    arr = _np.full((12, n_samp), 2048.0)
+                    for i in range(min(12, len(raw))):
+                        ch = _np.asarray(raw[i], dtype=float)
+                        arr[i, :len(ch)] = ch
+                    self._replay_panel.set_replay_frame(arr)
+            except Exception:
+                pass
 
     def _set_rr_mode(self, mode: str):
         self._rr_mode = mode
         self._btn_rr.setStyleSheet(_style_active_btn() if mode == "RR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_hr.setStyleSheet(_style_active_btn() if mode == "HR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
+
+    def _build_info_table(self, rows):
+        table = QTableWidget(len(rows), 2)
+        table.setHorizontalHeaderLabels(["Field", "Value"])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setFocusPolicy(Qt.NoFocus)
+        table.setStyleSheet(_table_style())
+        table.setAlternatingRowColors(True)
+        for row, (label, value) in enumerate(rows):
+            label_item = QTableWidgetItem(str(label))
+            label_item.setForeground(QColor(UI_TEXT))
+            value_item = QTableWidgetItem(str(value))
+            value_item.setForeground(QColor(COL_WHITE))
+            table.setItem(row, 0, label_item)
+            table.setItem(row, 1, value_item)
+        table.resizeRowsToContents()
+        return table
+
+    def _show_patient_information(self):
+        summary = dict(getattr(self, "_summary", {}) or {})
+        engine = getattr(self, "_replay_engine", None)
+        session_dir = summary.get("session_dir", "") or ""
+        if not session_dir and engine is not None:
+            session_dir = os.path.dirname(getattr(engine, "ecgh_path", "") or "")
+        metadata = read_session_metadata(session_dir) if session_dir else {}
+        if isinstance(metadata, dict):
+            meta_summary = metadata.get("summary")
+            if isinstance(meta_summary, dict):
+                merged = dict(meta_summary)
+                merged.update(summary)
+                summary = merged
+            meta_patient = metadata.get("patient_info")
+            if isinstance(meta_patient, dict) and meta_patient:
+                summary["patient_info"] = dict(meta_patient)
+
+        patient_info = _normalize_patient_info(
+            summary.get("patient_info") or getattr(engine, "patient_info", {}) or {}
+        )
+
+        if not summary and not patient_info:
+            QMessageBox.information(self, "Patient information", "No recording is loaded.")
+            return
+
+        session_name = os.path.basename(session_dir) if session_dir else "Current session"
+        record_time = session_name
+        parts = session_name.split("_", 3)
+        if len(parts) >= 2:
+            record_time = "_".join(parts[:2]).replace("_", " ")
+
+        def fmt_num(value, suffix="", digits=1):
+            try:
+                return f"{float(value):.{digits}f}{suffix}"
+            except Exception:
+                return "—" if value in (None, "") else f"{value}{suffix}"
+
+        def fmt_duration(seconds):
+            try:
+                sec = max(0, int(float(seconds)))
+            except Exception:
+                return "—"
+            h = sec // 3600
+            m = (sec % 3600) // 60
+            s = sec % 60
+            if h > 0:
+                return f"{h}h {m:02d}m"
+            if m > 0:
+                return f"{m}m {s:02d}s"
+            return f"{s}s"
+
+        patient_rows = [
+            ("Patient Name", patient_info.get("patient_name") or patient_info.get("name") or "—"),
+            ("Age", patient_info.get("age", "—")),
+            ("Gender", patient_info.get("gender") or patient_info.get("sex") or "—"),
+            ("Doctor", patient_info.get("doctor") or "—"),
+            ("Email", patient_info.get("email") or "—"),
+            ("Phone", patient_info.get("doctor_mobile") or patient_info.get("phone") or "—"),
+            ("Organisation", patient_info.get("org") or patient_info.get("Org.") or "—"),
+            ("Study Duration", fmt_duration(summary.get("duration_sec", 0))),
+        ]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Patient Information")
+        dlg.setMinimumSize(760, 620)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {UI_BG};
+                color: {UI_TEXT};
+            }}
+            QLabel {{
+                border: none;
+                background: transparent;
+            }}
+            QGroupBox {{
+                color: {COL_GREEN};
+                font-weight: 700;
+                border: 1px solid {COL_GREEN_DRK};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 16px;
+                background: {COL_BLACK};
+            }}
+            QHeaderView::section {{
+                background: {UI_PANEL_ALT};
+                color: {UI_TEXT};
+                border: 1px solid {UI_BORDER};
+                padding: 6px;
+                font-weight: 700;
+            }}
+        """)
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        title = QLabel("Patient Information")
+        title.setStyleSheet(f"font-size:18px;font-weight:700;color:{UI_TEXT};")
+        outer.addWidget(title)
+
+        subtitle = QLabel(f"Selected recording: {session_name}")
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(f"color:{UI_MUTED};font-size:12px;")
+        outer.addWidget(subtitle)
+
+        patient_box = QGroupBox("Patient Details")
+        patient_box.setStyleSheet(f"""
+            QGroupBox {{
+                color: {UI_TEXT};
+                font-weight: 700;
+                border: 1px solid {UI_BORDER};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 16px;
+                background: {UI_PANEL};
+            }}
+        """)
+        patient_layout = QVBoxLayout(patient_box)
+        patient_layout.setContentsMargins(10, 16, 10, 10)
+        patient_layout.addWidget(self._build_info_table(patient_rows))
+        outer.addWidget(patient_box)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setFixedSize(94, 32)
+        close_btn.setStyleSheet(_style_btn())
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(close_btn)
+        outer.addLayout(btn_row)
+
+        dlg.exec_()
 
     def _goto_time(self):
         dlg = QDialog(self)
@@ -1494,6 +1676,8 @@ class HolterReplayPanel(QWidget):
         self.seek_requested.emit(sec)
 
     def update_summary(self, summary: dict):
+        self._summary = dict(summary or {})
+        self._patient_info = _normalize_patient_info(self._summary.get('patient_info') or getattr(self._replay_engine, 'patient_info', {}) or {})
         if hasattr(self, '_summary_labels'):
             def set_lbl(k, v):
                 if k in self._summary_labels: self._summary_labels[k].setText(str(v))
