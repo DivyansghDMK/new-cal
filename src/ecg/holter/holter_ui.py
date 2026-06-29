@@ -964,6 +964,8 @@ class HolterReplayPanel(QWidget):
         self._tool_engine = ECGToolEngine()
         self._current_replay_frame = None
         self._selected_lead_idx = 1
+        self._slider_units_per_sec = 100
+        self._last_slider_seek_raw = None
         self._build_ui()
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
@@ -1178,14 +1180,16 @@ class HolterReplayPanel(QWidget):
         self._time_start_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:12px;border:none;")
         slider_row.addWidget(self._time_start_label)
         self._slider = QSlider(Qt.Horizontal)
-        self._slider.setRange(0, int(self.duration_sec))
+        self._slider.setRange(0, self._slider_sec_to_value(self.duration_sec))
         self._slider.setStyleSheet(f"""
             QSlider::groove:horizontal{{height:8px;background:{COL_DARK};border:1px solid {COL_GREEN_DRK};border-radius:4px;}}
             QSlider::handle:horizontal{{background:{COL_GREEN};border:1px solid {COL_WHITE};border-radius:9px;
                 width:18px;height:18px;margin:-6px 0;}}
             QSlider::sub-page:horizontal{{background:{COL_GREEN_DRK};border-radius:4px;}}
         """)
+        self._slider.setTracking(True)
         self._slider.valueChanged.connect(self._on_slider)
+        self._slider.sliderMoved.connect(self._on_slider)
         slider_row.addWidget(self._slider, 1)
         self._pos_label = QLabel("00:00:00")
         self._pos_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:14px;font-weight:bold;"
@@ -1411,9 +1415,14 @@ class HolterReplayPanel(QWidget):
             # Adjust strip_length_sec so the replay engine delivers the right amount of data.
             # Reference: 25mm/s = 10s window; scale inversely with speed.
             self._strip_length_sec = 10.0 * (25.0 / max(1.0, float(val)))
+            if getattr(self, "_replay_engine", None):
+                try:
+                    self._replay_engine.set_window_length(self._strip_length_sec)
+                except Exception:
+                    pass
             # Re-seek to force data reload with the new strip length
             try:
-                current_pos = float(self._slider.value())
+                current_pos = self._slider_value_to_sec(self._slider.value())
                 self.seek_requested.emit(current_pos)
             except Exception:
                 pass
@@ -1425,6 +1434,11 @@ class HolterReplayPanel(QWidget):
             self._curr_length_idx = next_l
             val = lengths[next_l]
             self._strip_length_sec = float(val)
+            if getattr(self, "_replay_engine", None):
+                try:
+                    self._replay_engine.set_window_length(self._strip_length_sec)
+                except Exception:
+                    pass
             if btn: btn.setText(f"Strip Length:{val}s")
             return
 
@@ -1444,6 +1458,11 @@ class HolterReplayPanel(QWidget):
         self._btn_time_whole.setStyleSheet(_style_active_btn() if scope == "whole" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_time_share.setStyleSheet(_style_active_btn() if scope == "share" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._strip_length_sec = 10.0 if scope == "whole" else 3.6
+        if getattr(self, "_replay_engine", None):
+            try:
+                self._replay_engine.set_window_length(self._strip_length_sec)
+            except Exception:
+                pass
         self._refresh_wave_window()
 
     def _refresh_wave_window(self):
@@ -1748,10 +1767,19 @@ class HolterReplayPanel(QWidget):
             set_lbl("sdnn", f"{summary.get('sdnn', 0)} ms")
             set_lbl("rmssd", f"{summary.get('rmssd', 0)} ms")
 
+    def _slider_sec_to_value(self, seconds: float) -> int:
+        units = max(1, int(getattr(self, "_slider_units_per_sec", 100)))
+        return int(round(max(0.0, float(seconds)) * units))
+
+    def _slider_value_to_sec(self, value: int) -> float:
+        units = max(1, int(getattr(self, "_slider_units_per_sec", 100)))
+        return max(0.0, float(value) / float(units))
+
     def set_replay_engine(self, engine):
         self._replay_engine = engine
-        self._slider.setRange(0, int(engine.duration_sec))
+        self._slider.setRange(0, self._slider_sec_to_value(engine.duration_sec))
         engine.set_position_callback(self._on_position_update)
+        engine.set_window_length(getattr(self, "_strip_length_sec", 10.0))
         
         # Wire up data callback safely for thread-safe playback updates
         try:
@@ -1762,8 +1790,13 @@ class HolterReplayPanel(QWidget):
         engine.set_data_callback(lambda data: self.frame_received.emit(data))
 
     def _on_slider(self, value):
-        self._pos_label.setText(_sec_to_hms(value))
-        self.seek_requested.emit(float(value))
+        raw = int(value)
+        sec = self._slider_value_to_sec(raw)
+        self._pos_label.setText(_sec_to_hms(sec))
+        if self._last_slider_seek_raw == raw:
+            return
+        self._last_slider_seek_raw = raw
+        self.seek_requested.emit(float(sec))
 
     def _on_lead_changed(self, idx: int):
         self._selected_lead_idx = max(0, int(idx))
@@ -1779,8 +1812,9 @@ class HolterReplayPanel(QWidget):
             pass
 
     def _on_position_update(self, current_sec, duration_sec):
+        self._last_slider_seek_raw = self._slider_sec_to_value(current_sec)
         self._slider.blockSignals(True)
-        self._slider.setValue(int(current_sec))
+        self._slider.setValue(self._slider_sec_to_value(current_sec))
         self._slider.blockSignals(False)
         self._pos_label.setText(_sec_to_hms(current_sec))
 
@@ -5545,12 +5579,29 @@ class HolterMainWindow(QDialog):
 
     # ── Callbacks ──────────────────────────────────────────────────────────────
 
+    def _current_replay_window_sec(self) -> float:
+        panel = getattr(self, '_replay_panel', None)
+        if panel is not None:
+            try:
+                return float(getattr(panel, '_strip_length_sec', 10.0) or 10.0)
+            except Exception:
+                pass
+        return float(getattr(self, '_strip_length_sec', 10.0) or 10.0)
+
+    def _sync_replay_window_length(self):
+        if getattr(self, '_replay_engine', None) and hasattr(self._replay_engine, 'set_window_length'):
+            try:
+                self._replay_engine.set_window_length(self._current_replay_window_sec())
+            except Exception:
+                pass
+
     def _on_seek_requested(self, target_sec: float):
         if self._replay_engine:
+            self._sync_replay_window_length()
             self._replay_engine.seek(target_sec)
             try:
                 # Use the replay panel's current strip length (changes with paper speed)
-                window_sec = getattr(getattr(self, '_replay_panel', None), '_strip_length_sec', 10.0) or 10.0
+                window_sec = self._current_replay_window_sec()
                 data = self._replay_engine.get_all_leads_data(window_sec=float(window_sec))
                 if hasattr(self, '_wave_panel'):
                     self._wave_panel.set_replay_frame(data)
@@ -5702,12 +5753,12 @@ class HolterMainWindow(QDialog):
             self._wave_panel.refresh_waveforms()
         if hasattr(self, '_expert_panel') and self._replay_engine:
             try:
-                self._expert_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
+                self._expert_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=self._current_replay_window_sec()))
             except Exception:
                 pass
         if self._replay_engine:
             try:
-                self._broadcast_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
+                self._broadcast_replay_frame(self._replay_engine.get_all_leads_data(window_sec=self._current_replay_window_sec()))
             except Exception:
                 pass
 
@@ -5879,7 +5930,7 @@ class HolterMainWindow(QDialog):
         if hasattr(self, "_replay_panel"):
             try:
                 self._replay_panel._slider.blockSignals(True)
-                self._replay_panel._slider.setValue(0)
+                self._replay_panel._slider.setValue(self._replay_panel._slider_sec_to_value(0))
                 self._replay_panel._slider.blockSignals(False)
                 self._replay_panel._pos_label.setText(_sec_to_hms(0))
                 self._replay_panel._play_btn.setText("Play")

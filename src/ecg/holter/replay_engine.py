@@ -43,6 +43,7 @@ class HolterReplayEngine:
         self._playback_speed = 1.0
         self._playback_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._window_sec: float = 10.0
 
         # Metrics
         self._metrics: List[dict] = []
@@ -152,8 +153,27 @@ class HolterReplayEngine:
         """callback(timestamp, label)"""
         self._on_arrhythmia_event = callback
 
-    # ── Seek & navigation ──────────────────────────────────────────────────────
+    def set_window_length(self, window_sec: float):
+        """Set the display window length in seconds for emitted frames."""
+        self._window_sec = max(0.5, float(window_sec))
 
+    def get_window_length(self) -> float:
+        return float(self._window_sec)
+
+    def current_position(self) -> float:
+        return float(self._current_sec)
+
+    def _window_bounds(self, window_sec: float) -> Tuple[float, float]:
+        """Return a bounded window, keeping the requested span when possible."""
+        window_sec = max(0.5, float(window_sec))
+        if self.duration_sec <= window_sec:
+            return 0.0, float(self.duration_sec)
+
+        start = max(0.0, min(self._current_sec, self.duration_sec - window_sec))
+        end = min(self.duration_sec, start + window_sec)
+        return start, end
+
+    # ── Seek & navigation ──────────────────────────────────────────────────────
     def seek(self, target_sec: float):
         """Jump to any timestamp in the recording."""
         self._current_sec = max(0.0, min(target_sec, self.duration_sec))
@@ -216,8 +236,7 @@ class HolterReplayEngine:
         Returns window_sec of data for the given lead starting at current position.
         Returns shape (N,) float32 array.
         """
-        start = max(0.0, self._current_sec)
-        end = start + window_sec
+        start, end = self._window_bounds(window_sec)
         data = self._reader.read_range(start, end)
         if data.shape[0] > lead_idx:
             return data[lead_idx]
@@ -225,8 +244,7 @@ class HolterReplayEngine:
 
     def get_all_leads_data(self, window_sec: float = 10.0) -> np.ndarray:
         """Returns (12, N) array for current window."""
-        start = max(0.0, self._current_sec)
-        end = start + window_sec
+        start, end = self._window_bounds(window_sec)
         return self._reader.read_range(start, end)
 
     def get_metrics_at(self, target_sec: float) -> Optional[dict]:
@@ -239,7 +257,7 @@ class HolterReplayEngine:
     def _emit_frame(self):
         """Emit current frame data to registered callbacks."""
         if self._on_data:
-            data = self.get_all_leads_data(window_sec=10.0)
+            data = self.get_all_leads_data(window_sec=self._window_sec)
             self._on_data(data)
         if self._on_position:
             self._on_position(self._current_sec, self.duration_sec)
