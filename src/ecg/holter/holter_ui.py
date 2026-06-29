@@ -746,7 +746,6 @@ class HolterSummaryCards(QFrame):
         self._value_labels["sdnn"].setText(f"{s.get('sdnn', 0):.1f}")
         self._value_labels["rmssd"].setText(f"{s.get('rmssd', 0):.1f}")
         self._value_labels["longest_rr"].setText(f"{s.get('longest_rr_ms', 0) / 1000:.2f}")
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._relayout_cards()
@@ -950,6 +949,7 @@ class HolterHRVPanel(QWidget):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterReplayPanel(QWidget):
+    playback_state_changed = pyqtSignal(bool)
     seek_requested = pyqtSignal(float)
     lead_changed   = pyqtSignal(int)
     section_requested = pyqtSignal(str)
@@ -966,6 +966,7 @@ class HolterReplayPanel(QWidget):
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
         self._magnifier_overlay.hide()
+        self._install_magnifier_dismiss_filters()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1284,6 +1285,41 @@ class HolterReplayPanel(QWidget):
         toolbar_layout.addStretch()
         layout.addWidget(toolbar)
 
+
+
+    def _install_magnifier_dismiss_filters(self):
+        """Dismiss the magnifier on any non-wave click inside the replay panel."""
+        self.installEventFilter(self)
+        for widget in self.findChildren(QWidget):
+            widget.installEventFilter(self)
+
+    def _clear_magnifier_if_needed(self, event) -> bool:
+        if event.type() != QEvent.MouseButtonPress or event.button() != Qt.LeftButton:
+            return False
+        overlay = getattr(self, "_magnifier_overlay", None)
+        if overlay is None or not getattr(overlay, "_visible", False):
+            return False
+        source = self.sender()
+        if isinstance(source, ECGStripCanvas):
+            return False
+        overlay.clear_focus()
+        for strip in getattr(self, "_ch_strips", []):
+            if hasattr(strip, "_magnify_locked"):
+                strip._magnify_locked = False
+                strip._magnify_pos = None
+                strip.update()
+        mini_strip = getattr(self, "_mini_strip", None)
+        if mini_strip is not None and hasattr(mini_strip, "_magnify_locked"):
+            mini_strip._magnify_locked = False
+            mini_strip._magnify_pos = None
+            mini_strip.update()
+        return False
+
+    def eventFilter(self, obj, event):
+        if self._clear_magnifier_if_needed(event):
+            return False
+        return super().eventFilter(obj, event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
@@ -1297,6 +1333,16 @@ class HolterReplayPanel(QWidget):
     def clear_magnifier_focus(self, source_widget=None):
         if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
             self._magnifier_overlay.clear_focus(source_widget)
+
+    def clear_strip_tools(self, source_widget=None):
+        """Clear transient ruler/caliper overlays and any locked magnifier."""
+        self.clear_magnifier_focus(source_widget)
+        for strip in getattr(self, "_ch_strips", []):
+            if hasattr(strip, "clear_interaction"):
+                strip.clear_interaction()
+        mini_strip = getattr(self, "_mini_strip", None)
+        if mini_strip is not None and hasattr(mini_strip, "clear_interaction"):
+            mini_strip.clear_interaction()
 
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
         if "Patient information" in tool_name:
@@ -2025,6 +2071,14 @@ class ECGStripCanvas(QWidget):
         if host is not None and self._mode == TOOL_MAGNIFY and canonical_tool(mode) != TOOL_MAGNIFY:
             host.clear_magnifier_focus(self)
         self._mode = canonical_tool(mode)
+        self._start_pos = None
+        self._curr_pos = None
+        self._hover_pos = None
+        self._magnify_locked = False
+        self._magnify_pos = None
+        self.update()
+
+    def clear_interaction(self):
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
@@ -5020,9 +5074,13 @@ class HolterMainWindow(QDialog):
         return getattr(self, '_record_mgmt_panel', None)
 
     def _open_recordings_folder(self):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
 
     def _search_recordings(self):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_search'):
@@ -5030,6 +5088,8 @@ class HolterMainWindow(QDialog):
             panel._search.selectAll()
 
     def _apply_recordings_filter(self, label: str):
+        if self._is_replay_active():
+            return
         self._focus_tab('RECORDINGS')
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_filter'):
@@ -5038,19 +5098,44 @@ class HolterMainWindow(QDialog):
                 panel._filter.setCurrentIndex(idx)
 
     def _import_recording(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_import_session'):
             panel._import_session()
 
     def _backup_recordings(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_backup_root'):
             panel._backup_root()
 
     def _delete_recording(self):
+        if self._is_replay_active():
+            return
         panel = self._recordings_panel()
         if panel and hasattr(panel, '_delete_session'):
             panel._delete_session()
+
+    def _is_replay_active(self) -> bool:
+        panel = getattr(self, "_replay_panel", None)
+        engine = getattr(self, "_replay_engine", None)
+        return bool(panel and engine and engine.is_playing())
+
+    def _set_record_browser_enabled(self, enabled: bool):
+        panel = self._recordings_panel()
+        if panel is not None:
+            for name in ("Browse", "Import", "Export", "Backup", "Delete"):
+                btn = getattr(panel, "_action_buttons", {}).get(name)
+                if btn is not None:
+                    btn.setEnabled(bool(enabled))
+            table = getattr(panel, "_table", None)
+            if table is not None:
+                table.setEnabled(bool(enabled))
+        top_browse = getattr(self, "_action_buttons", {}).get("Browse")
+        if top_browse is not None:
+            top_browse.setEnabled(bool(enabled))
 
     def _generate_from_current(self):
         self._focus_tab('Preview')
@@ -5297,6 +5382,7 @@ class HolterMainWindow(QDialog):
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._replay_panel.section_requested.connect(self._on_workspace_section_requested)
+        self._replay_panel.playback_state_changed.connect(self._set_record_browser_enabled)
         self._replay_panel.update_lorenz(self._metrics_list)
         self._replay_panel.update_summary(self._summary)
         self._tabs.addTab(self._replay_panel, "REPLAY")
@@ -5741,6 +5827,18 @@ class HolterMainWindow(QDialog):
         self.patient_info = _normalize_patient_info(patient_info or {})
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
+        if getattr(self, "_replay_engine", None) and self._replay_engine.is_playing():
+            self._replay_engine.pause()
+        if hasattr(self, "_replay_panel"):
+            try:
+                self._replay_panel._slider.blockSignals(True)
+                self._replay_panel._slider.setValue(0)
+                self._replay_panel._slider.blockSignals(False)
+                self._replay_panel._pos_label.setText(_sec_to_hms(0))
+                self._replay_panel._play_btn.setText("Play")
+            except Exception:
+                pass
+            self._set_record_browser_enabled(True)
         self._writer = None
         self._load_session()
         if hasattr(self, '_record_mgmt_panel'):
@@ -5769,4 +5867,14 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
+
+
+
+
+
+
+
+
+
 
