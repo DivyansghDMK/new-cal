@@ -719,12 +719,12 @@ class Dashboard(QWidget):
         self.date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.date_btn)
 
-        # --- Add Comprehensive ECG Analysis Button ---
-        self.holter_btn = QPushButton("Comprehensive ECG")
-        self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
-        self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
-        self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        greet_row.addWidget(self.holter_btn)
+        # # --- Add Comprehensive ECG Analysis Button ---
+        # self.holter_btn = QPushButton("Comprehensive ECG")
+        # self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
+        # self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
+        # self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # greet_row.addWidget(self.holter_btn)
 
         # --- Add Chatbot Button ---
         self.chatbot_btn = QPushButton("AI Chatbot")
@@ -2291,6 +2291,8 @@ class Dashboard(QWidget):
             # If user is viewing a specific report, don't override with live data
             if getattr(self, '_viewing_report', False):
                 return
+            if self._is_ecg_frozen():
+                return
             
             # Check if ECG test page exists and has data
             if not hasattr(self, 'ecg_test_page') or not self.ecg_test_page:
@@ -3151,6 +3153,8 @@ class Dashboard(QWidget):
         try:
             # Try to get data from ECG test page if available
             if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                if getattr(self.ecg_test_page, '_grid_frozen', False):
+                    return [self.ecg_line]
                 try:
                     # Validate ECG test page data structure
                     if not hasattr(self.ecg_test_page, 'data') or not self.ecg_test_page.data:
@@ -3462,6 +3466,17 @@ class Dashboard(QWidget):
         except Exception as e:
             self.crash_logger.log_error(f"Failed to open crash log dialog: {str(e)}", e, "DIALOG_ERROR")
             QMessageBox.critical(self, "Error", f"Failed to open diagnostic dialog: {str(e)}")
+
+    def _is_ecg_frozen(self):
+        """Return True when the 12-lead page is intentionally frozen."""
+        try:
+            return bool(
+                hasattr(self, 'ecg_test_page')
+                and self.ecg_test_page
+                and getattr(self.ecg_test_page, '_grid_frozen', False)
+            )
+        except Exception:
+            return False
     
     
     def update_ecg_metrics(self, intervals):
@@ -3470,6 +3485,8 @@ class Dashboard(QWidget):
         if not hasattr(self, '_last_metrics_update_ts'):
             self._last_metrics_update_ts = 0.0
         if _time.time() - self._last_metrics_update_ts < 0.3:
+            return
+        if self._is_ecg_frozen():
             return
         if 'Heart_Rate' in intervals and intervals['Heart_Rate'] is not None:
             self.metric_labels['heart_rate'].setText(
@@ -3611,6 +3628,8 @@ class Dashboard(QWidget):
                 return
             self._last_metrics_update_ts = _time.time()
             if not self.is_ecg_active():
+                return
+            if self._is_ecg_frozen():
                 return
             if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'get_current_metrics'):
                 ecg_metrics = self.ecg_test_page.get_current_metrics()
@@ -4542,8 +4561,6 @@ class Dashboard(QWidget):
                         <div style='padding:4px;'>
                             <b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>
                             <span style='color:#e74c3c; font-weight:bold;'>⚠ Rhythm Undetermined</span><br><br>
-                            <b style='color:#ff6600; font-size:14px;'>Recommendations:</b><br>
-                            • Review detected arrhythmia pattern, consult physician if persistent<br><br>
                             <p style='font-size:10px; color:#999; font-style:italic;'>
                             <b>NOTE:</b> This is an automated analysis for educational purposes only. 
                             Not a substitute for professional medical advice.
@@ -4691,7 +4708,6 @@ class Dashboard(QWidget):
                         f"<span style='color:#e74c3c; font-weight:bold;'>\u26a0 {rhythm_issue}</span><br><br>"
                     )
                     findings.append(f"Rhythm: {rhythm_issue}")
-                    recommendations.append("Review detected arrhythmia pattern, consult physician if persistent")
                  elif is_normal_rhythm:
                     # Rhythm is normal but some interval is abnormal
                     conclusion_html += (
@@ -4704,7 +4720,11 @@ class Dashboard(QWidget):
                 if hr_label:
                     prefix = "⚠ " if hr_abnormal else ""
                     conclusion_html += f"<b style='color:#ff6600;'>Heart Rate:</b> {prefix}{hr_label}<br>"
-                    if hr_abnormal:
+                    rhythm_is_hr_based = bool(
+                        rhythm_clean
+                        and any(term in rhythm_clean.lower() for term in ("bradycardia", "tachycardia"))
+                    )
+                    if hr_abnormal and not rhythm_is_hr_based:
                         findings.append(f"{'Tachycardia' if hr > 100 else 'Bradycardia'} - HR: {hr} BPM")
 
                 # 2c. PR Interval
