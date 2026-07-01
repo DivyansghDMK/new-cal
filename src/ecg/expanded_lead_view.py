@@ -1,4 +1,4 @@
-"""
+﻿"""
 Expanded Lead View - Detailed ECG lead analysis with PQRST labeling and metrics
 This module provides an expanded view of individual ECG leads with comprehensive analysis.
 """
@@ -2514,8 +2514,45 @@ class ExpandedLeadView(QDialog):
         if metric_name in self.metrics_cards:
             self.metrics_cards[metric_name].update_value(value)
     
+    def _normalize_arrhythmia_labels_for_display(self, arrhythmias):
+        """
+        Match the main ECG screen's simple rate-only interpretation rule.
+
+        This is intentionally a display-layer normalization only. The detector
+        still runs unchanged, but the expanded view summary follows the same
+        user-facing rule as the main ECG page:
+        - HR > 100 -> Tachycardia
+        - HR < 60  -> Bradycardia
+        - otherwise -> Normal Sinus Rhythm
+        """
+        try:
+            parent = self._parent if hasattr(self, '_parent') else None
+            hr_value = None
+
+            if parent is not None and hasattr(parent, 'get_current_metrics'):
+                metrics = parent.get_current_metrics() or {}
+                raw_hr = metrics.get('heart_rate', 0)
+                hr_text = str(raw_hr).replace('BPM', '').strip()
+                if hr_text and hr_text not in ('--', 'None'):
+                    hr_value = float(hr_text)
+
+            if (hr_value is None or hr_value <= 0) and parent is not None:
+                hr_value = float(getattr(parent, 'last_heart_rate', 0) or 0)
+
+            if hr_value is None or hr_value <= 0:
+                return arrhythmias
+
+            if hr_value > 100:
+                return ["Tachycardia"]
+            if hr_value < 60:
+                return ["Bradycardia"]
+            return ["Normal Sinus Rhythm"]
+        except Exception:
+            return arrhythmias
+    
     def update_arrhythmia_display(self, arrhythmias):
         """Update the arrhythmia display"""
+        arrhythmias = self._normalize_arrhythmia_labels_for_display(arrhythmias)
         arrhythmia_text = ", ".join(arrhythmias) if arrhythmias else "No specific arrhythmia detected."
         self.arrhythmia_list.setText(arrhythmia_text)
         self._save_arrhythmia_findings_for_report(arrhythmias)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ECG Analysis Window — Professional Clinical Edition
 ====================================================
 Enhanced with:
@@ -1485,22 +1485,6 @@ class ECGAnalysisWindow(QDialog):
             "font-size:12px;padding:7px 14px;border:none;border-radius:5px;")
         self.back_btn.clicked.connect(self.close)
         lay.addWidget(self.back_btn)
-
-        logo_label = QLabel()
-        pixmap = QPixmap(str(self.analysis_pdf_logo_path))
-        if not pixmap.isNull():
-            logo_label.setPixmap(
-                pixmap.scaled(100, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            logo_label.setText("◈ DECKMOUNT")
-            logo_label.setStyleSheet(
-                "color:#ffb15a;font-size:15px;font-weight:bold;font-family:'Courier New';")
-        lay.addWidget(logo_label)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("background:#ff8a1f;max-width:2px;margin:4px 6px;border:none;")
-        lay.addWidget(sep)
 
         pat_col = QVBoxLayout()
         pat_col.setSpacing(1)
