@@ -1,27 +1,27 @@
-"""
+﻿"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
 Matches reference images: black/green medical workstation style.
 
 Screens:
-  1. HolterStartDialog        — patient info + duration + start
-  2. HolterStatusBar          — REC indicator, elapsed, live BPM, arrhythmia ticker
-  3. HolterSummaryCards       — KPI cards (Avg HR, Min/Max, Beats, Pauses, Quality, SDNN)
-  4. HolterOverviewPanel      — full stats table (Name/Value pairs)
-  5. HolterHRVPanel           — HRV table per hour + bottom stats strip
-  6. HolterReplayPanel        — RR scatter/Lorenz + scrub slider + ECG strip
-  7. HolterEventsPanel        — Arrhythmia events list with strip nav
-  8. HolterWaveGridPanel      — 12-lead live/replay grid (3 rows × 4 cols)
-  9. HolterInsightPanel       — Comprehensive report preview narrative
- 10. HolterRecordManagementPanel — searchable session browser
- 11. HolterHistogramPanel     — RR-interval histogram
- 12. HolterAFPanel            — AF episode browser
- 13. HolterSTPanel            — ST tendency per channel
- 14. HolterEditEventPanel     — Edit events with strip thumbnails
- 15. HolterEditStripsPanel    — Edit strips (max HR, min HR, sinus max/min thumbnails)
- 16. HolterReportTablePanel   — Hour-by-hour report table
- 17. HolterMainWindow         — Orchestrates all panels in tabbed layout
+  1. HolterStartDialog        â€” patient info + duration + start
+  2. HolterStatusBar          â€” REC indicator, elapsed, live BPM, arrhythmia ticker
+  3. HolterSummaryCards       â€” KPI cards (Avg HR, Min/Max, Beats, Pauses, Quality, SDNN)
+  4. HolterOverviewPanel      â€” full stats table (Name/Value pairs)
+  5. HolterHRVPanel           â€” HRV table per hour + bottom stats strip
+  6. HolterReplayPanel        â€” RR scatter/Lorenz + scrub slider + ECG strip
+  7. HolterEventsPanel        â€” Arrhythmia events list with strip nav
+  8. HolterWaveGridPanel      â€” 12-lead live/replay grid (3 rows Ã— 4 cols)
+  9. HolterInsightPanel       â€” Comprehensive report preview narrative
+ 10. HolterRecordManagementPanel â€” searchable session browser
+ 11. HolterHistogramPanel     â€” RR-interval histogram
+ 12. HolterAFPanel            â€” AF episode browser
+ 13. HolterSTPanel            â€” ST tendency per channel
+ 14. HolterEditEventPanel     â€” Edit events with strip thumbnails
+ 15. HolterEditStripsPanel    â€” Edit strips (max HR, min HR, sinus max/min thumbnails)
+ 16. HolterReportTablePanel   â€” Hour-by-hour report table
+ 17. HolterMainWindow         â€” Orchestrates all panels in tabbed layout
 """
 
 import os
@@ -41,8 +41,7 @@ from PyQt5.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QSizePolicy, QScrollArea, QGridLayout, QSpinBox, QMessageBox,
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog, QDoubleSpinBox,
-    QAbstractItemView, QToolButton, QButtonGroup
-)
+    QAbstractItemView, QToolButton, QButtonGroup, QMenu)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect, QObject, QEvent
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
@@ -157,6 +156,43 @@ def _load_patient_info_from_session(session_dir: str, fallback_info: Optional[di
 
 def _metrics_duration_sec(metrics_list: list) -> float:
     return float(sum(m.get('duration', 0.0) or 0.0 for m in metrics_list))
+
+
+def _normalize_beat_class(label) -> str:
+    """Map recorded beat labels into the compact class buttons used by the UI."""
+    raw = str(label or "").strip().upper()
+    if not raw:
+        return "Other"
+    if raw in {"N", "NORMAL", "SINUS"}:
+        return "N"
+    if raw.startswith("S") or "SV" in raw or "PAC" in raw:
+        return "S"
+    if raw.startswith("V") or "PVC" in raw or "VENT" in raw:
+        return "V"
+    if raw.startswith("P") or "PACED" in raw:
+        return "P"
+    if "AF" in raw or "AFL" in raw or raw in {"F", "Q"}:
+        return "AF"
+    if raw in {"X", "ART", "ARTIFACT", "NOISE"} or "ARTIFACT" in raw or "NOISE" in raw:
+        return "X"
+    if raw == "OTHER":
+        return "Other"
+    return "Other"
+
+
+def _class_matches_filter(beat_class: str, filter_key: str) -> bool:
+    if filter_key == "all":
+        return True
+    if filter_key == "AF":
+        return beat_class == "AF"
+    if filter_key == "Other":
+        return beat_class == "Other"
+    return beat_class == filter_key
+
+
+def _template_filter_key(label: str) -> str:
+    """Normalize template labels into the UI filter keys."""
+    return _normalize_beat_class(label)
 
 try:
     from .theme import (
@@ -361,16 +397,16 @@ def _sec_to_hms(s: float) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 1. HOLTER START DIALOG
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterStartDialog(QDialog):
     def __init__(self, parent=None, patient_info: dict = None, output_dir: str = "recordings"):
         super().__init__(parent)
-        self.setWindowTitle("Comprehensive ECG Analysis — Setup")
+        self.setWindowTitle("Comprehensive ECG Analysis - Setup")
         self.setMinimumWidth(640)
-        self.setStyleSheet(f"background: {COL_DARK}; color: {COL_WHITE};")
+        self.setStyleSheet(f"background: #0F1724; color: {COL_WHITE};")
         self.output_dir = output_dir
         self._result_info = None
         self._result_duration = 24
@@ -382,7 +418,7 @@ class HolterStartDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("🫀  Comprehensive ECG Analysis — Professional Setup")
+        title = QLabel("Comprehensive ECG Analysis - Professional Setup")
         title.setStyleSheet(f"background:{COL_GRAY};color:{COL_GREEN};border:2px solid {COL_GREEN};"
                             f"font-size:20px;font-weight:bold;padding:16px;border-radius:8px;")
         layout.addWidget(title)
@@ -495,7 +531,7 @@ class HolterStartDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setStyleSheet(_style_btn(COL_GRAY, COL_WHITE, COL_GREEN_DRK))
         cancel_btn.clicked.connect(self.reject)
-        start_btn = QPushButton("▶  Open ECG Workspace")
+        start_btn = QPushButton("Open ECG Workspace")
         start_btn.setStyleSheet(f"""
             QPushButton {{
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
@@ -558,9 +594,9 @@ class HolterStartDialog(QDialog):
         return None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 2. HOLTER STATUS BAR  (Live recording indicator)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterStatusBar(QFrame):
     stop_requested = pyqtSignal()
@@ -580,12 +616,22 @@ class HolterStatusBar(QFrame):
         self._elapsed_timer.timeout.connect(self._update_elapsed)
         self._elapsed_timer.start(1000)
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(15, 4, 15, 4)
         layout.setSpacing(18)
 
-        self._rec_label = QLabel("● REC")
+        self._rec_label = QLabel("REC")
         self._rec_label.setStyleSheet(f"color:{COL_GREEN};font-size:15px;font-weight:bold;")
         layout.addWidget(self._rec_label)
 
@@ -604,7 +650,7 @@ class HolterStatusBar(QFrame):
         bpm_lbl = QLabel("BPM:")
         bpm_lbl.setStyleSheet(f"color:{COL_GREEN};font-size:12px;")
         layout.addWidget(bpm_lbl)
-        self._bpm_label = QLabel("—")
+        self._bpm_label = QLabel("-")
         self._bpm_label.setStyleSheet(f"color:{COL_GREEN};font-size:18px;font-weight:bold;")
         layout.addWidget(self._bpm_label)
 
@@ -632,7 +678,7 @@ class HolterStatusBar(QFrame):
         self._progress.setTextVisible(False)
         layout.addWidget(self._progress)
 
-        stop_btn = QPushButton("⬛  Stop")
+        stop_btn = QPushButton("Stop")
         stop_btn.setStyleSheet(_style_btn(COL_GREEN_DRK, COL_WHITE, COL_GREEN))
         stop_btn.setFixedHeight(34)
         stop_btn.clicked.connect(self.stop_requested)
@@ -660,9 +706,9 @@ class HolterStatusBar(QFrame):
         self._elapsed_timer.stop()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 3. HOLTER SUMMARY CARDS
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterSummaryCards(QFrame):
     def __init__(self, parent=None):
@@ -673,6 +719,16 @@ class HolterSummaryCards(QFrame):
         self.setStyleSheet(f"background:{UI_BG};")
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(12, 10, 12, 10)
@@ -701,7 +757,7 @@ class HolterSummaryCards(QFrame):
             box.setSpacing(3)
             lbl = QLabel(title)
             lbl.setStyleSheet(f"color:{UI_MUTED};font-size:11px;font-weight:600;border:none;")
-            val = QLabel("—")
+            val = QLabel("-")
             val.setStyleSheet(f"color:{UI_TEXT};font-size:21px;font-weight:700;border:none;")
             unit_lbl = QLabel(unit)
             unit_lbl.setStyleSheet(f"color:{UI_SUCCESS};font-size:10px;font-weight:700;border:none;")
@@ -751,9 +807,9 @@ class HolterSummaryCards(QFrame):
         self._relayout_cards()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 4. HOLTER OVERVIEW PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterOverviewPanel(QWidget):
     def __init__(self, parent=None):
@@ -761,6 +817,16 @@ class HolterOverviewPanel(QWidget):
         self.setStyleSheet(f"background:{UI_BG};")
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -792,7 +858,7 @@ class HolterOverviewPanel(QWidget):
             ("Sinus Max HR",         f"{s.get('max_hr', 0):.0f} bpm"),
             ("Sinus Min HR",         f"{s.get('min_hr', 0):.0f} bpm"),
             ("Longest RR Interval",  f"{s.get('longest_rr_ms', 0)/1000:.2f}s"),
-            ("RRI (≥2.0s)",          str(s.get('pauses', 0))),
+            ("RRI (>=2.0s)",          str(pauses)),
             ("Tachycardia Beats",    str(s.get('tachy_beats', 0))),
             ("Bradycardia Beats",    str(s.get('brady_beats', 0))),
             ("Ventricular Beats",    str(s.get('ve_beats', 0))),
@@ -802,8 +868,8 @@ class HolterOverviewPanel(QWidget):
             ("SDNN (HRV)",           f"{s.get('sdnn', 0):.1f} ms"),
             ("rMSSD (HRV)",          f"{s.get('rmssd', 0):.1f} ms"),
             ("pNN50 (HRV)",          f"{s.get('pnn50', 0):.2f}%"),
-            ("ST Elevation",         "—"),
-            ("ST Depression",        "—"),
+            ("ST Elevation",         "-"),
+            ("ST Depression",        "-"),
             ("Signal Quality",       f"{s.get('avg_quality', 1.0)*100:.1f}%"),
             ("Chunks Analyzed",      str(s.get('chunks_analyzed', 0))),
         ]
@@ -821,9 +887,9 @@ class HolterOverviewPanel(QWidget):
         self._table.resizeRowsToContents()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 5. HOLTER HRV PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterHRVPanel(QWidget):
     def __init__(self, parent=None):
@@ -831,6 +897,16 @@ class HolterHRVPanel(QWidget):
         self.setStyleSheet(f"background:{COL_BG};")
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -869,7 +945,7 @@ class HolterHRVPanel(QWidget):
             row, col = divmod(i, 4)
             lbl = QLabel(f"{label}:")
             lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
-            val = QLabel("—")
+            val = QLabel("-")
             val.setStyleSheet(f"color:{COL_GREEN};font-size:14px;font-weight:bold;"
                               f"background:{COL_DARK};border:1px solid {COL_GREEN_DRK};"
                               f"border-radius:10px;padding:4px 10px;min-width:70px;")
@@ -898,7 +974,7 @@ class HolterHRVPanel(QWidget):
             total_duration_sec = int(_metrics_duration_sec(metrics_list))
             from .hrv_metrics import compute_hrv_summary
             hrv = compute_hrv_summary(all_rr)
-            rows.append(("Entire", "—", f"{total_duration_sec//60:02d}:{total_duration_sec%60:02d}",
+            rows.append(("Entire", "-", f"{total_duration_sec//60:02d}:{total_duration_sec%60:02d}",
                          f"{int(np.mean(all_rr))}ms", f"{hrv.get('sdnn', summary.get('sdnn', 0)):.0f}ms",
                          f"{hrv.get('sdnn', summary.get('sdnn', 0))*0.82:.0f}ms", f"{hrv.get('triangular_index', 0.0):.2f}",
                          f"{hrv.get('pnn50', summary.get('pnn50', 0)):.2f}%",
@@ -914,8 +990,9 @@ class HolterHRVPanel(QWidget):
             hrv = compute_hrv_summary(rr_vals)
             rows.append(("Hour", f"{h:02d}:00", "01:00",
                          f"{int(np.mean(rr_vals))}ms",
-                         f"{hrv.get('sdnn', int(np.mean(rr_stds)) if rr_stds else 0):.0f}ms" if rr_stds else "—",
-                         "—", f"{hrv.get('triangular_index', 0.0):.2f}",
+                         f"{hrv.get('sdnn', 0):.0f}ms",
+                         f"{hrv.get('sdnn', 0)*0.82:.0f}ms",
+                         f"{hrv.get('triangular_index', 0.0):.2f}",
                          f"{hrv.get('pnn50', np.mean(pnn50s) if pnn50s else 0.0):.2f}%",
                          f"{hrv.get('lf', 0.0):.3f}", f"{hrv.get('hf', 0.0):.3f}",
                          f"{hrv.get('lf_hf_ratio', 0.0):.3f}", ""))
@@ -934,19 +1011,19 @@ class HolterHRVPanel(QWidget):
                           ("sdann", f"{s.get('sdnn', 0)*0.82:.0f}ms"),
                           ("rmssd", f"{s.get('rmssd', 0):.0f}ms"),
                           ("pnn50", f"{s.get('pnn50', 0):.2f}%"),
-                          ("triidx", f"{s.get('triidx', 0.0):.2f}" if s.get('triidx', 0) else "—"),
-                          ("sdnnidx", "—"),
-                          ("vlf", f"{s.get('vlf_power', 0.0):.3f}" if s.get('vlf_power', 0) else "—"),
-                          ("lf", f"{s.get('lf_power', 0.0):.3f}" if s.get('lf_power', 0) else "—"),
-                          ("hf", f"{s.get('hf_power', 0.0):.3f}" if s.get('hf_power', 0) else "—"),
-                          ("lf_hf_ratio", f"{s.get('lf_hf_ratio', 0.0):.3f}" if s.get('lf_hf_ratio', 0) else "—")]:
+                          ("triidx", f"{s.get('triidx', 0.0):.2f}" if s.get('triidx', 0) else "-"),
+                          ("sdnnidx", "-"),
+                          ("vlf", f"{s.get('vlf_power', 0.0):.3f}" if s.get('vlf_power', 0) else "-"),
+                          ("lf", f"{s.get('lf_power', 0.0):.3f}" if s.get('lf_power', 0) else "-"),
+                          ("hf", f"{s.get('hf_power', 0.0):.3f}" if s.get('hf_power', 0) else "-"),
+                          ("lf_hf_ratio", f"{s.get('lf_hf_ratio', 0.0):.3f}" if s.get('lf_hf_ratio', 0) else "-")]:
             if key in self._summary_labels:
                 self._summary_labels[key].setText(fmt)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 6. HOLTER LORENZ / REPLAY PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterReplayPanel(QWidget):
     playback_state_changed = pyqtSignal(bool)
@@ -966,12 +1043,24 @@ class HolterReplayPanel(QWidget):
         self._selected_lead_idx = 1
         self._slider_units_per_sec = 100
         self._last_slider_seek_raw = None
+        self._class_filter = "all"
+        self._last_metrics_list = []
         self._build_ui()
         self._magnifier_overlay = MagnifierOverlay(self)
         self._magnifier_overlay.setGeometry(self.rect())
         self._magnifier_overlay.hide()
         self._install_magnifier_dismiss_filters()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -999,7 +1088,7 @@ class HolterReplayPanel(QWidget):
         self._rr_mode = "RR"
         self._time_scope = "whole"
 
-        # ── 48-hour session summary bar (replaces the two RR trend canvases) ──
+        # â”€â”€ 48-hour session summary bar (replaces the two RR trend canvases) â”€â”€
         summary_frame = QFrame()
         summary_frame.setStyleSheet(f"QFrame{{background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:6px;}}")
         summary_frame.setFixedHeight(72)
@@ -1012,7 +1101,7 @@ class HolterReplayPanel(QWidget):
             col.setSpacing(2)
             t = QLabel(title)
             t.setStyleSheet(f"color:{UI_MUTED};font-size:9px;font-weight:600;border:none;")
-            v = QLabel("—")
+            v = QLabel("-")
             v.setStyleSheet(f"color:{UI_TEXT};font-size:13px;font-weight:700;border:none;")
             col.addWidget(t)
             col.addWidget(v)
@@ -1021,7 +1110,7 @@ class HolterReplayPanel(QWidget):
         summary_layout.addStretch()
         layout.addWidget(summary_frame)
 
-        # ── HR trend mini-chart (40h-48h of data at a glance) ──
+        # â”€â”€ HR trend mini-chart (40h-48h of data at a glance) â”€â”€
         self._hr_trend_canvas = HolterRRTrendCanvas(title="Heart Rate Trend (full recording)")
         self._hr_trend_canvas.setFixedHeight(50)
         layout.addWidget(self._hr_trend_canvas)
@@ -1070,14 +1159,18 @@ class HolterReplayPanel(QWidget):
         lorenz_filter_row = QHBoxLayout()
         lorenz_filter_row.setSpacing(4)
         self._lorenz_class_btns = {}
-        for lbl in ["All", "Normal", "S", "V", "Paced"]:
+        for key, lbl in [("all", "All"), ("N", "N"), ("S", "S"), ("V", "V"), ("P", "P"), ("AF", "AF"), ("X", "X"), ("Other", "Other")]:
             b = QPushButton(lbl)
+            b.setCheckable(True)
+            b.setToolTip(f"Show {lbl} beats" if key != "all" else "Show all beats")
             b.setFixedHeight(24)
             b.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
-            self._lorenz_class_btns[lbl] = b
+            b.clicked.connect(lambda checked=False, k=key: self._set_lorenz_class_filter(k))
+            self._lorenz_class_btns[key] = b
             lorenz_filter_row.addWidget(b)
         lorenz_filter_row.addStretch()
         lw_l.addLayout(lorenz_filter_row)
+        self._set_lorenz_class_filter("all")
 
         thumbs = QFrame()
         thumbs.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
@@ -1099,7 +1192,7 @@ class HolterReplayPanel(QWidget):
         ecg_right_layout.setContentsMargins(4, 4, 4, 4)
         ecg_right_layout.setSpacing(2)
 
-        # ── 12-lead scrollable grid (1 column, 12 rows) ──
+        # â”€â”€ 12-lead scrollable grid (1 column, 12 rows) â”€â”€
         leads_scroll = QScrollArea()
         leads_scroll.setWidgetResizable(True)
         leads_scroll.setFrameShape(QFrame.NoFrame)
@@ -1201,7 +1294,7 @@ class HolterReplayPanel(QWidget):
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(10)
 
-        self._play_btn = QPushButton("▶ Play")
+        self._play_btn = QPushButton("Play")
         self._play_btn.setStyleSheet(_style_btn())
         self._play_btn.setFixedHeight(30)
         self._play_btn.setMinimumWidth(100)
@@ -1234,9 +1327,9 @@ class HolterReplayPanel(QWidget):
         ctrl_row.addSpacing(22)
 
         # Event jump buttons
-        for lbl_txt, ev, d in [("◀ AF","AF","prev"),("AF ▶","AF","next"),
-                               ("◀ Brady","Brady","prev"),("Brady ▶","Brady","next"),
-                               ("◀ Tachy","Tachy","prev"),("Tachy ▶","Tachy","next")]:
+        for lbl_txt, ev, d in [("Prev AF","AF","prev"),("Next AF","AF","next"),
+                               ("Prev Brady","Brady","prev"),("Next Brady","Brady","next"),
+                               ("Prev Tachy","Tachy","prev"),("Next Tachy","Tachy","next")]:
             btn = QPushButton(lbl_txt)
             btn.setStyleSheet(_style_btn(COL_BLACK, COL_GREEN, COL_GREEN_DRK))
             btn.setFixedHeight(30)
@@ -1361,7 +1454,7 @@ class HolterReplayPanel(QWidget):
         if "Goto Template" in tool_name:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
-            box.setWindowTitle("Holter ECG Software Tools — Explained")
+            box.setWindowTitle("Holter ECG Software Tools - Explained")
             box.setTextFormat(Qt.PlainText)
             box.setText(
                 "Ruler: measure interval/amplitude and BPM.\n"
@@ -1369,8 +1462,8 @@ class HolterReplayPanel(QWidget):
                 "Magnify: zoom-highlight subtle waveform details.\n"
                 "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
                 "End-to-end flow:\n"
-                "Raw recording → Gain optimization → Magnify flagged events → "
-                "Measure intervals (QT/PR/pause) → Parallel comparison → Final report."
+                "Raw recording -> Gain optimization -> Magnify flagged events -> "
+                "Measure intervals (QT/PR/pause) -> Parallel comparison -> Final report."
             )
             box.setStyleSheet(
                 "QMessageBox{background:#10151c;color:#f3f7fb;}"
@@ -1551,13 +1644,13 @@ class HolterReplayPanel(QWidget):
             try:
                 return f"{float(value):.{digits}f}{suffix}"
             except Exception:
-                return "—" if value in (None, "") else f"{value}{suffix}"
+                return "-" if value in (None, "") else f"{value}{suffix}"
 
         def fmt_duration(seconds):
             try:
                 sec = max(0, int(float(seconds)))
             except Exception:
-                return "—"
+                return "-"
             h = sec // 3600
             m = (sec % 3600) // 60
             s = sec % 60
@@ -1568,13 +1661,13 @@ class HolterReplayPanel(QWidget):
             return f"{s}s"
 
         patient_rows = [
-            ("Patient Name", patient_info.get("patient_name") or patient_info.get("name") or "—"),
-            ("Age", patient_info.get("age", "—")),
-            ("Gender", patient_info.get("gender") or patient_info.get("sex") or "—"),
-            ("Doctor", patient_info.get("doctor") or "—"),
-            ("Email", patient_info.get("email") or "—"),
-            ("Phone", patient_info.get("doctor_mobile") or patient_info.get("phone") or "—"),
-            ("Organisation", patient_info.get("org") or patient_info.get("Org.") or "—"),
+            ("Patient Name", patient_info.get("patient_name") or patient_info.get("name") or "-"),
+            ("Age", patient_info.get("age", "-")),
+            ("Gender", patient_info.get("gender") or patient_info.get("sex") or "-"),
+            ("Doctor", patient_info.get("doctor") or "-"),
+            ("Email", patient_info.get("email") or "-"),
+            ("Phone", patient_info.get("doctor_mobile") or patient_info.get("phone") or "-"),
+            ("Organisation", patient_info.get("org") or patient_info.get("Org.") or "-"),
             ("Study Duration", fmt_duration(summary.get("duration_sec", 0))),
         ]
 
@@ -1591,9 +1684,9 @@ class HolterReplayPanel(QWidget):
                 background: transparent;
             }}
             QGroupBox {{
-                color: {COL_GREEN};
+                color: {UI_TEXT};
                 font-weight: 700;
-                border: 1px solid {COL_GREEN_DRK};
+                border: 1px solid {UI_BORDER};
                 border-radius: 8px;
                 margin-top: 12px;
                 padding-top: 16px;
@@ -1822,10 +1915,10 @@ class HolterReplayPanel(QWidget):
         if not self._replay_engine: return
         if self._replay_engine.is_playing():
             self._replay_engine.pause()
-            self._play_btn.setText("▶ Play")
+            self._play_btn.setText("Play")
         else:
             self._replay_engine.play()
-            self._play_btn.setText("⏸ Pause")
+            self._play_btn.setText("Pause")
 
     def _set_speed(self, text: str):
         if self._replay_engine:
@@ -1834,6 +1927,17 @@ class HolterReplayPanel(QWidget):
             except Exception:
                 pass
 
+    def _set_lorenz_class_filter(self, key: str):
+        key = str(key or "all")
+        if key not in self._lorenz_class_btns:
+            key = "all"
+        self._class_filter = key
+        for btn_key, btn in self._lorenz_class_btns.items():
+            btn.setChecked(btn_key == key)
+            btn.setStyleSheet(_style_active_btn() if btn_key == key else _style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
+        if self._last_metrics_list:
+            self.update_lorenz(self._last_metrics_list)
+
     def _jump_event(self, ev_type: str, direction: str):
         if self._replay_engine:
             t = self._replay_engine.seek_to_event(ev_type, direction)
@@ -1841,33 +1945,65 @@ class HolterReplayPanel(QWidget):
 
     def update_lorenz(self, metrics_list: list):
         """Update the Lorenz/scatter plot from all individual RR data."""
+        self._last_metrics_list = list(metrics_list or [])
         rr_all = []
         rr_points = []
         for m in metrics_list:
             t0 = float(m.get('t', 0.0) or 0.0)
+            beat_labels = list(m.get('all_beats') or [])
             if 'rr_intervals_list' in m:
                 rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 0]
                 if rr_list:
-                    rr_all.extend(rr_list)
                     dur = float(m.get('duration', 0.0) or 0.0)
                     step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
                     for i, rr in enumerate(rr_list):
-                        rr_points.append((t0 + i * step, rr))
+                        beat_info = beat_labels[i] if i < len(beat_labels) and isinstance(beat_labels[i], dict) else {}
+                        beat_class = _normalize_beat_class(
+                            beat_info.get("label")
+                            or beat_info.get("template_label")
+                            or beat_info.get("auto_label")
+                            or m.get("label")
+                            or m.get("template_label")
+                            or m.get("arrhythmia")
+                            or (m.get("arrhythmias") or [None])[0]
+                        )
+                        rr_all.append(rr)
+                        rr_points.append((t0 + i * step, rr, beat_class))
                     continue  # skip fallback if list data available
             # Fallback: use single rr_ms value per chunk
             rr_val = float(m.get('rr_ms', 0) or 0)
             if rr_val > 200:
                 rr_all.append(rr_val)
-                rr_points.append((t0, rr_val))
-                
+                beat_class = _normalize_beat_class(
+                    m.get("label")
+                    or m.get("template_label")
+                    or m.get("arrhythmia")
+                    or (m.get("arrhythmias") or [None])[0]
+                )
+                rr_points.append((t0, rr_val, beat_class))
+
         rr_n = [r for r in rr_all if r > 200]
-        if len(rr_n) >= 2:
-            rr_x = rr_n[:-1]
-            rr_y = rr_n[1:]
-            self._lorenz_canvas.set_data(rr_x, rr_y)
+        filtered_points = [p for p in rr_points if _class_matches_filter(p[2], self._class_filter)]
+        filtered_rr = [p[1] for p in filtered_points if p[1] > 200]
+        plot_rr = filtered_rr if len(filtered_rr) >= 2 else rr_n
+        if len(plot_rr) >= 2:
+            rr_x = plot_rr[:-1]
+            rr_y = plot_rr[1:]
+            lo = float(np.percentile(plot_rr, 5))
+            hi = float(np.percentile(plot_rr, 95))
+            if hi - lo < 250:
+                center = float(np.median(plot_rr))
+                lo = center - 500.0
+                hi = center + 500.0
+            lo = max(0.0, lo - 50.0)
+            hi = hi + 50.0
+            self._lorenz_canvas.set_data(rr_x, rr_y, x_range=(lo, hi), y_range=(lo, hi))
+        else:
+            self._lorenz_canvas.set_data([], [])
         if hasattr(self, "_rr_trend_full"):
-            self._rr_trend_full.set_points(rr_points)
-            recent = rr_points[-1200:] if len(rr_points) > 1200 else rr_points
+            trend_points = [(t, rr) for t, rr, _cls in filtered_points] if len(filtered_points) >= 2 else [(t, rr) for t, rr, _cls in rr_points]
+            self._rr_trend_full.set_points(trend_points)
+            recent = trend_points[-1200:] if len(trend_points) > 1200 else trend_points
             self._rr_trend_zoom.set_points(recent)
         self._update_overview_table(metrics_list, rr_n)
             
@@ -2022,36 +2158,33 @@ class HolterReplayPanel(QWidget):
         ]
 
 
-# ── Helper canvas widgets ─────────────────────────────────────────────────────
+# â”€â”€ Helper canvas widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class LorenzCanvas(QWidget):
-    """Simple RR scatter / Poincaré plot."""
+    """Simple RR scatter / Poincar? plot."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._x = []
         self._y = []
+        self._x_range = None
+        self._y_range = None
         self.setMinimumSize(200, 180)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
 
-    def set_data(self, x, y):
+    def set_data(self, x, y, x_range=None, y_range=None):
         self._x = list(x)
         self._y = list(y)
+        self._x_range = x_range
+        self._y_range = y_range
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(COL_BLACK))
-        # Axes
-        pen = QPen(QColor(COL_GREEN_DRK))
-        pen.setWidth(1)
-        painter.setPen(pen)
         w, h = self.width(), self.height()
-        painter.drawLine(10, h - 10, w - 10, h - 10)
-        painter.drawLine(10, 10, 10, h - 10)
-        # Identity line
-        pen.setColor(QColor("#003300"))
-        painter.setPen(pen)
-        painter.drawLine(10, h - 10, w - 10, 10)
+        left, top, right, bottom = 32, 16, 16, 28
+        plot_w = max(1, w - left - right)
+        plot_h = max(1, h - top - bottom)
 
         if not self._x or not self._y:
             painter.setPen(QPen(QColor(COL_GREEN_DRK)))
@@ -2059,28 +2192,61 @@ class LorenzCanvas(QWidget):
             return
 
         all_vals = self._x + self._y
-        mn, mx = min(all_vals), max(all_vals)
-        rng = max(mx - mn, 1)
+        if self._x_range is not None and self._y_range is not None:
+            x_min, x_max = self._x_range
+            y_min, y_max = self._y_range
+        else:
+            lo = float(np.percentile(all_vals, 5))
+            hi = float(np.percentile(all_vals, 95))
+            if hi - lo < 250:
+                center = float(np.median(all_vals))
+                lo = center - 500.0
+                hi = center + 500.0
+            x_min = y_min = max(0.0, lo - 50.0)
+            x_max = y_max = hi + 50.0
+            if x_max - x_min < 500.0:
+                mid = (x_min + x_max) / 2.0
+                x_min = y_min = max(0.0, mid - 250.0)
+                x_max = y_max = mid + 250.0
+
+        rng_x = max(x_max - x_min, 1.0)
+        rng_y = max(y_max - y_min, 1.0)
 
         def to_px(val_x, val_y):
-            px = int(10 + (val_x - mn) / rng * (w - 20))
-            py = int(h - 10 - (val_y - mn) / rng * (h - 20))
+            px = int(left + (val_x - x_min) / rng_x * plot_w)
+            py = int(top + plot_h - (val_y - y_min) / rng_y * plot_h)
             return px, py
 
-        pen = QPen(QColor(COL_GREEN_MID))
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor("#1C2C43"), 1))
+        painter.drawRect(left, top, plot_w, plot_h)
+        for frac in (0.25, 0.5, 0.75):
+            x = int(left + frac * plot_w)
+            y = int(top + frac * plot_h)
+            painter.drawLine(x, top, x, top + plot_h)
+            painter.drawLine(left, y, left + plot_w, y)
+
+        if x_max > x_min:
+            pen = QPen(QColor("#006B2D"))
+            pen.setWidth(1)
+            pen.setStyle(Qt.DashLine)
+            painter.setPen(pen)
+            start = to_px(x_min, x_min)
+            end = to_px(x_max, x_max)
+            painter.drawLine(start[0], start[1], end[0], end[1])
+
+        pen = QPen(QColor("#39D353"))
         pen.setWidth(1)
         painter.setPen(pen)
-        brush = QBrush(QColor(COL_GREEN_MID))
-        painter.setBrush(brush)
+        painter.setBrush(QBrush(QColor(57, 211, 83, 180)))
         for x, y in zip(self._x, self._y):
             px, py = to_px(x, y)
-            painter.drawEllipse(px - 3, py - 3, 6, 6)
+            painter.drawEllipse(px - 2, py - 2, 4, 4)
 
-        # Axis labels
-        pen.setColor(QColor(COL_GREEN_DRK))
-        painter.setPen(pen)
-        painter.drawText(w // 2 - 20, h - 2, f"{int(mn)}-{int(mx)}ms")
-
+        painter.setPen(QPen(QColor(COL_GREEN_DRK)))
+        painter.drawText(left, h - 8, "RR(n) ms")
+        painter.drawText(w - 88, 14, "RR(n+1)")
+        painter.drawText(w // 2 - 34, h - 2, f"{int(x_min)}-{int(x_max)}ms")
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
@@ -2556,9 +2722,9 @@ class MagnifierOverlay(QWidget):
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 7. HOLTER EVENTS PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterRRTrendCanvas(QWidget):
     """Compact RR trend strip matching Holter Expert reference: dark bg, grid, Y-axis 0-2000ms, time labels."""
@@ -2592,7 +2758,7 @@ class HolterRRTrendCanvas(QWidget):
 
         w, h = self.width(), self.height()
 
-        # ── Background ──────────────────────────────────────────────────────
+        # â”€â”€ Background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.fillRect(self.rect(), QColor("#0a1520"))
 
         # Margins: left for Y-axis, bottom for X-axis
@@ -2601,12 +2767,12 @@ class HolterRRTrendCanvas(QWidget):
         ih = max(1, h - TM - BM)
         inner = QRect(LM, TM, iw, ih)
 
-        # ── Title (top-left) ─────────────────────────────────────────────────
+        # â”€â”€ Title (top-left) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setPen(QPen(QColor("#6a9ab8"), 1))
         painter.setFont(QFont("Arial", 8, QFont.Normal))
         painter.drawText(LM, 11, self._title)
 
-        # ── Y-axis config ────────────────────────────────────────────────────
+        # â”€â”€ Y-axis config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self._show_hr:
             y_min, y_max = 20, 220
             y_ticks = [40, 80, 120, 160, 200]
@@ -2619,7 +2785,7 @@ class HolterRRTrendCanvas(QWidget):
             v = max(y_min, min(y_max, val))
             return inner.bottom() - int(((v - y_min) / y_rng) * ih)
 
-        # ── Horizontal grid lines + Y labels ─────────────────────────────────
+        # â”€â”€ Horizontal grid lines + Y labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setFont(QFont("Arial", 7))
         for yv in y_ticks:
             yp = to_y(yv)
@@ -2629,7 +2795,7 @@ class HolterRRTrendCanvas(QWidget):
             lbl = str(yv)
             painter.drawText(2, yp + 4, lbl)
 
-        # ── No data message ──────────────────────────────────────────────────
+        # â”€â”€ No data message â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if not self._points:
             painter.setPen(QPen(QColor("#3a5a70"), 1))
             painter.setFont(QFont("Arial", 9))
@@ -2639,7 +2805,7 @@ class HolterRRTrendCanvas(QWidget):
             painter.drawRect(inner)
             return
 
-        # ── Time range ───────────────────────────────────────────────────────
+        # â”€â”€ Time range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         t_vals = [p[0] for p in self._points]
         t_min = min(t_vals)
         t_max = max(t_vals)
@@ -2650,7 +2816,7 @@ class HolterRRTrendCanvas(QWidget):
         def to_x(t):
             return inner.left() + int(((t - t_min) / t_rng) * iw)
 
-        # ── Vertical grid every ~2 hours ─────────────────────────────────────
+        # â”€â”€ Vertical grid every ~2 hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         grid_interval = 7200.0  # 2 hours in seconds
         t_grid = (int(t_min / grid_interval) + 1) * grid_interval
         while t_grid < t_max:
@@ -2659,7 +2825,7 @@ class HolterRRTrendCanvas(QWidget):
             painter.drawLine(xp, inner.top(), xp, inner.bottom())
             t_grid += grid_interval
 
-        # ── Scatter dots ─────────────────────────────────────────────────────
+        # â”€â”€ Scatter dots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor("#00cc44")))
 
@@ -2677,7 +2843,7 @@ class HolterRRTrendCanvas(QWidget):
             py = to_y(val)
             painter.drawEllipse(px - 1, py - 1, 2, 2)
 
-        # ── Cyan selection box ───────────────────────────────────────────────
+        # â”€â”€ Cyan selection box â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self._selection_range is not None:
             rs, re_t = self._selection_range
             sx = max(inner.left(), min(inner.right(), to_x(rs)))
@@ -2686,7 +2852,7 @@ class HolterRRTrendCanvas(QWidget):
             painter.setBrush(QBrush(QColor(0, 204, 204, 30)))
             painter.drawRect(sx, inner.top(), max(2, ex - sx), ih)
 
-        # ── X-axis time labels ───────────────────────────────────────────────
+        # â”€â”€ X-axis time labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setPen(QPen(QColor("#4a6a80"), 1))
         painter.setFont(QFont("Arial", 7))
         import datetime as _dt
@@ -2707,7 +2873,7 @@ class HolterRRTrendCanvas(QWidget):
                 label = f"{hrs:02d}:{mins:02d}"
             painter.drawText(xp - 14, inner.bottom() + BM - 2, label)
 
-        # ── Border ───────────────────────────────────────────────────────────
+        # â”€â”€ Border â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setPen(QPen(QColor("#1e3350"), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(inner)
@@ -2723,6 +2889,16 @@ class HolterExpertReviewPanel(QWidget):
         self._template_rows = []
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -2756,7 +2932,7 @@ class HolterExpertReviewPanel(QWidget):
         left_l.addWidget(self._template_table, 1)
         body.addWidget(left)
 
-        # ── Center: scrollable 12-lead ECG grid ──
+        # â”€â”€ Center: scrollable 12-lead ECG grid â”€â”€
         center = QFrame()
         center.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {UI_BORDER};border-radius:8px;}}")
         center_l = QVBoxLayout(center)
@@ -2922,7 +3098,7 @@ class HolterExpertReviewPanel(QWidget):
         _af_chunk_dur = 4.0  # each metric chunk ~4s
         _af_sec = _af_count * _af_chunk_dur
         _af_pct = (_af_sec / _dur_sec * 100) if _dur_sec > 0 else 0.0
-        _af_str = f"{_fmt_dur(_af_sec)} {_af_pct:.2f}%" if _af_count > 0 else "—"
+        _af_str = f"{_fmt_dur(_af_sec)} {_af_pct:.2f}%" if _af_count > 0 else "-"
 
         def _hr_with_time(hr, t):
             hr_str = f"{int(round(float(hr or 0)))}bpm"
@@ -2940,16 +3116,16 @@ class HolterExpertReviewPanel(QWidget):
             ("During of Brady.", _brady_str),
             ("V Total", f"{summary.get('ve_beats', 0)}"),
             ("S Total", f"{summary.get('sve_beats', 0)}"),
-            ("AVG HR of Af/AF", "—"),
+            ("AVG HR of Af/AF", "-"),
             ("Duration of Af/AF", _af_str),
             ("Paced Beats", "0"),
-            ("Pacing AVG HR", "—"),
-            ("Pacing Max HR", "—"),
-            ("Pacing Min HR", "—"),
+            ("Pacing AVG HR", "-"),
+            ("Pacing Max HR", "-"),
+            ("Pacing Min HR", "-"),
             ("Longest RR", f"{summary.get('longest_rr_ms', 0)/1000:.2f}s"),
             ("RRI (\u22652.0s)", f"{summary.get('pauses', 0)}"),
-            ("ST Elevation", "—"),
-            ("ST Depression", "—"),
+            ("ST Elevation", "-"),
+            ("ST Depression", "-"),
         ]
         self._overview.setRowCount(len(rows))
         for i, (k, v) in enumerate(rows):
@@ -2993,6 +3169,16 @@ class HolterEventsPanel(QWidget):
         self._selected_payload = {}
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -3004,15 +3190,29 @@ class HolterEventsPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         ev_title = QLabel("Events")
-        ev_title.setStyleSheet(f"color:{COL_BLACK};font-size:13px;font-weight:bold;background:{COL_GREEN};padding:5px;border-radius:4px;")
+        ev_title.setStyleSheet(f"color:#07111F;font-size:13px;font-weight:bold;background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #28E37B, stop:1 #89F7C5);padding:6px 10px;border-radius:6px;")
         left_layout.addWidget(ev_title)
 
         cols = ["Event name", "Start Time", "Chan.", "Print Len.", "Source", "Conf."]
         self._ev_table = QTableWidget(0, len(cols))
         self._ev_table.setHorizontalHeaderLabels(cols)
         self._ev_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._ev_table.setStyleSheet(_table_style())
+        self._ev_table.setStyleSheet(
+            _table_style() +
+            """
+            QTableWidget::item:selected {
+                background-color: rgba(66, 153, 225, 70);
+                color: #F3F7FB;
+                border: 1px solid rgba(255, 255, 255, 90);
+            }
+            QTableWidget::item:selected:active {
+                background-color: rgba(66, 153, 225, 110);
+            }
+            """
+        )
         self._ev_table.verticalHeader().setVisible(False)
+        self._ev_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._ev_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._ev_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._ev_table.cellClicked.connect(self._on_event_clicked)
         left_layout.addWidget(self._ev_table, 1)
@@ -3031,7 +3231,7 @@ class HolterEventsPanel(QWidget):
             row, col = divmod(i, 2)
             l = QLabel(f"{label}:")
             l.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:10px;font-weight:bold;border:none;")
-            v = QLabel("—")
+            v = QLabel("-")
             v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
             sf_layout.addWidget(l, row * 2, col)
             sf_layout.addWidget(v, row * 2 + 1, col)
@@ -3044,10 +3244,18 @@ class HolterEventsPanel(QWidget):
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(0, 0, 0, 0)
         nav_layout.setSpacing(6)
-        for label in ["⟵ Prev Event", "Next Event ⟶", "Remove All", "Remove"]:
+        for label in ["Prev Event", "Next Event", "Remove All", "Remove"]:
             btn = QPushButton(label)
             btn.setStyleSheet(_style_btn())
             btn.setFixedHeight(38)
+            if label == "Prev Event":
+                btn.clicked.connect(self._go_prev_event)
+            elif label == "Next Event":
+                btn.clicked.connect(self._go_next_event)
+            elif label == "Remove All":
+                btn.clicked.connect(self._remove_all_events)
+            elif label == "Remove":
+                btn.clicked.connect(self._remove_selected_event)
             nav_layout.addWidget(btn)
         nav_layout.addStretch()
         layout.addWidget(nav)
@@ -3074,13 +3282,342 @@ class HolterEventsPanel(QWidget):
                 self._stat_labels[key].setText(fmt)
 
     def _on_event_clicked(self, row, col):
-        if row < len(self._events):
-            self.seek_requested.emit(self._events[row]['timestamp'])
+        self._select_and_seek(row)
+
+    def _selected_row(self) -> int:
+        selection = self._ev_table.selectionModel()
+        if selection:
+            rows = selection.selectedRows()
+            if rows:
+                return int(rows[0].row())
+        return -1
+
+    def _select_and_seek(self, row: int):
+        if row < 0 or row >= len(self._events):
+            return
+        self._ev_table.selectRow(row)
+        self._selected_payload = dict(self._events[row] or {})
+        self.seek_requested.emit(float(self._events[row].get('timestamp', 0.0) or 0.0))
+
+    def _go_prev_event(self):
+        if not self._events:
+            return
+        row = self._selected_row()
+        if row < 0:
+            row = 0
+        else:
+            row = max(0, row - 1)
+        self._select_and_seek(row)
+
+    def _go_next_event(self):
+        if not self._events:
+            return
+        row = self._selected_row()
+        if row < 0:
+            row = 0
+        else:
+            row = min(len(self._events) - 1, row + 1)
+        self._select_and_seek(row)
+
+    def _remove_selected_event(self):
+        row = self._selected_row()
+        if row < 0 or row >= len(self._events):
+            return
+        self._events.pop(row)
+        self._ev_table.removeRow(row)
+        self._selected_payload = {}
+        if self._events:
+            next_row = min(row, len(self._events) - 1)
+            self._select_and_seek(next_row)
+
+    def _remove_all_events(self):
+        self._events = []
+        self._selected_payload = {}
+        self._ev_table.setRowCount(0)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ?????????????????????????????????????????????????????????????????????????????
+# 8. HOLTER TEMPLATE PANEL  (template gallery)
+# ?????????????????????????????????????????????????????????????????????????????
+
+class _TemplateMetricCard(QFrame):
+    def __init__(self, title: str, value: str = "", accent: str = COL_GREEN, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"QFrame{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #1B2433, stop:1 #111827);border:1px solid {UI_BORDER};border-radius:10px;}}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+        lbl = QLabel(title)
+        lbl.setStyleSheet(f"color:{UI_MUTED};font-size:10px;font-weight:700;border:none;")
+        self.value = QLabel(value)
+        self.value.setStyleSheet(f"color:{UI_TEXT};font-size:16px;font-weight:800;border:none;")
+        layout.addWidget(lbl)
+        layout.addWidget(self.value)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 8. HOLTER WAVE GRID PANEL  (12-lead)
-# ══════════════════════════════════════════════════════════════════════════════
+class TemplateCardWidget(QFrame):
+    clicked = pyqtSignal(object)
+    template_id_changed = pyqtSignal(object, str)
+    class_changed = pyqtSignal(object, str)
+    viewed_changed = pyqtSignal(object, bool)
+
+    def __init__(self, parent=None, accent: str = UI_BORDER):
+        super().__init__(parent)
+        self._accent = accent or UI_BORDER
+        self._selected = False
+        self._hovered = False
+        self._template_key = ""
+        self.setObjectName("templateCard")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setContextMenuPolicy(Qt.DefaultContextMenu)
+        self._build_ui()
+        self.set_accent(self._accent)
+
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
+    def _build_ui(self):
+        self.setMinimumHeight(196)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self._card_style = """
+            QFrame#templateCard {{
+                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {bg_top}, stop:1 {bg_bottom});
+                border: 1px solid {border};
+                border-radius: 14px;
+            }}
+            QLineEdit, QComboBox {{
+                background: #0C1320;
+                color: {ui_text};
+                border: 1px solid {border};
+                border-radius: 7px;
+                padding: 4px 7px;
+                font-size: 11px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: #0B1220;
+                color: {ui_text};
+                selection-background-color: {ui_accent};
+                selection-color: #07111F;
+                border: 1px solid {border};
+                outline: 0;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 4px 8px;
+                min-height: 18px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 16px; }}
+            QLineEdit:focus, QComboBox:focus {{ border-color: {ui_accent}; }}
+        """
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        self.id_edit = QLineEdit("T1")
+        self.id_edit.setFixedWidth(70)
+        self.id_edit.setPlaceholderText("T ID")
+        self.class_combo = QComboBox()
+        self.class_combo.addItems(["N", "S", "V", "F", "Q", "R", "O", "P", "X", "Other"])
+        self.class_combo.setFixedWidth(58)
+        self.count_pill = QLabel("0 beats")
+        self.count_pill.setAlignment(Qt.AlignCenter)
+        self.count_pill.setStyleSheet(f"color:{UI_TEXT};font-size:11px;font-weight:800;background:#152235;border:1px solid {self._accent};border-radius:10px;padding:4px 8px;")
+        header.addWidget(self.id_edit)
+        header.addWidget(self.class_combo)
+        header.addStretch()
+        header.addWidget(self.count_pill)
+        layout.addLayout(header)
+
+        self.badge_container = QWidget()
+        badge_row = QHBoxLayout(self.badge_container)
+        badge_row.setContentsMargins(0, 0, 0, 0)
+        badge_row.setSpacing(5)
+        badge_row.addStretch()
+        self.badge_labels = {}
+        for key, txt in [("ambiguous", "?"), ("inserted", "+"), ("demix", "DEMIX"), ("auto_update", "AUTO")]:
+            badge = QLabel(txt)
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setVisible(False)
+            badge.setStyleSheet(f"color:{UI_TEXT};font-size:10px;font-weight:800;background:#17243A;border:1px solid {UI_BORDER};border-radius:8px;padding:2px 6px;")
+            self.badge_labels[key] = badge
+            badge_row.addWidget(badge)
+        self.badge_container.setVisible(False)
+        layout.addWidget(self.badge_container)
+
+        self.thumb = ECGStripCanvas(height=68, color="#39D353", pen_width=1.0)
+        self.thumb.setStyleSheet(f"background:{COL_BLACK};border:1px solid {self._accent};border-radius:10px;")
+        layout.addWidget(self.thumb, 1)
+
+        bottom = QHBoxLayout()
+        bottom.setSpacing(6)
+        self.template_no = QLabel("#T1")
+        self.template_no.setStyleSheet(f"color:{UI_MUTED};font-size:11px;font-weight:700;border:none;")
+        self.view_toggle = QToolButton()
+        self.view_toggle.setCheckable(True)
+        self.view_toggle.setChecked(True)
+        self.view_toggle.setText("\u25c9")
+        self.view_toggle.setToolTip("Viewed / unconfirmed")
+        self.view_toggle.setFixedSize(26, 26)
+        self.view_toggle.setStyleSheet(f"""
+            QToolButton {{
+                border: 1px solid {UI_BORDER};
+                border-radius: 13px;
+                color: {UI_TEXT};
+                background: #0C1320;
+                font-weight: 900;
+            }}
+            QToolButton:hover {{
+                border-color: {UI_ACCENT_HOVER};
+                background: #11203A;
+            }}
+            QToolButton:checked {{
+                background: {UI_SUCCESS};
+                color: #07111F;
+                border-color: {UI_SUCCESS};
+            }}
+        """)
+        bottom.addWidget(self.template_no)
+        bottom.addStretch()
+        bottom.addWidget(self.view_toggle)
+        layout.addLayout(bottom)
+
+        self.id_edit.editingFinished.connect(lambda: self.template_id_changed.emit(self, self.id_edit.text()))
+        self.class_combo.currentTextChanged.connect(lambda text: self.class_changed.emit(self, text))
+        self.view_toggle.toggled.connect(self._on_view_toggle)
+
+        for widget in [self.id_edit, self.class_combo, self.count_pill, self.badge_container, self.thumb, self.template_no, self.view_toggle]:
+            try:
+                widget.installEventFilter(self)
+            except Exception:
+                pass
+        for badge in self.badge_labels.values():
+            try:
+                badge.installEventFilter(self)
+            except Exception:
+                pass
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self)
+        return super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        host = self._find_template_host()
+        if host is not None and hasattr(host, "_show_template_card_menu"):
+            host._show_template_card_menu(self, event.globalPos())
+            event.accept()
+            return
+        return super().contextMenuEvent(event)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress and getattr(event, "button", lambda: None)() == Qt.LeftButton:
+            self.clicked.emit(self)
+        elif event.type() == QEvent.ContextMenu:
+            host = self._find_template_host()
+            if host is not None and hasattr(host, "_show_template_card_menu"):
+                try:
+                    global_pos = obj.mapToGlobal(event.pos())
+                except Exception:
+                    global_pos = self.mapToGlobal(event.pos())
+                host._show_template_card_menu(self, global_pos)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_view_toggle(self, checked: bool):
+        self.view_toggle.setText("\u25c9" if checked else "\u25cb")
+        self.viewed_changed.emit(self, bool(checked))
+
+    def _apply_styles(self):
+        if self._selected:
+            border = UI_ACCENT_HOVER
+            bg_top = "#18263C"
+            bg_bottom = "#101B2B"
+        else:
+            border = "#6EB4FF" if self._hovered else self._accent
+            bg_top = "#141F31" if self._hovered else "#121C2D"
+            bg_bottom = "#101827" if self._hovered else "#0D1521"
+        self.setStyleSheet(self._card_style.format(border=border, bg_top=bg_top, bg_bottom=bg_bottom, ui_text=UI_TEXT, ui_accent=UI_ACCENT))
+        self.count_pill.setStyleSheet(f"color:{UI_TEXT};font-size:11px;font-weight:800;background:#152235;border:1px solid {border};border-radius:10px;padding:4px 8px;")
+        self.thumb.setStyleSheet(f"background:{COL_BLACK};border:1px solid {border};border-radius:10px;")
+
+    def set_accent(self, accent: str):
+        self._accent = accent or UI_BORDER
+        self._apply_styles()
+
+    def set_selected(self, selected: bool):
+        self._selected = bool(selected)
+        self._apply_styles()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._apply_styles()
+        return super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._apply_styles()
+        return super().leaveEvent(event)
+
+    def set_template_data(self, data: dict):
+        self._template_key = str(data.get("template_key") or data.get("template_id") or data.get("id") or "")
+        template_id = str(data.get("template_id", data.get("id", "T?")))
+        label = str(data.get("label", "N"))
+        count = int(data.get("count", 0) or 0)
+        self.id_edit.blockSignals(True)
+        self.class_combo.blockSignals(True)
+        self.view_toggle.blockSignals(True)
+        self.id_edit.setText(template_id)
+        if label and self.class_combo.findText(label) < 0:
+            self.class_combo.addItem(label)
+        self.class_combo.setCurrentText(label if self.class_combo.findText(label) >= 0 else (label[:1] if label else "N"))
+        self.count_pill.setText(f"{count} beats")
+        idx = data.get("index")
+        self.template_no.setText(f"#{idx}" if idx is not None else template_id)
+
+        flags = {
+            "ambiguous": bool(data.get("ambiguous")),
+            "inserted": bool(data.get("inserted")),
+            "demix": bool(data.get("demix")),
+            "auto_update": bool(data.get("auto_update")),
+        }
+        any_badge = False
+        for key, badge in self.badge_labels.items():
+            visible = flags.get(key, False)
+            any_badge = any_badge or visible
+            badge.setVisible(visible)
+            if key == "ambiguous":
+                badge.setStyleSheet(f"color:{UI_WARNING};font-size:10px;font-weight:900;background:#221F12;border:1px solid {UI_WARNING};border-radius:8px;padding:2px 6px;")
+            elif key == "inserted":
+                badge.setStyleSheet(f"color:{UI_TEXT};font-size:10px;font-weight:900;background:#17311F;border:1px solid {UI_SUCCESS};border-radius:8px;padding:2px 6px;")
+            elif key == "demix":
+                badge.setStyleSheet(f"color:{UI_TEXT};font-size:10px;font-weight:900;background:#122C46;border:1px solid #2D9CDB;border-radius:8px;padding:2px 6px;")
+            elif key == "auto_update":
+                badge.setStyleSheet(f"color:{UI_TEXT};font-size:10px;font-weight:900;background:#1F2030;border:1px solid {UI_MUTED};border-radius:8px;padding:2px 6px;")
+        self.badge_container.setVisible(any_badge)
+
+        self.view_toggle.blockSignals(True)
+        self.view_toggle.setChecked(bool(data.get("viewed", True)))
+        self.view_toggle.setText("\u25c9" if self.view_toggle.isChecked() else "\u25cb")
+        self.view_toggle.blockSignals(False)
+        self.id_edit.blockSignals(False)
+        self.class_combo.blockSignals(False)
+
+        waveform = data.get("waveform")
+        if waveform is not None:
+            x = np.linspace(0, len(waveform) / 500.0, len(waveform)) if len(waveform) else []
+            self.thumb.set_data(x, waveform)
+        else:
+            self.thumb.set_data([], [])
+
 
 class HolterBeatTemplatePanel(QWidget):
     seek_requested = pyqtSignal(float)
@@ -3089,49 +3626,97 @@ class HolterBeatTemplatePanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._template_rows = []
-        self._event_rows = []
-        self._class_labels = {}
+        self._current_filter = "all"
+        self._selected_template_key = ""
+        self._selected_template_keys = []
+        self._card_widgets = []
+        self._waveform_cache = {}
+        self._replay_engine = None
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        title = QLabel("Beat Templates")
-        title.setStyleSheet(f"color:{COL_BLACK};font-size:13px;font-weight:bold;background:{COL_GREEN};padding:5px;border-radius:4px;")
+        title = QLabel("Template System")
+        title.setStyleSheet(f"color:#07111F;font-size:13px;font-weight:bold;background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #28E37B, stop:1 #89F7C5);padding:7px 12px;border-radius:8px;")
         layout.addWidget(title)
 
-        chips = QFrame()
-        chips.setStyleSheet(f"QFrame{{background:{COL_DARK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
-        chips_layout = QHBoxLayout(chips)
-        chips_layout.setContentsMargins(8, 6, 8, 6)
-        chips_layout.setSpacing(12)
-        for key, label in [("N", "Normal"), ("VE", "Ventricular"), ("SVE", "Supraventricular"), ("Brady", "Brady"), ("Tachy", "Tachy"), ("Pause", "Pause")]:
-            chip = QLabel(f"{label}: 0")
-            chip.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:700;border:none;")
-            chips_layout.addWidget(chip)
-            self._class_labels[key] = chip
-        chips_layout.addStretch()
-        layout.addWidget(chips)
+        stats = QGridLayout()
+        stats.setHorizontalSpacing(8)
+        stats.setVerticalSpacing(8)
+        self._stat_cards = {
+            "total": _TemplateMetricCard("Total beats", "0", COL_TEXT),
+            "templates": _TemplateMetricCard("Templates", "0", COL_TEXT),
+            "unconfirmed": _TemplateMetricCard("Unconfirmed", "0", UI_WARNING),
+            "beat_distribution": _TemplateMetricCard("Beat distribution", "N: 0", UI_TEXT),
+        }
+        stats.addWidget(self._stat_cards["total"], 0, 0)
+        stats.addWidget(self._stat_cards["templates"], 0, 1)
+        stats.addWidget(self._stat_cards["unconfirmed"], 0, 2)
+        stats.addWidget(self._stat_cards["beat_distribution"], 0, 3)
+        layout.addLayout(stats)
 
-        self._template_table = QTableWidget(0, 6)
-        self._template_table.setHorizontalHeaderLabels(["Template", "Class", "Beats", "Avg RR", "Avg QRS", "First Seen"])
-        self._template_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._template_table.setStyleSheet(_table_style())
-        self._template_table.verticalHeader().setVisible(False)
-        self._template_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._template_table.cellClicked.connect(self._on_template_clicked)
-        layout.addWidget(self._template_table, 2)
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_lbl = QLabel("Filter")
+        filter_lbl.setStyleSheet(f"color:{UI_MUTED};font-size:11px;font-weight:700;border:none;")
+        filter_row.addWidget(filter_lbl)
+        self._filter_buttons = {}
+        for key, text in [
+            ("all", "All"),
+            ("N", "N"),
+            ("S", "S"),
+            ("V", "V"),
+            ("P", "P"),
+            ("AF", "AF"),
+            ("X", "X"),
+            ("Other", "Other"),
+            ("unconfirmed", "Unconfirmed"),
+        ]:
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setChecked(key == "all")
+            btn.setToolTip({
+                "all": "Show all templates",
+                "N": "Show normal templates",
+                "S": "Show supraventricular templates",
+                "V": "Show ventricular templates",
+                "P": "Show paced templates",
+                "AF": "Show atrial fibrillation/flutter templates",
+                "X": "Show artifact templates",
+                "Other": "Show uncategorized templates",
+                "unconfirmed": "Show templates not yet confirmed",
+            }.get(key, text))
+            btn.setStyleSheet(_style_btn() if key != "all" else _style_active_btn())
+            btn.clicked.connect(lambda checked=False, k=key: self._set_filter(k))
+            self._filter_buttons[key] = btn
+            filter_row.addWidget(btn)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
 
-        self._event_table = QTableWidget(0, 5)
-        self._event_table.setHorizontalHeaderLabels(["Event", "Time", "Template", "RR", "QRS"])
-        self._event_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._event_table.setStyleSheet(_table_style())
-        self._event_table.verticalHeader().setVisible(False)
-        self._event_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._event_table.cellClicked.connect(self._on_event_clicked)
-        layout.addWidget(self._event_table, 1)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setStyleSheet(f"QScrollArea{{background:{COL_BG};border:none;}}")
+        self._cards_host = QWidget()
+        self._cards_host.setStyleSheet(f"background:{COL_BG};")
+        self._cards_layout = QGridLayout(self._cards_host)
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
+        self._cards_layout.setSpacing(10)
+        self._scroll.setWidget(self._cards_host)
+        layout.addWidget(self._scroll, 1)
 
     def update_from_metrics(self, metrics_list: list, summary: dict):
         class_totals = dict(summary.get('beat_class_totals', {}) or {})
@@ -3139,296 +3724,501 @@ class HolterBeatTemplatePanel(QWidget):
             for metric in metrics_list or []:
                 for cls, count in (metric.get('beat_class_counts', {}) or {}).items():
                     class_totals[cls] = class_totals.get(cls, 0) + int(count or 0)
-        for key, lbl in self._class_labels.items():
-            base = lbl.text().split(":")[0]
-            lbl.setText(f"{base}: {int(class_totals.get(key, 0))}")
-
+        total_beats = int(summary.get("total_beats", 0) or sum(class_totals.values()) or 0)
         template_map = {}
-        event_rows = []
         for metric in metrics_list or []:
             for row in (metric.get('template_summary', []) or []):
                 tkey = str(row.get('template_key') or row.get('template_id') or row.get('label') or 'T')
                 item = template_map.setdefault(tkey, {
+                    'template_key': tkey,
                     'template_id': row.get('template_id', 'T'),
                     'label': row.get('label', 'N'),
                     'count': 0,
                     'rr': [],
                     'qrs': [],
                     'first_timestamp': float(row.get('first_timestamp', metric.get('t', 0.0)) or 0.0),
+                    'viewed': bool(row.get('viewed', True)),
+                    'ambiguous': bool(row.get('ambiguous', False)),
+                    'inserted': bool(row.get('inserted', False)),
+                    'demix': bool(row.get('demix', False)),
+                    'auto_update': bool(row.get('auto_update', False)),
                 })
                 item['count'] += int(row.get('count', 0) or 0)
                 item['rr'].append(float(row.get('avg_rr_ms', 0.0) or 0.0))
                 item['qrs'].append(float(row.get('avg_qrs_ms', 0.0) or 0.0))
                 item['first_timestamp'] = min(item['first_timestamp'], float(row.get('first_timestamp', item['first_timestamp']) or item['first_timestamp']))
-            for ev in (metric.get('classified_events', []) or []):
-                event_rows.append({
-                    'timestamp': float(ev.get('timestamp', metric.get('t', 0.0)) or 0.0),
-                    'label': str(ev.get('label', 'Beat Event')),
-                    'template_label': str(ev.get('template_label', 'N')),
-                    'rr_ms': float(ev.get('rr_ms', 0.0) or 0.0),
-                    'qrs_ms': float(ev.get('qrs_ms', 0.0) or 0.0),
-                })
-
         self._template_rows = sorted(template_map.values(), key=lambda x: x['count'], reverse=True)
-        self._template_table.setRowCount(len(self._template_rows))
-        for i, row in enumerate(self._template_rows):
-            values = [
-                str(row.get('template_id', f"T{i+1}")),
-                str(row.get('label', 'N')),
-                str(int(row.get('count', 0))),
-                f"{float(np.mean(row.get('rr', [0.0]))):.1f} ms",
-                f"{float(np.mean(row.get('qrs', [0.0]))):.1f} ms",
-                _sec_to_hms(float(row.get('first_timestamp', 0.0))),
-            ]
-            for j, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                cell.setForeground(QColor(COL_WHITE))
-                self._template_table.setItem(i, j, cell)
 
-        event_rows.sort(key=lambda e: e['timestamp'])
-        seen = set()
-        self._event_rows = []
-        for ev in event_rows:
-            key = (round(ev['timestamp'], 3), ev['label'], ev['template_label'])
-            if key in seen:
-                continue
-            seen.add(key)
-            self._event_rows.append(ev)
+        unconfirmed = sum(1 for row in self._template_rows if not row.get("viewed", True))
+        self._stat_cards["total"].value.setText(f"{total_beats:,}")
+        self._stat_cards["templates"].value.setText(str(len(self._template_rows)))
+        self._stat_cards["unconfirmed"].value.setText(str(unconfirmed))
+        dist_parts = []
+        for key in ("N", "V", "S", "F", "Q"):
+            if int(class_totals.get(key, 0) or 0) > 0:
+                dist_parts.append(f"{key}: {int(class_totals.get(key, 0)):,}")
+        self._stat_cards["beat_distribution"].value.setText("  ".join(dist_parts) if dist_parts else "No beat classes")
+        self._refresh_stats()
+        self._render_cards()
 
-        self._event_table.setRowCount(len(self._event_rows))
-        for i, ev in enumerate(self._event_rows):
-            values = [
-                ev['label'],
-                _sec_to_hms(ev['timestamp']),
-                ev['template_label'],
-                f"{ev['rr_ms']:.1f} ms" if ev['rr_ms'] > 0 else "-",
-                f"{ev['qrs_ms']:.1f} ms" if ev['qrs_ms'] > 0 else "-",
-            ]
-            for j, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                cell.setForeground(QColor(COL_WHITE))
-                self._event_table.setItem(i, j, cell)
+    def set_replay_engine(self, engine):
+        self._replay_engine = engine
+        self._waveform_cache.clear()
+        self._render_cards()
+
+    def _row_key(self, row: dict) -> str:
+        return str(row.get("template_key") or row.get("template_id") or row.get("label") or "")
+
+    def _filtered_rows(self):
+        filtered = []
+        for row in self._template_rows:
+            label = str(row.get("label", "N") or "N").strip() or "N"
+            code = _template_filter_key(label)
+            if self._current_filter == "all":
+                filtered.append(row)
+            elif self._current_filter == "unconfirmed" and not row.get("viewed", True):
+                filtered.append(row)
+            elif self._current_filter == "AF" and code in {"AF", "F", "Q"}:
+                filtered.append(row)
+            elif self._current_filter == "Other" and code == "Other":
+                filtered.append(row)
+            elif self._current_filter in {"N", "V", "S", "P", "X"} and code == self._current_filter:
+                filtered.append(row)
+        return filtered
+
+    def _refresh_stats(self):
+        total_beats = sum(int(row.get("count", 0) or 0) for row in self._template_rows)
+        unconfirmed = sum(1 for row in self._template_rows if not row.get("viewed", True))
+        label_totals = {}
+        for row in self._template_rows:
+            label = str(row.get("label", "N") or "N").strip() or "N"
+            label_totals[label] = label_totals.get(label, 0) + int(row.get("count", 0) or 0)
+        self._stat_cards["total"].value.setText(f"{int(total_beats):,}")
+        self._stat_cards["templates"].value.setText(str(len(self._template_rows)))
+        self._stat_cards["unconfirmed"].value.setText(str(unconfirmed))
+        preferred = ["N", "S", "V", "P", "AF", "X", "Other", "F", "Q", "R", "O"]
+        dist_parts = []
+        for key in preferred:
+            value = int(label_totals.pop(key, 0) or 0)
+            if value > 0:
+                dist_parts.append(f"{key}: {value:,}")
+        for key in sorted(label_totals):
+            value = int(label_totals.get(key, 0) or 0)
+            if value > 0:
+                dist_parts.append(f"{key}: {value:,}")
+        self._stat_cards["beat_distribution"].value.setText("  ".join(dist_parts) if dist_parts else "No beat classes")
+
+    def _set_selected_keys(self, keys):
+        ordered = []
+        for key in keys or []:
+            value = str(key or "").strip()
+            if value and value not in ordered:
+                ordered.append(value)
+        self._selected_template_keys = ordered
+        self._selected_template_key = ordered[0] if ordered else ""
+        self._sync_card_selection()
+
+    def _sync_card_selection(self):
+        selected = set(self._selected_template_keys)
+        visible = []
+        for card in self._card_widgets:
+            try:
+                is_selected = card._template_key in selected
+                card.set_selected(is_selected)
+                if is_selected:
+                    visible.append(card._template_key)
+            except Exception:
+                pass
+        if visible:
+            self._selected_template_key = visible[0]
+        elif self._selected_template_keys:
+            self._selected_template_key = self._selected_template_keys[0]
+        else:
+            self._selected_template_key = ""
+
+    def _row_for_key(self, template_key: str):
+        template_key = str(template_key or "")
+        for row in self._template_rows:
+            if self._row_key(row) == template_key:
+                return row
+        return None
+
+    def _selected_rows(self):
+        selected = set(self._selected_template_keys)
+        return [row for row in self._template_rows if self._row_key(row) in selected]
+
+    def _selected_keys_for_card(self, card):
+        card_key = str(getattr(card, "_template_key", "") or "")
+        if self._selected_template_keys and card_key in set(self._selected_template_keys):
+            return list(self._selected_template_keys)
+        return [card_key] if card_key else []
+
+    def _rename_template_key(self, old_key: str, new_key: str):
+        old_key = str(old_key or "")
+        new_key = str(new_key or "")
+        if not old_key or not new_key or old_key == new_key:
+            return
+        for row in self._template_rows:
+            if self._row_key(row) == old_key:
+                row["template_key"] = new_key
+        if old_key in self._waveform_cache:
+            self._waveform_cache[new_key] = self._waveform_cache.pop(old_key)
+        self._selected_template_keys = [new_key if key == old_key else key for key in self._selected_template_keys]
+        if self._selected_template_key == old_key:
+            self._selected_template_key = new_key
+
+    def _apply_template_label(self, keys, label: str):
+        key_set = set(keys or [])
+        changed = False
+        for row in self._template_rows:
+            if self._row_key(row) in key_set:
+                row["label"] = str(label or "N").strip() or "N"
+                changed = True
+        if changed:
+            self._refresh_stats()
+            self._render_cards()
+
+    def _apply_template_viewed(self, keys, viewed: bool):
+        key_set = set(keys or [])
+        changed = False
+        for row in self._template_rows:
+            if self._row_key(row) in key_set:
+                row["viewed"] = bool(viewed)
+                changed = True
+        if changed:
+            self._refresh_stats()
+            self._render_cards()
+
+    def _select_all_visible(self):
+        self._set_selected_keys([self._row_key(row) for row in self._filtered_rows()])
+
+    def _reverse_visible_selection(self):
+        visible = [self._row_key(row) for row in self._filtered_rows()]
+        selected = set(self._selected_template_keys)
+        new_keys = [key for key in self._selected_template_keys if key not in visible]
+        new_keys.extend(key for key in visible if key not in selected)
+        self._set_selected_keys(new_keys)
+    def _set_filter(self, key: str):
+        self._current_filter = key
+        for k, btn in self._filter_buttons.items():
+            btn.setChecked(k == key)
+            btn.setStyleSheet(_style_active_btn() if k == key else _style_btn())
+        self._refresh_stats()
+        self._render_cards()
+
+    def _on_card_template_id_changed(self, card, text: str):
+        old_key = str(getattr(card, "_template_key", "") or "")
+        new_id = str(text or "").strip() or old_key
+        row = self._row_for_key(old_key)
+        if row is None:
+            return
+        row["template_id"] = new_id
+        row["template_key"] = new_id
+        if old_key != new_id:
+            self._rename_template_key(old_key, new_id)
+        self._refresh_stats()
+        self._render_cards()
+
+    def _on_card_class_changed(self, card, text: str):
+        key = str(getattr(card, "_template_key", "") or "")
+        row = self._row_for_key(key)
+        if row is None:
+            return
+        row["label"] = str(text or "N").strip() or "N"
+        self._refresh_stats()
+        self._render_cards()
+
+    def _on_card_viewed_changed(self, card, viewed: bool):
+        key = str(getattr(card, "_template_key", "") or "")
+        row = self._row_for_key(key)
+        if row is None:
+            return
+        row["viewed"] = bool(viewed)
+        self._refresh_stats()
+        self._render_cards()
+
+    def _delete_selected_templates(self, keys=None):
+        keys = list(keys or self._selected_template_keys)
+        if not keys:
+            return
+        if QMessageBox.question(self, "Delete templates", f"Delete {len(keys)} selected template(s)?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        key_set = set(keys)
+        self._template_rows = [row for row in self._template_rows if self._row_key(row) not in key_set]
+        for key in key_set:
+            self._waveform_cache.pop(key, None)
+        self._selected_template_keys = []
+        self._selected_template_key = ""
+        self._refresh_stats()
+        self._render_cards()
+
+    def _confirm_delete_templates(self, count: int) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Delete templates")
+        box.setText(f"Delete {count} selected template(s)?")
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.setStyleSheet(f"""
+            QMessageBox {{ background: {COL_BLACK}; }}
+            QMessageBox QLabel {{ color: {COL_WHITE}; font-size: 12px; }}
+            QMessageBox QPushButton {{
+                background: #1B2740;
+                color: {COL_WHITE};
+                border: 1px solid {UI_BORDER};
+                border-radius: 6px;
+                padding: 6px 14px;
+                min-width: 64px;
+            }}
+            QMessageBox QPushButton:hover {{
+                background: #243552;
+                border-color: {UI_ACCENT};
+            }}
+            QMessageBox QPushButton:pressed {{
+                background: #132033;
+            }}
+        """)
+        return box.exec_() == QMessageBox.Yes
+    def _merge_selected_templates(self, keys=None):
+        keys = list(keys or self._selected_template_keys)
+        key_set = set(keys)
+        rows = [row for row in self._template_rows if self._row_key(row) in key_set]
+        if len(rows) < 2:
+            return
+        options = [
+            ("Normal", "N"),
+            ("Atrial Premature", "S"),
+            ("Ventricular Premature", "V"),
+            ("Artifact", "X"),
+            ("Atrial Fibrillation", "Q"),
+            ("Atrial Flutter", "R"),
+            ("Blocked PAC", "O"),
+            ("Paced", "P"),
+            ("Other", "Other"),
+        ]
+        labels = []
+        for row in rows:
+            label = str(row.get("label", "N") or "N").strip() or "N"
+            if label not in labels:
+                labels.append(label)
+        if len(labels) == 1:
+            merged_label = labels[0]
+        else:
+            items = [f"{name} ({code})" if code != "Other" else name for name, code in options]
+            choice, ok = QInputDialog.getItem(self, "Merge template", "Choose the merged template type:", items, 0, False)
+            if not ok:
+                return
+            merged_label = choice[choice.rfind("(") + 1:-1] if "(" in choice and choice.endswith(")") else choice
+        base = dict(rows[0])
+        total_count = sum(int(row.get("count", 0) or 0) for row in rows)
+        rr_values = []
+        qrs_values = []
+        for row in rows:
+            rr_values.extend([float(v) for v in (row.get("rr", []) or []) if v is not None])
+            qrs_values.extend([float(v) for v in (row.get("qrs", []) or []) if v is not None])
+        base["label"] = merged_label
+        base["count"] = total_count
+        base["rr"] = rr_values
+        base["qrs"] = qrs_values
+        base["first_timestamp"] = min(float(row.get("first_timestamp", 0.0) or 0.0) for row in rows)
+        base["viewed"] = all(bool(row.get("viewed", True)) for row in rows)
+        base["ambiguous"] = any(bool(row.get("ambiguous", False)) for row in rows)
+        base["inserted"] = any(bool(row.get("inserted", False)) for row in rows)
+        base["demix"] = any(bool(row.get("demix", False)) for row in rows)
+        base["auto_update"] = any(bool(row.get("auto_update", False)) for row in rows)
+        base.setdefault("template_id", base.get("template_id") or f"T{len(self._template_rows) + 1}")
+        base["template_key"] = base.get("template_id") or base.get("label") or "T"
+        new_rows = []
+        inserted = False
+        for row in self._template_rows:
+            key = self._row_key(row)
+            if key in key_set:
+                self._waveform_cache.pop(key, None)
+                if not inserted:
+                    new_rows.append(base)
+                    inserted = True
+            else:
+                new_rows.append(row)
+        self._template_rows = new_rows
+        self._selected_template_keys = [base["template_key"]]
+        self._selected_template_key = base["template_key"]
+        self._refresh_stats()
+        self._render_cards()
+
+    def _open_overlay_analysis(self, card):
+        host = self.window()
+        if host is None:
+            return
+        try:
+            if hasattr(host, "_focus_tab"):
+                host._focus_tab("REPLAY")
+            template_key = str(getattr(card, "_template_key", "") or "")
+            row = self._row_for_key(template_key)
+            if row is not None and hasattr(host, "set_magnifier_focus"):
+                host.set_magnifier_focus(card.thumb, card.thumb._magnifier_source_payload(), QPoint(max(8, card.thumb.width() // 2), max(8, card.thumb.height() // 2)))
+                self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0))
+        except Exception:
+            pass
+
+    def _open_lorenz_plots(self, card):
+        host = self.window()
+        if host is None:
+            return
+        try:
+            if hasattr(host, "_focus_tab"):
+                host._focus_tab("REPLAY")
+            row = self._row_for_key(str(getattr(card, "_template_key", "") or ""))
+            if row is not None:
+                self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0))
+        except Exception:
+            pass
+
+    def _show_template_card_menu(self, card, global_pos):
+        card_key = str(getattr(card, "_template_key", "") or "")
+        if not card_key:
+            return
+        if not self._selected_template_keys or card_key not in set(self._selected_template_keys):
+            self._set_selected_keys([card_key])
+        target_keys = list(self._selected_template_keys) or [card_key]
+        menu = QMenu(self)
+        menu.setStyleSheet(f"QMenu {{ background: #0B1220; color: {UI_TEXT}; border: 1px solid {UI_BORDER}; padding: 6px; }} QMenu::item {{ padding: 6px 20px 6px 18px; border-radius: 4px; }} QMenu::item:selected {{ background: {UI_ACCENT}; color: #07111F; }} QMenu::separator {{ height: 1px; background: {UI_BORDER}; margin: 6px 4px; }}")
+        prop_menu = menu.addMenu("Template properties")
+        for title, code in [("Normal (N)", "N"), ("Atrial Premature (S)", "S"), ("Ventricular Premature (V)", "V"), ("Artifact (X)", "X"), ("Atrial Fibrillation (Q)", "Q"), ("Atrial Flutter (R)", "R"), ("Blocked PAC (O)", "O"), ("Paced (P)", "P"), ("Other", "Other")]:
+            action = prop_menu.addAction(title)
+            action.triggered.connect(lambda checked=False, c=code: self._apply_template_label(target_keys, c))
+        func_menu = menu.addMenu("Function")
+        func_menu.addAction("Delete").triggered.connect(lambda: self._delete_selected_templates(target_keys))
+        func_menu.addAction("Select All").triggered.connect(self._select_all_visible)
+        func_menu.addAction("Reverse Selection").triggered.connect(self._reverse_visible_selection)
+        merge_action = menu.addAction("Merge template")
+        merge_action.setEnabled(len(target_keys) >= 2)
+        merge_action.triggered.connect(lambda: self._merge_selected_templates(target_keys))
+        ok_menu = menu.addMenu("Template OK/Cancel")
+        ok_menu.addAction("Confirm").triggered.connect(lambda: self._apply_template_viewed(target_keys, True))
+        ok_menu.addAction("Unconfirm").triggered.connect(lambda: self._apply_template_viewed(target_keys, False))
+        menu.addAction("Overlay beat analysis").triggered.connect(lambda: self._open_overlay_analysis(card))
+        menu.addAction("Lorenz plots").triggered.connect(lambda: self._open_lorenz_plots(card))
+        menu.exec_(global_pos)
+    def _on_card_clicked(self, card):
+        template_key = str(getattr(card, "_template_key", "") or "")
+        if template_key:
+            self._set_selected_keys([template_key])
+        row = self._row_for_key(template_key)
+        if template_key:
+            self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0) if row is not None else 0.0)
+
+    def _render_cards(self):
+        while self._cards_layout.count():
+            item = self._cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+        self._card_widgets = []
+        filtered = self._filtered_rows()
+        columns = 3 if len(filtered) <= 6 else 4
+        filtered_keys = [self._row_key(row) for row in filtered]
+        selected_visible = [key for key in filtered_keys if key in set(self._selected_template_keys)]
+        if filtered and not selected_visible:
+            self._set_selected_keys([filtered_keys[0]])
+        elif selected_visible:
+            self._selected_template_key = selected_visible[0]
+        elif not self._selected_template_keys:
+            self._selected_template_key = ""
+
+        for idx, row in enumerate(filtered):
+            label = str(row.get("label", "N") or "N").strip() or "N"
+            label_code = label[:1].upper() if label else "N"
+            accent = {"N": "#2D9CDB", "V": "#F2994A", "S": "#E2B93B", "F": "#7F8C8D", "Q": "#B06CFD", "R": "#A97FFF", "O": "#F2C94C", "P": "#56CCF2", "X": "#EB5757"}.get(label_code, UI_BORDER)
+            card = TemplateCardWidget(accent=accent)
+            rr = row.get("rr", []) or []
+            qrs = row.get("qrs", []) or []
+            rr_med = float(np.median(rr)) if rr else 0.0
+            qrs_med = float(np.median(qrs)) if qrs else 0.0
+            waveform = self._resolve_template_waveform(row, rr_med, qrs_med)
+            template_key = self._row_key(row)
+            card.clicked.connect(self._on_card_clicked)
+            card.template_id_changed.connect(self._on_card_template_id_changed)
+            card.class_changed.connect(self._on_card_class_changed)
+            card.viewed_changed.connect(self._on_card_viewed_changed)
+            card.set_template_data({
+                "template_key": template_key,
+                "index": idx + 1,
+                "template_id": row.get("template_id", f"T{idx+1}"),
+                "label": row.get("label", "N"),
+                "count": row.get("count", 0),
+                "viewed": row.get("viewed", True),
+                "ambiguous": row.get("ambiguous", False),
+                "inserted": row.get("inserted", False),
+                "demix": row.get("demix", False),
+                "auto_update": row.get("auto_update", False),
+                "waveform": waveform,
+            })
+            card.set_selected(template_key in set(self._selected_template_keys))
+            row_idx, col_idx = divmod(len(self._card_widgets), columns)
+            self._cards_layout.addWidget(card, row_idx, col_idx)
+            self._card_widgets.append(card)
+        if self._card_widgets:
+            self._cards_layout.setRowStretch(max(0, (len(self._card_widgets) + columns - 1) // columns), 1)
+        for c in range(columns, 6):
+            self._cards_layout.setColumnStretch(c, 1)
+        self._sync_card_selection()
+
+    def _resolve_template_waveform(self, row: dict, rr_ms: float, qrs_ms: float):
+        key = str(row.get("template_key") or row.get("template_id") or row.get("label") or "T")
+        cached = self._waveform_cache.get(key)
+        if cached is not None:
+            return cached
+        first_ts = float(row.get("first_timestamp", 0.0) or 0.0)
+        waveform = None
+        engine = getattr(self, "_replay_engine", None)
+        try:
+            if engine is not None and hasattr(engine, "_reader"):
+                fs = float(getattr(engine, "fs", 500.0) or 500.0)
+                pre = 0.18
+                post = 0.34
+                data = engine._reader.read_range(max(0.0, first_ts - pre), min(float(engine.duration_sec), first_ts + post))
+                if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[0] > 1 and data.shape[1] > 8:
+                    lead = np.asarray(data[1], dtype=float)
+                    baseline = float(np.median(lead))
+                    centered = lead - baseline
+                    if np.ptp(centered) > 1.0:
+                        x_old = np.linspace(0.0, 1.0, centered.size)
+                        x_new = np.linspace(0.0, 1.0, 240)
+                        centered = np.interp(x_new, x_old, centered)
+                        centered = centered - float(np.median(centered))
+                        peak = max(float(np.max(np.abs(centered))), 1.0)
+                        centered = np.clip(centered / peak * 420.0, -650.0, 650.0)
+                        waveform = 2048.0 + centered
+        except Exception:
+            waveform = None
+        if waveform is None:
+            waveform = self._make_thumbnail_waveform(rr_ms, qrs_ms)
+        self._waveform_cache[key] = waveform
+        return waveform
+
+    def _make_thumbnail_waveform(self, rr_ms: float, qrs_ms: float):
+        t = np.linspace(0, 1.2, 240)
+        rr_scale = np.clip(rr_ms / 900.0, 0.55, 1.8) if rr_ms > 0 else 1.0
+        qrs_scale = np.clip(qrs_ms / 80.0, 0.6, 1.8) if qrs_ms > 0 else 1.0
+        p = 0.04 * np.exp(-((t - 0.14) / 0.028) ** 2)
+        q = -0.14 * np.exp(-((t - 0.275) / 0.010) ** 2)
+        r = 1.35 * np.exp(-((t - 0.31) / (0.014 / qrs_scale)) ** 2)
+        s = -0.36 * np.exp(-((t - 0.335) / 0.014) ** 2)
+        tw = 0.22 * np.exp(-((t - 0.63) / (0.09 * rr_scale)) ** 2)
+        st = 0.025 * np.exp(-((t - 0.45) / 0.05) ** 2)
+        wave = p + q + r + s + tw + st
+        return 2048.0 + wave * 480.0
 
     def _on_template_clicked(self, row, _col):
-        if row < 0 or row >= len(self._template_rows):
-            return
-        self.seek_requested.emit(float(self._template_rows[row].get('first_timestamp', 0.0)))
-
-    def _on_event_clicked(self, row, _col):
-        if row < 0 or row >= len(self._event_rows):
-            return
-        self.seek_requested.emit(float(self._event_rows[row].get('timestamp', 0.0)))
+        if 0 <= row < len(self._template_rows):
+            self.seek_requested.emit(float(self._template_rows[row].get("first_timestamp", 0.0)))
 
 
-class HolterWaveGridPanel(QFrame):
-    LEADS = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
-
-    def __init__(self, parent=None, live_source=None, replay_engine=None):
-        super().__init__(parent)
-        self.live_source = live_source
-        self.replay_engine = replay_engine
-        self.window_sec = 10.0
-        self._lead_widgets = []
-        self._replay_buffer = None
-        self.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:12px;}}")
-        self._build_ui()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self.refresh_waveforms)
-        self._timer.start(150)
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        header = QHBoxLayout()
-        title = QLabel("12‑Lead Live Workspace")
-        title.setStyleSheet(f"color:{COL_GREEN};font-size:16px;font-weight:bold;border:none;")
-        subtitle = QLabel("Professional Comprehensive ECG Analysis view with synchronized moving strips.")
-        subtitle.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:11px;font-weight:bold;border:none;")
-        hcol = QVBoxLayout()
-        hcol.addWidget(title)
-        hcol.addWidget(subtitle)
-        header.addLayout(hcol)
-        header.addStretch()
-        speed = QLabel("Paper Speed 25mm/s  |  Gain 10mm/mV")
-        speed.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;background:{COL_DARK};"
-                            f"padding:5px;border:1px solid {COL_GREEN_DRK};border-radius:4px;")
-        header.addWidget(speed)
-        layout.addLayout(header)
-
-        if not HAS_PG:
-            fb = QLabel("pyqtgraph not available — install it for live waveforms: pip install pyqtgraph")
-            fb.setWordWrap(True)
-            fb.setStyleSheet(f"color:{COL_GREEN};font-size:12px;padding:16px;border:none;")
-            layout.addWidget(fb)
-            return
-
-        # Use a QGridLayout for 3x4 format (like professional medical workstations)
-        self.grid_layout = QGridLayout()
-        self.grid_layout.setSpacing(6)
-        self.grid_layout.setContentsMargins(0, 0, 0, 0)
-
-        for idx, lead in enumerate(self.LEADS):
-            card = QFrame()
-            # Remove border, only show background and wave
-            card.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:none;}}")
-            cl = QVBoxLayout(card)
-            cl.setContentsMargins(2, 2, 2, 2)
-            cl.setSpacing(0)
-            lbl = QLabel(lead)
-            lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;padding-left:4px;")
-            cl.addWidget(lbl)
-            plot = pg.PlotWidget()
-            plot.setMenuEnabled(False)
-            plot.setMouseEnabled(x=False, y=False)
-            plot.hideButtons()
-            plot.setBackground(COL_BLACK)
-            # Subtle grid
-            plot.showGrid(x=True, y=True, alpha=0.15)
-            plot.getAxis("left").setStyle(showValues=False)
-            plot.getAxis("bottom").setStyle(showValues=False)
-            plot.getAxis("left").setPen(pg.mkPen(color='#002200'))
-            plot.getAxis("bottom").setPen(pg.mkPen(color='#002200'))
-            if lead == "aVR":
-                plot.setYRange(0, -4096, padding=0)
-            else:
-                plot.setYRange(0, 4096, padding=0)
-            plot.setMinimumHeight(120) # Taller for bigger screen visibility
-            curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=1.0))
-            cl.addWidget(plot, 1)
-            self._lead_widgets.append((curve, plot))
-            # 3 rows, 4 columns
-            row, col = divmod(idx, 4)
-            self.grid_layout.addWidget(card, row, col)
-
-        container = QWidget()
-        container.setLayout(self.grid_layout)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(container)
-        scroll.setStyleSheet("QScrollArea { border: none; background: black; }")
-        layout.addWidget(scroll, 1)
-
-    def set_replay_engine(self, e): self.replay_engine = e
-    def set_live_source(self, s): self.live_source = s
-
-    def set_replay_frame(self, data):
-        self._replay_buffer = data
-        self.refresh_waveforms()
-
-    def _normalize(self, sig):
-        arr = np.asarray(sig, dtype=float).flatten()
-        if arr.size == 0:
-            return np.full(400, 2048.0, dtype=float)
-        # Keep raw values, just ensure length and handle NaNs
-        arr = arr[-max(300, int(500 * self.window_sec)):]
-        arr = np.nan_to_num(arr, nan=2048.0)
-        return arr
-
-    def _to_display_space(self, sig: np.ndarray, lead_name: str) -> np.ndarray:
-        """
-        Recenter leads for readability.
-        - Standard leads centered near midline (2048) in 0..4096 window.
-        - aVR centered near -2048 in 0..-4096 window.
-        """
-        baseline = float(np.median(sig)) if sig.size else 2048.0
-        centered = sig - baseline
-        if lead_name == "aVR":
-            return np.clip((-centered) - 2048.0, -4096.0, 0.0)
-        return np.clip(centered + 2048.0, 0.0, 4096.0)
-
-    def refresh_waveforms(self):
-        if not self._lead_widgets:
-            return
-        if self._replay_buffer is not None:
-            lead_data = [self._normalize(s) for s in self._replay_buffer]
-        elif self.replay_engine is not None:
-            try:
-                data = self.replay_engine.get_all_leads_data(window_sec=self.window_sec)
-                lead_data = [self._normalize(s) for s in data]
-            except Exception:
-                return
-        else:
-            src = getattr(self.live_source, "data", None)
-            if not src: return
-            lead_data = [self._normalize(src[i]) for i in range(min(len(self.LEADS), len(src)))]
-            while len(lead_data) < len(self.LEADS):
-                lead_data.append(np.full(400, 2048.0, dtype=float))
-
-        fs = 500.0
-        try:
-            if self.replay_engine is not None and getattr(self.replay_engine, "fs", None):
-                fs = float(self.replay_engine.fs)
-        except Exception:
-            pass
-        if self.replay_engine is None:
-            try:
-                if self.live_source is not None and getattr(self.live_source, "sampling_rate", None):
-                    fs = float(self.live_source.sampling_rate)
-            except Exception:
-                pass
-            try:
-                sampler = getattr(self.live_source, "sampler", None) if self.live_source is not None else None
-                if sampler and getattr(sampler, "sampling_rate", None):
-                    fs = float(sampler.sampling_rate)
-            except Exception:
-                pass
-        if fs < 50.0 or fs > 2000.0:
-            fs = 500.0
-
-        ac_opt = "50"
-        emg_opt = "150"
-        dft_opt = "0.5"
-        try:
-            sm = getattr(self.live_source, "settings_manager", None)
-            if sm is None:
-                from utils.settings_manager import SettingsManager
-                sm = SettingsManager()
-            ac_opt = str(sm.get_setting("filter_ac", ac_opt) or ac_opt).strip()
-            emg_opt = str(sm.get_setting("filter_emg", emg_opt) or emg_opt).strip()
-            dft_opt = str(sm.get_setting("filter_dft", dft_opt) or dft_opt).strip()
-        except Exception:
-            pass
-
-        for idx, (curve, plot) in enumerate(self._lead_widgets):
-            sig = lead_data[idx] if idx < len(lead_data) else np.full(400, 2048.0)
-            lead_name = self.LEADS[idx] if idx < len(self.LEADS) else ""
-
-            # Apply the same display filters used elsewhere in the app (DFT -> EMG -> AC).
-            try:
-                from ecg.ecg_filters import apply_ecg_filters
-
-                arr = np.asarray(sig, dtype=float)
-                if arr.size > 120 and (str(ac_opt).lower() not in ("off", "") or str(emg_opt).lower() not in ("off", "") or str(dft_opt).lower() not in ("off", "")):
-                    pad_len = 50
-                    if arr.size > pad_len:
-                        work = np.concatenate((np.full(pad_len, arr[0]), arr, np.full(pad_len, arr[-1])))
-                    else:
-                        work = arr
-                        pad_len = 0
-                    work = apply_ecg_filters(work, sampling_rate=float(fs), ac_filter=ac_opt, emg_filter=emg_opt, dft_filter=dft_opt)
-                    if pad_len and work.size > 2 * pad_len:
-                        arr = work[pad_len:-pad_len]
-                    else:
-                        arr = work
-                    sig = arr
-            except Exception:
-                pass
-
-            sig = self._to_display_space(np.asarray(sig, dtype=float), lead_name)
-            # Create time axis based on sampling rate
-            time_axis = np.arange(sig.size, dtype=float) / float(fs if fs > 0 else 500.0)
-            curve.setData(time_axis, sig)
-            # Auto-scroll X axis to show the latest window_sec
-            if sig.size > 0:
-                max_t = time_axis[-1]
-                plot.setXRange(max(0, max_t - self.window_sec), max_t, padding=0)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ?????????????????????????????????????????????????????????????????????????????
 # 9. HOLTER INSIGHT PANEL  (report preview)
-# ══════════════════════════════════════════════════════════════════════════════
+# ?????????????????????????????????????????????????????????????????????????????
+# 9. HOLTER INSIGHT PANEL  (report preview)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterInsightPanel(QFrame):
     def __init__(self, parent=None):
@@ -3451,9 +4241,9 @@ class HolterInsightPanel(QFrame):
 
     def update_text(self, patient_info: dict, summary: dict):
         name = patient_info.get("patient_name") or patient_info.get("name") or "Unknown patient"
-        age = patient_info.get("age", "—")
-        sex = patient_info.get("gender") or patient_info.get("sex") or "—"
-        email = patient_info.get("email", "—")
+        age = patient_info.get("age", "-")
+        sex = patient_info.get("gender") or patient_info.get("sex") or "-"
+        email = patient_info.get("email", "-")
         dur = summary.get("duration_sec", 0) / 3600
         avg_hr = summary.get("avg_hr", 0)
         min_hr = summary.get("min_hr", 0)
@@ -3468,11 +4258,11 @@ class HolterInsightPanel(QFrame):
         text = (
             f"Patient: {name} | Age/Sex: {age}/{sex} | Email: {email}\n\n"
             f"Study summary:\n"
-            f"• Recording duration: {dur:.1f} hours\n"
-            f"• Average heart rate: {avg_hr:.0f} bpm (range {min_hr:.0f}–{max_hr:.0f} bpm)\n"
-            f"• Signal quality: {quality:.1f}%\n"
-            f"• Longest RR interval: {summary.get('longest_rr_ms',0):.0f} ms\n"
-            f"• HRV profile: SDNN {summary.get('sdnn',0):.1f} ms, "
+            f"- Recording duration: {dur:.1f} hours\n"
+            f"- Average heart rate: {avg_hr:.0f} bpm (range {min_hr:.0f}-{max_hr:.0f} bpm)\n"
+            f"- Signal quality: {quality:.1f}%\n"
+            f"- Longest RR interval: {summary.get('longest_rr_ms',0):.0f} ms\n"
+            f"- HRV profile: SDNN {summary.get('sdnn',0):.1f} ms, "
             f"rMSSD {summary.get('rmssd',0):.1f} ms, pNN50 {summary.get('pnn50',0):.2f}%\n\n"
             f"Interpretation:\n"
             f"The recording demonstrates a {rhythm}. Key events: {top}\n\n"
@@ -3485,9 +4275,9 @@ class HolterInsightPanel(QFrame):
         self._report.setPlainText(text)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 10. RECORD MANAGEMENT PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterRecordManagementPanel(QWidget):
     session_selected = pyqtSignal(str)  # session dir path
@@ -3499,6 +4289,16 @@ class HolterRecordManagementPanel(QWidget):
         self._build_ui()
         self.refresh_records()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -3743,17 +4543,31 @@ class HolterRecordManagementPanel(QWidget):
         self.refresh_records()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 11. HISTOGRAM PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterHistogramPanel(QWidget):
+    seek_requested = pyqtSignal(float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._metrics = []
         self._rank_mode = "rri"
+        self._selected_point = None
         self._build_ui()
+
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -3761,7 +4575,7 @@ class HolterHistogramPanel(QWidget):
         layout.setSpacing(6)
 
         title_row = QHBoxLayout()
-        title = QLabel("Histogram — RR Interval Distribution")
+        title = QLabel("Histogram - RR Interval Distribution")
         title.setStyleSheet(f"color:{COL_GREEN};font-size:14px;font-weight:bold;border:none;")
         title_row.addWidget(title, 1)
         self._type_combo = QComboBox()
@@ -3779,12 +4593,12 @@ class HolterHistogramPanel(QWidget):
         title_row.addWidget(self._type_combo)
         layout.addLayout(title_row)
 
-        # Mode buttons
         btn_row = QHBoxLayout()
         self._rank_buttons = {}
         for lbl, mode in [("RRI Ranking", "rri"), ("Time Ranking", "time"),
                           ("Prematurity Ranking", "prematurity"), ("Similarity Ranking", "similarity")]:
             btn = QPushButton(lbl)
+            btn.setCheckable(True)
             btn.setStyleSheet(_style_btn())
             btn.clicked.connect(lambda _, m=mode: self._set_rank_mode(m))
             self._rank_buttons[mode] = btn
@@ -3792,11 +4606,16 @@ class HolterHistogramPanel(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # Histogram canvas
         self._hist_canvas = HistogramCanvas()
+        self._hist_canvas.bar_clicked.connect(self._on_bar_clicked)
         layout.addWidget(self._hist_canvas, 1)
+        self._selected_info = QLabel("Selected: none")
+        self._selected_info.setStyleSheet(
+            f"color:{COL_WHITE};font-size:11px;font-weight:bold;border:none;padding:2px 0;"
+        )
+        layout.addWidget(self._selected_info)
 
-        # Bottom stats
+
         stats_frame = QFrame()
         stats_frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:4px;}}")
         stats_layout = QGridLayout(stats_frame)
@@ -3810,14 +4629,13 @@ class HolterHistogramPanel(QWidget):
             row = i // 4
             l = QLabel(f"{lbl}:")
             l.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
-            v = QLabel("—")
+            v = QLabel("?")
             v.setStyleSheet(f"color:{COL_WHITE};font-size:13px;font-weight:bold;border:none;")
             stats_layout.addWidget(l, row*2, col)
             stats_layout.addWidget(v, row*2+1, col)
             self._hist_stats[key] = v
         layout.addWidget(stats_frame)
 
-        # ECG strip
         self._strip = ECGStripCanvas(height=60)
         layout.addWidget(self._strip)
         self._set_rank_mode("rri")
@@ -3826,155 +4644,289 @@ class HolterHistogramPanel(QWidget):
         self._rank_mode = mode
         for key, btn in getattr(self, "_rank_buttons", {}).items():
             active = key == mode
+            btn.setChecked(active)
             btn.setStyleSheet(_style_active_btn() if active else _style_btn())
         self._draw()
 
     def update_from_metrics(self, metrics_list: list):
-        self._metrics = metrics_list
+        self._metrics = list(metrics_list or [])
         self._draw()
 
+    def _build_points(self):
+        points = []
+        for metric_idx, m in enumerate(self._metrics):
+            base_t = float(m.get('t', 0.0) or 0.0)
+            label = str((m.get('arrhythmias') or [m.get('label', '')])[0] or '')
+            rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 0]
+            if rr_list:
+                dur = float(m.get('duration', 0.0) or 0.0)
+                step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
+                for sample_idx, rr in enumerate(rr_list):
+                    points.append({
+                        't': base_t + sample_idx * step,
+                        'rr': rr,
+                        'metric_idx': metric_idx,
+                        'sample_idx': sample_idx,
+                        'label': label,
+                    })
+                continue
+            rr_val = float(m.get('rr_ms', 0) or 0)
+            if rr_val > 200:
+                points.append({
+                    't': base_t,
+                    'rr': rr_val,
+                    'metric_idx': metric_idx,
+                    'sample_idx': 0,
+                    'label': label,
+                })
+        return points
+
     def _draw(self):
-        rr_points = []
-        for m in self._metrics:
-            t0 = float(m.get('t', 0.0) or 0.0)
-            if 'rr_intervals_list' in m:
-                rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 200]
-                if rr_list:
-                    dur = float(m.get('duration', 0.0) or 0.0)
-                    step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
-                    for i, rr in enumerate(rr_list):
-                        rr_points.append((t0 + i * step, rr))
-            elif m.get('rr_ms', 0) > 200:
-                rr_points.append((t0, float(m['rr_ms'])))
+        points = self._build_points()
+        rr_vals = [p['rr'] for p in points if p['rr'] > 200]
+        if not rr_vals:
+            self._hist_canvas.set_histogram_data([], mode=self._rank_mode)
+            for key in self._hist_stats:
+                self._hist_stats[key].setText('?')
+            return
 
-        rr_vals = [rr for _, rr in rr_points if rr > 200]
-        mode = self._rank_mode
-        ranked = []
-        if rr_points:
-            rr_arr = np.array(rr_vals) if rr_vals else np.array([])
-            median_rr = float(np.median(rr_arr)) if rr_arr.size else 0.0
-            mean_rr = float(np.mean(rr_arr)) if rr_arr.size else 0.0
-            if mode == "time":
-                ranked = sorted(rr_points, key=lambda x: x[0])
-            elif mode == "prematurity":
-                ranked = sorted(rr_points, key=lambda x: max(0.0, mean_rr - x[1]), reverse=True)
-            elif mode == "similarity":
-                ranked = sorted(rr_points, key=lambda x: abs(x[1] - median_rr))
-            else:
-                ranked = sorted(rr_points, key=lambda x: x[1], reverse=True)
-        self._hist_canvas.set_ranked_data(ranked, mode=mode)
+        rr_arr = np.array(rr_vals, dtype=float)
+        median_rr = float(np.median(rr_arr)) if rr_arr.size else 0.0
+        mean_rr = float(np.mean(rr_arr)) if rr_arr.size else 0.0
+        if self._rank_mode == 'time':
+            ranked = sorted(points, key=lambda x: x['t'])
+        elif self._rank_mode == 'prematurity':
+            ranked = sorted(points, key=lambda x: max(0.0, mean_rr - x['rr']), reverse=True)
+        elif self._rank_mode == 'similarity':
+            ranked = sorted(points, key=lambda x: abs(x['rr'] - median_rr))
+        else:
+            ranked = sorted(points, key=lambda x: x['rr'], reverse=True)
 
-        if rr_vals:
-            arr = np.array(rr_vals)
-            self._hist_stats["nns"].setText(str(len(arr)))
-            self._hist_stats["mean_nn"].setText(f"{arr.mean():.0f}ms")
-            self._hist_stats["sdnn"].setText(f"{arr.std():.0f}ms")
-            self._hist_stats["sdann"].setText("—")
-            d = np.diff(arr)
-            rmssd = np.sqrt(np.mean(d**2)) if len(d) > 0 else 0
-            self._hist_stats["rmssd"].setText(f"{rmssd:.0f}ms")
-            pnn50 = 100.0 * np.sum(np.abs(d) > 50) / len(d) if len(d) > 0 else 0
-            self._hist_stats["pnn50"].setText(f"{pnn50:.2f}%")
-            self._hist_stats["triidx"].setText("—")
-            self._hist_stats["sdnnidx"].setText("—")
+        self._hist_canvas.set_histogram_data(ranked, mode=self._rank_mode)
+
+        self._hist_stats['nns'].setText(str(len(rr_arr)))
+        self._hist_stats['mean_nn'].setText(f"{rr_arr.mean():.0f} ms")
+        self._hist_stats['sdnn'].setText(f"{rr_arr.std():.0f} ms")
+        self._hist_stats['sdann'].setText('?')
+        d = np.diff(rr_arr)
+        rmssd = np.sqrt(np.mean(d ** 2)) if len(d) > 0 else 0.0
+        self._hist_stats['rmssd'].setText(f"{rmssd:.0f} ms")
+        pnn50 = 100.0 * np.sum(np.abs(d) > 50) / len(d) if len(d) > 0 else 0.0
+        self._hist_stats['pnn50'].setText(f"{pnn50:.2f}%")
+        self._hist_stats['triidx'].setText('?')
+        self._hist_stats['sdnnidx'].setText('?')
+
+    def _on_bar_clicked(self, payload: dict):
+        if not payload:
+            return
+        count = int(payload.get('count', 0) or 0)
+        lo, hi = payload.get('range', (0.0, 0.0))
+        rr_center = float(payload.get('center_rr', 0.0) or 0.0)
+        times = [float(t) for t in (payload.get('times', []) or []) if float(t) >= 0]
+        if times:
+            target = float(np.median(times))
+        else:
+            target = float(payload.get('center_t', 0.0) or 0.0)
+        self._selected_point = payload
+        self._selected_info.setText(
+            f"Selected: {count} beats in {lo:.0f}-{hi:.0f} ms range | center {rr_center:.0f} ms"
+        )
+        if target > 0:
+            self.seek_requested.emit(target)
+
+    def set_replay_frame(self, data):
+        if data is None or data.shape[0] < 1:
+            return
+        N = data.shape[1]
+        x = np.linspace(0, N / 500.0, N) if N > 0 else []
+        if N > 0:
+            self._strip.set_data(x, data[0].copy())
 
 
 class HistogramCanvas(QWidget):
+    bar_clicked = pyqtSignal(dict)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._data = []
-        self._mode = "rri"
-        self.setMinimumHeight(150)
+        self._items = []
+        self._mode = 'rri'
+        self._selected_index = -1
+        self._bar_rects = []
+        self._bin_payloads = []
+        self._bin_edges = []
+        self._bins = []
+        self.setMinimumHeight(260)
+        self.setMouseTracking(True)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
 
     def set_data(self, rr_values):
-        self._mode = "rri"
-        self._data = [(idx, float(v)) for idx, v in enumerate(rr_values or [])]
+        points = [{'t': float(i), 'rr': float(v)} for i, v in enumerate(rr_values or [])]
+        self.set_histogram_data(points, mode='rri')
+
+    def set_ranked_data(self, ranked_points, mode: str = 'rri'):
+        self.set_histogram_data(ranked_points, mode=mode)
+
+    def set_histogram_data(self, items, mode: str = 'rri'):
+        self._mode = mode
+        normalized = []
+        for item in items or []:
+            if isinstance(item, dict):
+                normalized.append({
+                    't': float(item.get('t', 0.0) or 0.0),
+                    'rr': float(item.get('rr', 0.0) or 0.0),
+                    'label': str(item.get('label', '')),
+                })
+            else:
+                try:
+                    t, rr = item
+                    normalized.append({'t': float(t), 'rr': float(rr), 'label': ''})
+                except Exception:
+                    continue
+        self._items = normalized
         self.update()
 
-    def set_ranked_data(self, ranked_points, mode: str = "rri"):
-        self._mode = mode
-        self._data = list(ranked_points or [])
-        self.update()
+    def _palette(self):
+        if self._mode == 'time':
+            return QColor('#33D6FF'), QColor('#5AA7FF')
+        if self._mode == 'prematurity':
+            return QColor('#FF8A1E'), QColor('#FFB347')
+        if self._mode == 'similarity':
+            return QColor('#8A6CFF'), QColor('#B197FC')
+        return QColor('#2F80ED'), QColor('#66A3FF')
+
+    def _build_histogram(self):
+        values = [float(item['rr']) for item in self._items if float(item.get('rr', 0.0) or 0.0) > 0]
+        if not values:
+            self._bins = []
+            self._bin_edges = []
+            self._bin_payloads = []
+            return np.array([]), np.array([])
+        arr = np.asarray(values, dtype=float)
+        if arr.size < 2:
+            self._bins = [(arr[0], arr[0] + 1.0, 1)]
+            self._bin_edges = [arr[0], arr[0] + 1.0]
+            self._bin_payloads = [list(self._items)]
+            return np.array([1]), np.array(self._bin_edges)
+        bins = int(min(36, max(12, round(math.sqrt(arr.size) * 2))))
+        hist, edges = np.histogram(arr, bins=bins)
+        bin_ids = np.clip(np.digitize(arr, edges, right=False) - 1, 0, bins - 1)
+        payloads = [[] for _ in range(bins)]
+        for item, bidx in zip(self._items, bin_ids):
+            payloads[int(bidx)].append(item)
+        self._bins = list(hist)
+        self._bin_edges = list(edges)
+        self._bin_payloads = payloads
+        return hist, edges
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            for idx, rect in enumerate(self._bar_rects):
+                if rect.contains(event.pos()) and idx < len(self._bin_payloads):
+                    payload = self._payload_for_bin(idx)
+                    self._selected_index = idx
+                    self.bar_clicked.emit(payload)
+                    self.update()
+                    return
+        super().mousePressEvent(event)
+
+    def _payload_for_bin(self, idx: int) -> dict:
+        points = self._bin_payloads[idx] if idx < len(self._bin_payloads) else []
+        if not points:
+            left = self._bin_edges[idx] if idx < len(self._bin_edges) else 0.0
+            right = self._bin_edges[idx + 1] if idx + 1 < len(self._bin_edges) else left
+            return {'index': idx, 'range': (left, right), 'count': 0, 'times': [], 'center_rr': (left + right) / 2.0, 'center_t': 0.0}
+        rr_vals = [float(p['rr']) for p in points]
+        times = [float(p['t']) for p in points]
+        left = self._bin_edges[idx] if idx < len(self._bin_edges) else min(rr_vals)
+        right = self._bin_edges[idx + 1] if idx + 1 < len(self._bin_edges) else max(rr_vals)
+        return {
+            'index': idx,
+            'range': (float(left), float(right)),
+            'count': len(points),
+            'times': times,
+            'center_rr': float(np.median(rr_vals)),
+            'center_t': float(np.median(times)),
+        }
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         painter.fillRect(self.rect(), QColor(COL_BLACK))
         w, h = self.width(), self.height()
 
-        # Grid
-        grid_pen = QPen(QColor("#001100"))
-        grid_pen.setWidth(1)
-        painter.setPen(grid_pen)
-        for gy in [h//4, h//2, 3*h//4]:
-            painter.drawLine(0, gy, w, gy)
+        left, top, right, bottom = 46, 22, 18, 28
+        plot_w = max(1, w - left - right)
+        plot_h = max(1, h - top - bottom)
 
-        if not self._data or len(self._data) < 1:
+        hist, edges = self._build_histogram()
+        if hist.size == 0:
             painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-            painter.drawText(self.rect(), Qt.AlignCenter, "No RR data")
+            painter.drawText(self.rect(), Qt.AlignCenter, 'No RR data')
             return
 
-        values = [float(item[1]) for item in self._data]
-        mn, mx = float(min(values)), float(max(values))
-        if mx <= mn:
-            mx = mn + 1.0
+        counts = hist.astype(int).tolist()
+        max_count = max(counts) if counts else 1
+        if max_count <= 0:
+            max_count = 1
 
-        if self._mode == "time":
-            x_label_left = "early"
-            x_label_right = "late"
-        elif self._mode == "prematurity":
-            x_label_left = "less premature"
-            x_label_right = "more premature"
-        elif self._mode == "similarity":
-            x_label_left = "less similar"
-            x_label_right = "more similar"
-        else:
-            x_label_left = "low RR"
-            x_label_right = "high RR"
+        values = [float(item['rr']) for item in self._items if float(item.get('rr', 0.0) or 0.0) > 0]
+        min_rr = float(min(values))
+        max_rr = float(max(values))
 
-        n = len(self._data)
-        bar_gap = 2
-        bar_w = max(2, int((w - 20) / max(1, n)) - bar_gap)
-        usable_h = max(30, h - 20)
-        max_val = max(values)
-        min_val = min(values)
-        rng = max(max_val - min_val, 1.0)
+        painter.setPen(QPen(QColor('#22324B'), 1))
+        for frac in (0.25, 0.5, 0.75):
+            y = int(top + frac * plot_h)
+            painter.drawLine(left, y, left + plot_w, y)
+        for frac in (0.25, 0.5, 0.75):
+            x = int(left + frac * plot_w)
+            painter.drawLine(x, top, x, top + plot_h)
 
-        # baseline grid
-        painter.setPen(QPen(QColor("#001100")))
-        for gy in [h//4, h//2, 3*h//4]:
-            painter.drawLine(0, gy, w, gy)
+        x_label_left = 'low RR'
+        x_label_right = 'high RR'
+        if self._mode == 'time':
+            x_label_left = 'early'
+            x_label_right = 'late'
+        elif self._mode == 'prematurity':
+            x_label_left = 'less premature'
+            x_label_right = 'more premature'
+        elif self._mode == 'similarity':
+            x_label_left = 'less similar'
+            x_label_right = 'more similar'
 
-        for idx, (_t, rr) in enumerate(self._data[:min(n, 100)]):
-            x = 10 + idx * (bar_w + bar_gap)
-            bar_h = int(((rr - min_val) / rng) * usable_h)
-            y = h - 12 - bar_h
-            if self._mode == "prematurity":
-                # emphasize short RR intervals
-                bar_color = QColor("#ff7a00")
-            elif self._mode == "similarity":
-                bar_color = QColor("#7a66ff")
-            elif self._mode == "time":
-                bar_color = QColor("#33d6ff")
-            else:
-                bar_color = QColor("#4466AA")
-            painter.setBrush(QBrush(bar_color))
-            painter.setPen(QPen(QColor(bar_color.lighter(130)), 1))
-            painter.drawRect(x, y, bar_w, bar_h)
-            if n <= 24 or idx % max(1, n // 12) == 0:
-                painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-                painter.drawText(x, h - 2, str(idx + 1))
+        palette, highlight = self._palette()
+        self._bar_rects = []
+        bin_count = len(counts)
+        gap = 2
+        bar_w = max(2, int((plot_w - gap * (bin_count - 1)) / max(1, bin_count)))
+        x0 = left
+        for idx, count in enumerate(counts):
+            bar_h = int((count / max_count) * max(10, plot_h - 8))
+            x = int(x0 + idx * (bar_w + gap))
+            y = int(top + plot_h - bar_h)
+            rect = QRect(x, y, bar_w, bar_h)
+            self._bar_rects.append(rect)
+            selected = idx == self._selected_index
+            color = highlight if selected else palette
+            alpha = 255 if selected else 180
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), alpha)))
+            painter.setPen(QPen(QColor(color.lighter(130)), 1))
+            painter.drawRect(rect)
+            if selected:
+                painter.setPen(QPen(QColor('#F5D76E'), 2))
+                painter.drawRect(rect.adjusted(0, 0, -1, -1))
+            if count > 0 and (bin_count <= 20 or idx % max(1, bin_count // 10) == 0 or selected):
+                painter.setPen(QPen(QColor(COL_WHITE)))
+                painter.drawText(rect.adjusted(0, -18, 0, -2), Qt.AlignCenter, str(count))
 
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-        painter.drawText(5, 12, x_label_left)
-        painter.drawText(w - 110, 12, x_label_right)
-        painter.drawText(5, h - 2, f"{mn:.0f}ms")
-        painter.drawText(w - 60, h - 2, f"{mx:.0f}ms")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
+        painter.drawText(left, 14, x_label_left)
+        painter.drawText(w - 118, 14, x_label_right)
+        painter.drawText(left, h - 5, f'{min_rr:.0f} ms')
+        painter.drawText(w - 70, h - 5, f'{max_rr:.0f} ms')
+        painter.setPen(QPen(QColor(UI_MUTED)))
+        painter.drawText(left + 110, 14, f'RR Interval Range {min_rr:.0f}-{max_rr:.0f} ms')
 # 12. AF ANALYSIS PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterAFPanel(QWidget):
     def __init__(self, parent=None):
@@ -3982,6 +4934,16 @@ class HolterAFPanel(QWidget):
         self.setStyleSheet(f"background:{COL_BG};")
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -3994,7 +4956,7 @@ class HolterAFPanel(QWidget):
         left_layout.setSpacing(6)
 
         title = QLabel("AF Analysis")
-        title.setStyleSheet(f"color:{COL_BLACK};font-size:13px;font-weight:bold;background:{COL_GREEN};padding:5px;border-radius:4px;")
+        title.setStyleSheet(f"color:#07111F;font-size:13px;font-weight:bold;background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #28E37B, stop:1 #89F7C5);padding:6px 10px;border-radius:6px;")
         left_layout.addWidget(title)
 
         cols = ["Start time", "Duration", "Type"]
@@ -4012,7 +4974,8 @@ class HolterAFPanel(QWidget):
         left_layout.addWidget(no_items)
 
         nav_row = QHBoxLayout()
-        for lbl in ["Analysis Af.AF", "Parameters", "Prev Event", "Next Event", "Remove All", "Remove"]:
+        for lbl in ["AF Analysis", "Parameters", "Prev Event", "Next Event", "Remove All", "Remove"]:
+
             btn = QPushButton(lbl)
             btn.setStyleSheet(_style_btn())
             nav_row.addWidget(btn)
@@ -4072,9 +5035,9 @@ class HolterAFPanel(QWidget):
                     ts.set_data(x[:500], data[i,:500].copy() if 500 < N else data[i].copy())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 13. ST TENDENCY PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterSTPanel(QWidget):
     def __init__(self, parent=None):
@@ -4083,6 +5046,16 @@ class HolterSTPanel(QWidget):
         self._metrics = []
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4141,7 +5114,7 @@ class HolterSTPanel(QWidget):
 
         self._st_canvases = []
         for ch in ["CH1", "CH2", "CH3"]:
-            ch_lbl = QLabel(f"{ch}  0 ─────────────────")
+            ch_lbl = QLabel(f"{ch}  0 -----------------")
             ch_lbl.setStyleSheet(f"color:{COL_GREEN};font-size:10px;border:none;")
             right_layout.addWidget(ch_lbl)
             canvas = STCanvas(height=70)
@@ -4226,9 +5199,9 @@ class STCanvas(QWidget):
             painter.drawText(w - 70, 14, f"{d[min(len(d)//2,len(d)-1)]:.3f}mV")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 14. EDIT EVENT PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterEditEventPanel(QWidget):
     seek_requested = pyqtSignal(float)
@@ -4241,6 +5214,16 @@ class HolterEditEventPanel(QWidget):
         self._selected_payload = {}
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4278,7 +5261,7 @@ class HolterEditEventPanel(QWidget):
             r, c = divmod(i, 2)
             l = QLabel(f"{lbl}:")
             l.setStyleSheet(f"color:{UI_MUTED};font-size:10px;font-weight:bold;letter-spacing:0.5px;border:none;")
-            v = QLabel("—")
+            v = QLabel("-")
             v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
             sf_layout.addWidget(l, r*2, c)
             sf_layout.addWidget(v, r*2+1, c)
@@ -4294,7 +5277,7 @@ class HolterEditEventPanel(QWidget):
 
         # Tool buttons row
         tool_row = QHBoxLayout()
-        for icon in ["↻", "☰", "⏕", "⏖", "⏜", "⏝", "⏟", "⏪"]:
+        for icon in ["Refresh", "Menu", "Prev", "Next", "<<", ">>", "Up", "Down"]:
             btn = QPushButton(icon)
             btn.setStyleSheet(_style_btn())
             btn.setFixedSize(30, 30)
@@ -4378,7 +5361,7 @@ class HolterEditEventPanel(QWidget):
         right_layout.addWidget(annot_box)
 
         nav_row = QHBoxLayout()
-        for lbl in ["⟵ Prev Event", "Next Event ⟶", "Remove All", "Remove"]:
+        for lbl in ["Prev Event", "Next Event", "Remove All", "Remove"]:
             btn = QPushButton(lbl)
             btn.setStyleSheet(_style_btn())
             nav_row.addWidget(btn)
@@ -4492,9 +5475,9 @@ class ClickableSummaryTile(QFrame):
         super().mousePressEvent(event)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 15. EDIT STRIPS PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterEditStripsPanel(QWidget):
     seek_requested = pyqtSignal(float)
@@ -4512,6 +5495,16 @@ class HolterEditStripsPanel(QWidget):
         self._stat_labels = {}
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4532,7 +5525,7 @@ class HolterEditStripsPanel(QWidget):
         left_layout.addWidget(self._ev_table, 1)
 
         nav_row = QHBoxLayout()
-        for lbl in ["⟵", "⟶", "Remove All", "Remove"]:
+        for lbl in ["Prev", "Next", "Remove All", "Remove"]:
             btn = QPushButton(lbl)
             btn.setStyleSheet(_style_btn())
             nav_row.addWidget(btn)
@@ -4558,7 +5551,7 @@ class HolterEditStripsPanel(QWidget):
             row, col = divmod(i, 2)
             l = QLabel(f"{label}:")
             l.setStyleSheet(f"color:{UI_MUTED};font-size:10px;font-weight:bold;letter-spacing:0.5px;border:none;")
-            v = QLabel("—")
+            v = QLabel("-")
             v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
             sf_layout.addWidget(l, row * 2, col)
             sf_layout.addWidget(v, row * 2 + 1, col)
@@ -4574,7 +5567,7 @@ class HolterEditStripsPanel(QWidget):
 
         # Tool buttons
         tool_row = QHBoxLayout()
-        for icon in ["↻", "☰", "⏕", "⏖", "⏜", "⏝", "⏟", "⏪", "⏩"]:
+        for icon in ["Refresh", "Menu", "Prev", "Next", "<<", ">>", "Up", "Down", "End"]:
             btn = QPushButton(icon)
             btn.setStyleSheet(_style_btn())
             btn.setFixedSize(28, 28)
@@ -4668,7 +5661,7 @@ class HolterEditStripsPanel(QWidget):
         self._detail_value.setStyleSheet(
             f"color:{COL_GREEN};font-size:26px;font-weight:bold;border:none;"
         )
-        self._detail_time = QLabel("—")
+        self._detail_time = QLabel("-")
         self._detail_time.setStyleSheet(
             f"color:{COL_TIMESTAMP};font-size:11px;font-weight:bold;border:none;"
         )
@@ -4786,7 +5779,7 @@ class HolterEditStripsPanel(QWidget):
         for key, widget in self._tile_widgets.items():
             card = self._focus_cards.get(key, {})
             widget["hr"].setText(f"HR: {self._format_bpm(card.get('value', 0.0))}")
-            widget["time"].setText(card.get("time") or "—")
+            widget["time"].setText(card.get("time") or "-")
             widget["frame"].setStyleSheet(
                 self._tile_style_active if key == self._selected_focus_key else self._tile_style_normal
             )
@@ -4795,7 +5788,7 @@ class HolterEditStripsPanel(QWidget):
         card = self._focus_cards.get(key) or self._focus_cards.get("max_hr") or {}
         title = card.get("title", "Heart Rate Detail")
         value = card.get("value", 0.0)
-        time_str = card.get("time") or "—"
+        time_str = card.get("time") or "-"
         note = card.get("note", "")
         self._detail_title.setText(title)
         self._detail_value.setText(self._format_bpm(value))
@@ -4874,9 +5867,9 @@ class HolterEditStripsPanel(QWidget):
             self._mini.set_data(x, data[0].copy(), beat_annotations=all_beats, start_sec=start_sec)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 16. REPORT TABLE PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterReportTablePanel(QWidget):
     def __init__(self, parent=None):
@@ -4884,6 +5877,16 @@ class HolterReportTablePanel(QWidget):
         self.setStyleSheet(f"background:{COL_BG};")
         self._build_ui()
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4928,7 +5931,7 @@ class HolterReportTablePanel(QWidget):
                           "0","0","0","0","0%","0","0","0", str(pauses)])
 
         # Total row
-        rows.append(["Total", str(total_beats), "—", "—", "—",
+        rows.append(["Total", str(total_beats), "-", "-", "-",
                       "0","0","0","0","0%","0","0","0", str(total_pauses)])
 
         self._table.setRowCount(len(rows))
@@ -4942,9 +5945,9 @@ class HolterReportTablePanel(QWidget):
                 self._table.setItem(i, j, item)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 17. HOLTER MAIN WINDOW  — Orchestrates everything
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 17. HOLTER MAIN WINDOW  â€” Orchestrates everything
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class HolterMainWindow(QDialog):
     def __init__(self, parent=None, session_dir: str = "",
@@ -4989,7 +5992,7 @@ class HolterMainWindow(QDialog):
             self._live_timer.timeout.connect(self._update_live_ui)
             self._live_timer.start(1000)
 
-    # ── Session loading ────────────────────────────────────────────────────────
+    # â”€â”€ Session loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _load_session(self):
         self._metrics_list = []
@@ -5249,14 +6252,24 @@ class HolterMainWindow(QDialog):
         else:
             self._focus_tab('REPLAY')
 
-    # ── Build UI ───────────────────────────────────────────────────────────────
+    # â”€â”€ Build UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    def _find_template_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "_show_template_card_menu"):
+                return parent
+            parent = parent.parentWidget()
+        window = self.window()
+        if window is not None and hasattr(window, "_show_template_card_menu"):
+            return window
+        return None
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ── Top title bar ──
+        # â”€â”€ Top title bar â”€â”€
         title_bar = QFrame()
         title_bar.setStyleSheet(f"QFrame{{background:{UI_PANEL};border-bottom:1px solid {UI_BORDER};}}")
         title_bar.setFixedHeight(52)
@@ -5282,7 +6295,7 @@ class HolterMainWindow(QDialog):
         )
         tb_layout.addWidget(self._dur_label)
         tb_layout.addStretch()
-        gen_report_btn = QPushButton("📄  Generate Report")
+        gen_report_btn = QPushButton("Generate Report")
         gen_report_btn.setStyleSheet(
             f"QPushButton{{background:{UI_ACCENT};color:{UI_TEXT};border:1px solid #61a8ff;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;}}"
             f"QPushButton:hover{{background:{UI_ACCENT_HOVER};}}"
@@ -5290,7 +6303,7 @@ class HolterMainWindow(QDialog):
         gen_report_btn.setFixedHeight(34)
         gen_report_btn.clicked.connect(self._generate_report)
         tb_layout.addWidget(gen_report_btn)
-        close_btn = QPushButton("✕  Close")
+        close_btn = QPushButton("Close")
         close_btn.setStyleSheet(
             f"QPushButton{{background:{UI_PANEL_ALT};color:{UI_TEXT};border:1px solid {UI_BORDER};border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;}}"
             "QPushButton:hover{background:#2A3D61;}"
@@ -5345,15 +6358,15 @@ class HolterMainWindow(QDialog):
             ab_layout.addWidget(btn)
         main_layout.addWidget(action_bar)
 
-        # ── Status bar (if recording) ──
+        # â”€â”€ Status bar (if recording) â”€â”€
         if self._writer:
             self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
             self._status_bar.stop_requested.connect(self._stop_recording)
             main_layout.addWidget(self._status_bar)
 
-        # ── Summary KPI cards ── (hidden to restore image-1 layout; replay panel has its own 12-lead grid)
+        # â”€â”€ Summary KPI cards â”€â”€ (hidden to restore image-1 layout; replay panel has its own 12-lead grid)
 
-        # ── Body: tabs fill full width (12-lead grid is inside HolterReplayPanel) ──
+        # â”€â”€ Body: tabs fill full width (12-lead grid is inside HolterReplayPanel) â”€â”€
         right_frame = QFrame()
         right_frame.setStyleSheet(f"QFrame{{background:{UI_BG};}}")
         right_layout = QVBoxLayout(right_frame)
@@ -5437,7 +6450,7 @@ class HolterMainWindow(QDialog):
             }}
         """)
 
-        # ── OVERVIEW tab (12-lead scrollable expert view) ──
+        # â”€â”€ OVERVIEW tab (12-lead scrollable expert view) â”€â”€
         self._expert_panel = HolterExpertReviewPanel()
         self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
         self._expert_panel.seek_requested.connect(self._on_seek_requested)
@@ -5458,6 +6471,11 @@ class HolterMainWindow(QDialog):
 
         # Beat Templates
         self._template_panel = HolterBeatTemplatePanel()
+        if self._replay_engine:
+            try:
+                self._template_panel.set_replay_engine(self._replay_engine)
+            except Exception:
+                pass
         self._template_panel.update_from_metrics(self._metrics_list, self._summary)
         self._template_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._template_panel, "TEMPLATE")
@@ -5465,6 +6483,7 @@ class HolterMainWindow(QDialog):
         # Histogram
         self._hist_panel = HolterHistogramPanel()
         self._hist_panel.update_from_metrics(self._metrics_list)
+        self._hist_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
 
@@ -5509,7 +6528,7 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._report_table_panel, "REPORT TABLE")
 
         # Expert Review (OVERVIEW tab) already added as first tab above
-        # kept here as comment for clarity – see OVERVIEW tab creation at top of tabs section
+        # kept here as comment for clarity â€“ see OVERVIEW tab creation at top of tabs section
 
         # HRV Analysis
         self._hrv_panel = HolterHRVPanel()
@@ -5577,7 +6596,7 @@ class HolterMainWindow(QDialog):
             self._analysis_state.setText(f"Focused view: {self._tabs.tabText(self._tabs.currentIndex())}")
 
 
-    # ── Callbacks ──────────────────────────────────────────────────────────────
+    # â”€â”€ Callbacks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _current_replay_window_sec(self) -> float:
         panel = getattr(self, '_replay_panel', None)
@@ -5965,6 +6984,8 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
         super().closeEvent(event)
+
+
 
 
 
