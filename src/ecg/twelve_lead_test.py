@@ -219,6 +219,36 @@ def generate_realistic_ecg_waveform(duration_seconds=10, sampling_rate=500, hear
     
     return ecg, t
 
+
+def _coerce_numeric_value(value):
+    """Best-effort conversion for metric strings like '50', ' 50', or '50 BPM'."""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            cleaned = value.strip().replace("BPM", "").replace("bpm", "")
+            if cleaned in ("", "--", "0", "0.0", "Analyzing Rhythm..."):
+                return None
+            value = cleaned
+        numeric = float(value)
+        if np.isnan(numeric) or np.isinf(numeric) or numeric <= 0:
+            return None
+        return numeric
+    except Exception:
+        return None
+
+
+def _bpm_rhythm_label(heart_rate):
+    """Map BPM to the simple rhythm label we want shown in the UI."""
+    hr = _coerce_numeric_value(heart_rate)
+    if hr is None:
+        return None
+    if hr > 100:
+        return "Tachycardia"
+    if hr < 60:
+        return "Bradycardia"
+    return "Normal Sinus Rhythm"
+
 # ============================================================================
 # NEW PACKET-BASED SERIAL PARSING LOGIC
 # Serial communication code moved to ecg.serial module
@@ -4463,10 +4493,29 @@ class ECGTestPage(QWidget):
                 self._last_analysis = {}
             self._last_analysis['arrhythmias'] = arrhythmias
 
+            bpm_label = _bpm_rhythm_label(hr_val)
+            significant_keywords = (
+                "Atrial Fibrillation",
+                "Atrial Flutter",
+                "Ventricular Tachycardia",
+                "Ventricular Fibrillation",
+                "Asystole",
+                "Bundle Branch",
+                "Pre-excitation",
+                "AV Block",
+                "Heart Block",
+            )
+            has_significant_rhythm = any(
+                any(keyword.lower() in str(d).lower() for keyword in significant_keywords)
+                for d in arrhythmias
+            )
+
             # Ensure the UI string reflects clinical findings
             bbb_dx = [d for d in arrhythmias if any(
                 kw in d for kw in ('Bundle Branch', 'Wide QRS', 'Pre-excitation'))]
-            if bbb_dx:
+            if bpm_label and not has_significant_rhythm:
+                self._latest_rhythm_interpretation = bpm_label
+            elif bbb_dx:
                 clean_lines = [line for line in summary_lines if 'Wide QRS' not in line]
                 clean_lines.extend(bbb_dx)
                 self._latest_rhythm_interpretation = ", ".join(clean_lines)
@@ -5834,13 +5883,13 @@ class ECGTestPage(QWidget):
                          st_segment = 0.0 # fallback
 
                     # --- Arrhythmia detection using current metrics ---
-                    # Simple check since full logic needs raw peaks
-                    if heart_rate and heart_rate > 100:
-                        arrhythmia_result = "Tachycardia"
-                    elif heart_rate and heart_rate < 60:
-                        arrhythmia_result = "Bradycardia"
-                    else:
-                        arrhythmia_result = "Normal Sinus Rhythm"
+                    # Keep the detailed window BPM-driven so HR 50 shows Bradycardia,
+                    # HR > 100 shows Tachycardia, and the normal range shows NSR.
+                    arrhythmia_result = _bpm_rhythm_label(heart_rate)
+                    if arrhythmia_result is None:
+                        arrhythmia_result = _bpm_rhythm_label(getattr(self, 'last_heart_rate', None))
+                    if arrhythmia_result is None:
+                        arrhythmia_result = getattr(self, '_latest_rhythm_interpretation', "Analyzing Rhythm...")
                         
                     arrhythmia_label.setText(arrhythmia_result)
                     self._latest_rhythm_interpretation = arrhythmia_result

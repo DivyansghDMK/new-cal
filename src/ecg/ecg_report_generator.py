@@ -1697,6 +1697,8 @@ def _normalize_report_conclusions(conclusions):
             continue
         if " (HR" in s:
             s = s.split(" (HR", 1)[0].strip()
+        if s.lower().startswith(("bradycardia - hr:", "tachycardia - hr:")):
+            s = s.split(" - HR", 1)[0].strip()
         aliases = {
             "possible atrial flutter": "Atrial Flutter",
             "atrial flutter": "Atrial Flutter",
