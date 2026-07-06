@@ -340,8 +340,9 @@ class HolterReplayEngine:
                 beat_class_totals[cls] = beat_class_totals.get(cls, 0) + int(count or 0)
             template_counts.append(int(m.get('template_count', 0) or 0))
 
-        # ST per-lead averages
+        # ST and T per-lead averages
         st_vals = [m.get('st_mv', 0) for m in self._metrics]
+        t_vals = [m.get('t_mv', 0) for m in self._metrics]
 
         # HR per hour
         hourly_hr: Dict[int, List[float]] = {}
@@ -394,6 +395,7 @@ class HolterReplayEngine:
             'brady_beats': total_brady,
             'pauses': total_pauses,
             'avg_st_mv': round(float(np.mean(st_vals)), 4) if st_vals else 0.0,
+            'avg_t_mv': round(float(np.mean(t_vals)), 4) if t_vals else 0.0,
             'patient_info': self.patient_info,
             'chunks_analyzed': len(self._metrics),
             'beat_class_totals': beat_class_totals,

@@ -9,6 +9,7 @@ Classes:
 """
 
 import numpy as np
+from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -27,8 +28,12 @@ except ImportError:
     from ecg.holter.holter_ui import ECGStripCanvas, MagnifierOverlay
 
 
+from PyQt5.QtCore import pyqtSignal
+
 class FullDisclosureOverlay(QWidget):
     """Transparent overlay to draw a fixed-width square selection box over the channels."""
+    
+    double_clicked = pyqtSignal(float, float)  # Emits start_sec, duration_sec
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,6 +81,14 @@ class FullDisclosureOverlay(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             self._emit_selection()
+            
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            width = self._strip_length_sec * self._pixels_per_sec
+            start = self._selection_center_x - width / 2.0
+            start = max(48, min(start, self.width() - width))
+            start_sec = max(0.0, (start - 48) / self._pixels_per_sec)
+            self.double_clicked.emit(start_sec, self._strip_length_sec)
 
     def _emit_selection(self):
         if self.on_selection_made and self._selection_center_x is not None:
@@ -230,17 +243,10 @@ class HolterFullDisclosureDialog(QDialog):
 
         top_layout.addStretch()
 
-        btn_close = QPushButton("X  Return")
-        btn_close.setStyleSheet("""
-            QPushButton {
-                background: #3d0000; color: #ff6b6b;
-                border: 1px solid #aa0000; padding: 6px 16px;
-                font-weight: bold; font-size: 13px; border-radius: 5px;
-            }
-            QPushButton:hover { background: #6b0000; color: white; }
-        """)
-        btn_close.clicked.connect(self.accept)
-        top_layout.addWidget(btn_close)
+        # Real-time display right of time tabs
+        self.lbl_real_time = QLabel("Real Time: --:--:--")
+        self.lbl_real_time.setStyleSheet(f"color: {COL_GREEN}; font-weight: bold; font-size: 13px;")
+        top_layout.addWidget(self.lbl_real_time)
         layout.addWidget(top_bar)
 
         canvas_frame = QFrame()
@@ -278,6 +284,7 @@ class HolterFullDisclosureDialog(QDialog):
         self.overlay = FullDisclosureOverlay(canvas_frame)
         self.overlay.set_strip_length(self._strip_length)
         self.overlay.on_selection_made = self._on_selection
+        self.overlay.double_clicked.connect(self._on_overlay_double_clicked)
         # Enable mouse on overlay initially
         self.overlay.set_mouse_enabled(True)
         canvas_frame.installEventFilter(self)
@@ -354,9 +361,14 @@ class HolterFullDisclosureDialog(QDialog):
         bot_layout.addWidget(self.btn_caliper)
         bot_layout.addWidget(self.btn_magnify)
 
+        # Arrhythmia indicator left of Recording label
+        self.lbl_arrhythmia = QLabel("")
+        self.lbl_arrhythmia.setStyleSheet("color: #ff6b6b; font-weight: bold; font-size: 12px;")
+        bot_layout.addStretch()
+        bot_layout.addWidget(self.lbl_arrhythmia)
+        
         self.lbl_dur = QLabel(f"Recording: {self._engine._sec_to_hms(self._engine.duration_sec)}")
         self.lbl_dur.setStyleSheet("color: #8ab4d0; font-size: 12px;")
-        bot_layout.addStretch()
         bot_layout.addWidget(self.lbl_dur)
         layout.addWidget(bot_bar)
 
@@ -445,12 +457,40 @@ class HolterFullDisclosureDialog(QDialog):
         # Always enable mouse on overlay for dragging
         self.overlay.set_mouse_enabled(True)
         
-        self._current_start = 0.0
+        # When "Full disc" is selected, show the last part of the recording
+        if "Full disc" in text:
+            self._current_start = max(0.0, self._engine.duration_sec - self._window_sec)
+        else:
+            self._current_start = 0.0
+            
         self._update_scrollbar_range()
-        self.time_scrollbar.setValue(0)
-        self._update_canvases(0.0)
+        self.time_scrollbar.setValue(int(self._current_start * 100))
+        self._update_canvases(self._current_start)
         
         self.lbl_dur.setText(f"Recording: {self._engine._sec_to_hms(self._engine.duration_sec)}")
+
+    def _update_time_and_arrhythmia_labels(self, start_sec: float, end_sec: float):
+        # Update real-time display
+        if hasattr(self._engine, '_reader') and hasattr(self._engine._reader, 'start_time'):
+            start_real = datetime.fromtimestamp(self._engine._reader.start_time + start_sec)
+            end_real = datetime.fromtimestamp(self._engine._reader.start_time + end_sec)
+            self.lbl_real_time.setText(f"Real Time: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
+        
+        # Update arrhythmia indicator
+        arrhythmia_label = ""
+        if hasattr(self._engine, '_structured_events'):
+            # Find events in current time window
+            events_in_window = []
+            for ev in self._engine._structured_events:
+                ts = float(ev.get('timestamp', 0.0) or 0.0)
+                if start_sec <= ts <= end_sec:
+                    events_in_window.append(ev)
+            if events_in_window:
+                # Take earliest event
+                earliest = sorted(events_in_window, key=lambda x: float(x.get('timestamp', 0.0) or 0.0))[0]
+                ts_real = datetime.fromtimestamp(self._engine._reader.start_time + float(earliest.get('timestamp', 0.0) or 0.0))
+                arrhythmia_label = f"Arrhythmia: {earliest.get('label', 'Event')} at {ts_real.strftime('%H:%M:%S')}"
+        self.lbl_arrhythmia.setText(arrhythmia_label)
 
     def _update_canvases(self, start_sec: float):
         eff_dur = self._engine.duration_sec
@@ -459,6 +499,7 @@ class HolterFullDisclosureDialog(QDialog):
         end_sec = start_sec + self._window_sec
 
         self.lbl_time.setText(f"Time:  {self._engine._sec_to_hms(start_sec)}")
+        self._update_time_and_arrhythmia_labels(start_sec, end_sec)
 
         read_end_sec = min(end_sec, eff_dur)
         data = self._reader.read_range(start_sec, read_end_sec)
@@ -510,3 +551,119 @@ class HolterFullDisclosureDialog(QDialog):
     def _on_selection(self, start_offset, duration):
         sel_abs = self._current_start + start_offset
         print(f"[Full Disclosure] Strip selected: {duration:.1f}s at {sel_abs:.2f}s")
+        
+    def _on_overlay_double_clicked(self, start_sec, duration):
+        """Open expanded view for the selected time range."""
+        dialog = ExpandedViewDialog(self._engine, self._current_start + start_sec, duration, self)
+        dialog.exec_()
+
+
+class ExpandedViewDialog(QDialog):
+    """Expanded 12-lead view for selected time range."""
+    
+    def __init__(self, replay_engine, start_sec: float, duration: float, parent=None):
+        super().__init__(parent)
+        self._engine = replay_engine
+        self._reader = replay_engine._reader
+        self._start_sec = start_sec
+        self._duration = duration
+        
+        self.setWindowTitle("Expanded View")
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
+        self.setWindowState(Qt.WindowMaximized)
+        
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.resize(screen.availableGeometry().size())
+            
+        self.setStyleSheet(f"QDialog {{ background: {COL_BLACK}; }}")
+        
+        self._build_ui()
+        self._update_canvases()
+        
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+        
+        top_bar = QFrame()
+        top_bar.setStyleSheet(f"background: {COL_DARK}; border-bottom: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
+        top_bar.setFixedHeight(44)
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(14, 4, 14, 4)
+        top_layout.setSpacing(12)
+        
+        start_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec)
+        end_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec + self._duration)
+        self.lbl_time = QLabel(f"Time Range: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
+        self.lbl_time.setStyleSheet(f"color: {COL_GREEN}; font-weight: bold; font-size: 15px;")
+        top_layout.addWidget(self.lbl_time)
+        
+        top_layout.addStretch()
+        
+        btn_close = QPushButton("Close")
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background: #0d1b2a; color: #a0c4e8;
+                border: 1px solid #2a5a6d; padding: 5px 14px;
+                font-size: 13px; font-weight: bold; border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: #162a3a;
+            }
+        """)
+        btn_close.clicked.connect(self.accept)
+        top_layout.addWidget(btn_close)
+        
+        layout.addWidget(top_bar)
+        
+        canvas_frame = QFrame()
+        canvas_frame.setStyleSheet(f"background: {COL_BLACK}; border: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
+        self.canvas_layout = QVBoxLayout(canvas_frame)
+        self.canvas_layout.setContentsMargins(8, 12, 8, 12)
+        self.canvas_layout.setSpacing(6)
+        
+        self._canvases = []
+        leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        for lead in leads:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            
+            lbl = QLabel(lead)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setStyleSheet(
+                f"color: {COL_GREEN}; font-weight: bold; font-size: 16px;"
+                f" background: #0a0f18; border-right: 1px solid {COL_GREEN_DRK};"
+                f" padding-right: 8px; padding-top: 4px; padding-bottom:4px;"
+            )
+            lbl.setFixedWidth(52)
+            
+            canvas = ECGStripCanvas(canvas_frame, height=80, color=COL_GREEN, lead_name=lead)
+            canvas.set_paper_speed(25)
+            canvas.set_gain(2.0)  # Higher gain for expanded view
+            canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            
+            row.addWidget(lbl)
+            row.addWidget(canvas, 1)
+            self.canvas_layout.addLayout(row)
+            self._canvases.append(canvas)
+            
+        layout.addWidget(canvas_frame, 1)
+        
+    def _update_canvases(self):
+        end_sec = min(self._start_sec + self._duration, self._engine.duration_sec)
+        data = self._reader.read_range(self._start_sec, end_sec)
+        expected_len = int(self._duration * self._engine.fs)
+        
+        for i, c in enumerate(self._canvases):
+            if i < data.shape[0] and data.shape[1] > 0:
+                d_i = data[i]
+                if len(d_i) > expected_len:
+                    d_i = d_i[:expected_len]
+                elif len(d_i) < expected_len:
+                    pad_val = d_i[-1] if len(d_i) > 0 else 0
+                    d_i = np.pad(d_i, (0, expected_len - len(d_i)), 'constant', constant_values=pad_val)
+                c.set_data(d_i)
+            else:
+                c.set_data(np.zeros(expected_len))
