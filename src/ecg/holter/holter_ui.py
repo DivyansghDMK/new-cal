@@ -42,7 +42,7 @@ from PyQt5.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QSizePolicy, QScrollArea, QGridLayout, QSpinBox, QMessageBox,
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog, QDoubleSpinBox,
-    QAbstractItemView, QToolButton, QButtonGroup, QMenu, QScrollBar)
+    QAbstractItemView, QToolButton, QButtonGroup, QMenu, QScrollBar, QStackedWidget)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect, QObject, QEvent
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
@@ -400,25 +400,6 @@ def _show_message_box(parent, icon, title, text, buttons=QMessageBox.Ok, default
     msg_box.setText(text)
     msg_box.setStandardButtons(buttons)
     msg_box.setDefaultButton(default_button)
-    # Apply stylesheet for visibility against dark backgrounds
-    msg_box.setStyleSheet(f"""
-        QLabel {{
-            color: {COL_WHITE};
-        }}
-        QPushButton {{
-            background-color: {UI_PANEL_ALT};
-            color: {UI_TEXT};
-            border: 1px solid {UI_BORDER};
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 12px;
-            font-weight: bold;
-            min-width: 80px;
-        }}
-        QPushButton:hover {{
-            background-color: {UI_ACCENT};
-        }}
-    """)
     return msg_box.exec_()
 
 
@@ -2430,19 +2411,24 @@ class ECGStripCanvas(QWidget):
         if self._data.size < 2:
             return np.array([]), 0.0, 1.0
         sig = np.asarray(self._data, dtype=float)
-        
-        # Calculate the true baseline of the raw signal
         baseline = float(np.median(sig))
         
-        # Apply gain relative to the baseline
-        d = (sig - baseline) * self._gain + baseline
-        
-        # Universally center the signal for ALL leads. 
-        # By dynamically setting the minimum bound relative to the baseline,
-        # we ensure the baseline always maps perfectly to the vertical center (y = 0.5 * h),
-        # while strictly preserving the 4096 amplitude uncropped scale.
-        mn = baseline - 2048.0
-        return d, mn, 4096.0
+        if self.lead_name == "aVR":
+            # aVR: shift so baseline centers at -2048
+            target_center = -2048.0
+            shift = target_center - baseline
+            d = sig + shift
+            mn = -4096.0
+            rng = 4096.0
+        else:
+            # All other leads: shift so baseline centers at 2048
+            target_center = 2048.0
+            shift = target_center - baseline
+            d = sig + shift
+            mn = 0.0
+            rng = 4096.0
+            
+        return d, mn, rng
 
     def _x_to_index(self, x: int, width: int, n: int) -> int:
         if n <= 1 or width <= 1:
@@ -3407,7 +3393,7 @@ class _TemplateMetricCard(QFrame):
 
 
 class TemplateCardWidget(QFrame):
-    clicked = pyqtSignal(object)
+    clicked = pyqtSignal(object, object)  # (card, event)
     template_id_changed = pyqtSignal(object, str)
     class_changed = pyqtSignal(object, str)
     viewed_changed = pyqtSignal(object, bool)
@@ -3567,7 +3553,7 @@ class TemplateCardWidget(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked.emit(self)
+            self.clicked.emit(self, event)
         return super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
@@ -3580,7 +3566,7 @@ class TemplateCardWidget(QFrame):
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseButtonPress and getattr(event, "button", lambda: None)() == Qt.LeftButton:
-            self.clicked.emit(self)
+            self.clicked.emit(self, event)
         elif event.type() == QEvent.ContextMenu:
             host = self._find_template_host()
             if host is not None and hasattr(host, "_show_template_card_menu"):
@@ -4159,13 +4145,44 @@ class HolterBeatTemplatePanel(QWidget):
         menu.addAction("Overlay beat analysis").triggered.connect(lambda: self._open_overlay_analysis(card))
         menu.addAction("Lorenz plots").triggered.connect(lambda: self._open_lorenz_plots(card))
         menu.exec_(global_pos)
-    def _on_card_clicked(self, card):
+    def _on_card_clicked(self, card, event):
         template_key = str(getattr(card, "_template_key", "") or "")
-        if template_key:
+        if not template_key:
+            return
+        
+        modifiers = event.modifiers() if event else Qt.NoModifier
+        ctrl_pressed = bool(modifiers & Qt.ControlModifier)
+        shift_pressed = bool(modifiers & Qt.ShiftModifier)
+        
+        filtered = self._filtered_rows()
+        filtered_keys = [self._row_key(row) for row in filtered]
+        
+        if ctrl_pressed:
+            # Toggle selection
+            current = list(self._selected_template_keys)
+            if template_key in current:
+                current.remove(template_key)
+            else:
+                current.append(template_key)
+            self._set_selected_keys(current)
+        elif shift_pressed and self._selected_template_keys:
+            # Range selection
+            last_key = self._selected_template_keys[-1]
+            try:
+                last_idx = filtered_keys.index(last_key)
+                curr_idx = filtered_keys.index(template_key)
+                start = min(last_idx, curr_idx)
+                end = max(last_idx, curr_idx)
+                self._set_selected_keys(filtered_keys[start:end+1])
+            except ValueError:
+                self._set_selected_keys([template_key])
+        else:
+            # Single selection
             self._set_selected_keys([template_key])
+        
         row = self._row_for_key(template_key)
-        if template_key:
-            self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0) if row is not None else 0.0)
+        if template_key and row and not ctrl_pressed and not shift_pressed:
+            self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0))
 
     def _render_cards(self):
         while self._cards_layout.count():
@@ -5211,12 +5228,34 @@ class HolterAFPanel(QWidget):
 # -----------------------------------------------------------------------------
 
 class HolterSTPanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, replay_engine=None):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._metrics = []
         self._current_tendency_mode = "ST"
+        self._replay_engine = replay_engine
+        self._current_view_mode = "ST"  # can be "ST", "T", or "TEND_CHART"
+        
+        # Tend chart variables
+        self._tend_current_tendency_mode = "ST"
+        self._tend_scan_start_index = 0
+        self._tend_is_scanning = False
+        self._tend_current_metric_index = 0
+        self._tend_auto_update = False
+        self._tend_adjust_k_by_hr = True
+        self._tend_st_threshold_mv = 0.1
+        self._tend_i_offset_ms = -120
+        self._tend_j_offset_ms = 80
+        self._tend_k_offset_ms = 120
+        self._tend_default_i_offset_ms = -120
+        self._tend_default_j_offset_ms = 80
+        self._tend_default_k_offset_ms = 120
+        self._tend_scan_results = []
+        
         self._build_ui()
+        
+    def set_replay_engine(self, replay_engine):
+        self._replay_engine = replay_engine
 
     def _find_template_host(self):
         parent = self.parentWidget()
@@ -5229,9 +5268,39 @@ class HolterSTPanel(QWidget):
             return window
         return None
     def _build_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
+
+        # Mode row (always visible)
+        mode_row = QHBoxLayout()
+        self._tend_chart_btn = QPushButton("Tend chart")
+        self._tend_chart_btn.setStyleSheet(_style_btn())
+        self._st_btn = QPushButton("ST")
+        self._st_btn.setStyleSheet(_style_active_btn())
+        self._st_btn.setFixedWidth(50)
+        self._t_btn = QPushButton("T")
+        self._t_btn.setStyleSheet(_style_btn())
+        self._t_btn.setFixedWidth(40)
+        
+        self._tend_chart_btn.clicked.connect(lambda: self._set_view_mode("TEND_CHART"))
+        self._st_btn.clicked.connect(lambda: self._set_view_mode("ST"))
+        self._t_btn.clicked.connect(lambda: self._set_view_mode("T"))
+
+        mode_row.addWidget(self._tend_chart_btn)
+        mode_row.addWidget(self._st_btn)
+        mode_row.addWidget(self._t_btn)
+        mode_row.addStretch()
+        main_layout.addLayout(mode_row)
+
+        # Main content stacked widget
+        self._main_stack = QStackedWidget()
+        
+        # --- Normal view (ST/T with left ECG strips) ---
+        normal_view_widget = QWidget()
+        normal_layout = QHBoxLayout(normal_view_widget)
+        normal_layout.setContentsMargins(0, 0, 0, 0)
+        normal_layout.setSpacing(8)
 
         # Left: ECG strip + controls
         left = QWidget()
@@ -5275,30 +5344,14 @@ class HolterSTPanel(QWidget):
             btn.setFixedHeight(30)
             nav_row.addWidget(btn)
         left_layout.addLayout(nav_row)
-        layout.addWidget(left, 3)
+        normal_layout.addWidget(left, 3)
 
         # Right: ST tendency charts + conclusion
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
-
-        mode_row = QHBoxLayout()
-        self._st_btn = QPushButton("ST")
-        self._st_btn.setStyleSheet(_style_active_btn())
-        self._st_btn.setFixedWidth(50)
-        self._t_btn = QPushButton("T")
-        self._t_btn.setStyleSheet(_style_btn())
-        self._t_btn.setFixedWidth(40)
         
-        self._st_btn.clicked.connect(lambda: self._set_tendency_mode("ST"))
-        self._t_btn.clicked.connect(lambda: self._set_tendency_mode("T"))
-
-        mode_row.addWidget(self._st_btn)
-        mode_row.addWidget(self._t_btn)
-        mode_row.addStretch()
-        right_layout.addLayout(mode_row)
-
         self._st_title = QLabel("ST tendency(mV)")
         self._st_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
         right_layout.addWidget(self._st_title)
@@ -5342,23 +5395,210 @@ class HolterSTPanel(QWidget):
             save_row.addWidget(btn)
         cf_layout.addLayout(save_row)
         right_layout.addWidget(conclusion_frame)
-        layout.addWidget(right, 2)
+        normal_layout.addWidget(right, 2)
+        
+        # --- Tend chart view widget ---
+        tend_widget = QWidget()
+        tend_layout = QVBoxLayout(tend_widget)
+        tend_layout.setContentsMargins(0,0,0,0)
+        tend_layout.setSpacing(4)
+        
+        # Tend chart toolbar
+        toolbar = QHBoxLayout()
+        
+        self._tend_start_btn = QPushButton("Start")
+        self._tend_start_btn.setStyleSheet(_style_btn())
+        self._tend_start_btn.setFixedHeight(32)
+        self._tend_start_btn.clicked.connect(self._tend_on_start_scan)
+        toolbar.addWidget(self._tend_start_btn)
+        
+        self._tend_confirm_btn = QPushButton("Confirm")
+        self._tend_confirm_btn.setStyleSheet(_style_btn())
+        self._tend_confirm_btn.setFixedHeight(32)
+        self._tend_confirm_btn.clicked.connect(self._tend_on_confirm_scan)
+        toolbar.addWidget(self._tend_confirm_btn)
+        
+        self._tend_default_btn = QPushButton("Default")
+        self._tend_default_btn.setStyleSheet(_style_btn())
+        self._tend_default_btn.setFixedHeight(32)
+        self._tend_default_btn.clicked.connect(self._tend_on_reset_defaults)
+        toolbar.addWidget(self._tend_default_btn)
+        
+        self._tend_auto_update_btn = QPushButton("Update automatically")
+        self._tend_auto_update_btn.setCheckable(True)
+        self._tend_auto_update_btn.setStyleSheet(_style_btn())
+        self._tend_auto_update_btn.setFixedHeight(32)
+        self._tend_auto_update_btn.clicked.connect(self._tend_on_toggle_auto_update)
+        toolbar.addWidget(self._tend_auto_update_btn)
+        
+        self._tend_adjust_k_btn = QPushButton("Adjust K by HR")
+        self._tend_adjust_k_btn.setCheckable(True)
+        self._tend_adjust_k_btn.setChecked(True)
+        self._tend_adjust_k_btn.setStyleSheet(_style_btn())
+        self._tend_adjust_k_btn.setFixedHeight(32)
+        self._tend_adjust_k_btn.clicked.connect(self._tend_on_toggle_adjust_k)
+        toolbar.addWidget(self._tend_adjust_k_btn)
+        
+        threshold_lbl = QLabel("ST Threshold (mV):")
+        threshold_lbl.setStyleSheet(f"color:{COL_GREEN};")
+        toolbar.addWidget(threshold_lbl)
+        self._tend_threshold_spin = QDoubleSpinBox()
+        self._tend_threshold_spin.setRange(0.01, 1.0)
+        self._tend_threshold_spin.setSingleStep(0.01)
+        self._tend_threshold_spin.setValue(self._tend_st_threshold_mv)
+        self._tend_threshold_spin.valueChanged.connect(self._tend_on_threshold_changed)
+        self._tend_threshold_spin.setFixedHeight(32)
+        self._tend_threshold_spin.setStyleSheet(f"QDoubleSpinBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        toolbar.addWidget(self._tend_threshold_spin)
+        
+        toolbar.addStretch()
+        tend_layout.addLayout(toolbar)
+        
+        # Tend chart main content
+        main_content = QHBoxLayout()
+        
+        # Left: HR graph + ECG strip
+        left_panel = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel)
+        
+        # HR graph
+        hr_frame = QFrame()
+        hr_frame.setStyleSheet(f"background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;")
+        hr_layout = QVBoxLayout(hr_frame)
+        self._tend_hr_title = QLabel("Entire HR Graph")
+        self._tend_hr_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        hr_layout.addWidget(self._tend_hr_title)
+        self._tend_hr_canvas = HRTrendCanvas()
+        self._tend_hr_canvas.clicked.connect(self._tend_on_hr_canvas_clicked)
+        hr_layout.addWidget(self._tend_hr_canvas)
+        left_panel_layout.addWidget(hr_frame, 1)
+        
+        # ECG strip with I/J/K markers
+        ecg_frame = QFrame()
+        ecg_frame.setStyleSheet(f"background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;")
+        ecg_layout = QVBoxLayout(ecg_frame)
+        self._tend_ecg_title = QLabel("ECG Strip (drag I/J/K markers)")
+        self._tend_ecg_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        ecg_layout.addWidget(self._tend_ecg_title)
+        self._tend_ecg_strip = STTMarkerCanvas(height=200)
+        self._tend_ecg_strip.markerMoved.connect(self._tend_on_marker_moved)
+        ecg_layout.addWidget(self._tend_ecg_strip)
+        left_panel_layout.addWidget(ecg_frame, 1)
+        
+        main_content.addWidget(left_panel, 1)
+        
+        # Right: Tendency charts
+        right_panel = QWidget()
+        right_panel_layout = QVBoxLayout(right_panel)
+        
+        mode_row_tend = QHBoxLayout()
+        self._tend_st_mode_btn = QPushButton("ST")
+        self._tend_st_mode_btn.setStyleSheet(_style_active_btn())
+        self._tend_t_mode_btn = QPushButton("T")
+        self._tend_t_mode_btn.setStyleSheet(_style_btn())
+        for btn in [self._tend_st_mode_btn, self._tend_t_mode_btn]:
+            btn.setFixedHeight(32)
+            mode_row_tend.addWidget(btn)
+        mode_row_tend.addStretch()
+        right_panel_layout.addLayout(mode_row_tend)
+        
+        self._tend_tendency_title = QLabel("ST Trends")
+        self._tend_tendency_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        right_panel_layout.addWidget(self._tend_tendency_title)
+        
+        self._tend_tendency_scroll = QScrollArea()
+        self._tend_tendency_scroll.setWidgetResizable(True)
+        self._tend_tendency_scroll.setStyleSheet(f"QScrollArea{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+        
+        self._tend_tendency_content = QWidget()
+        self._tend_tendency_layout = QVBoxLayout(self._tend_tendency_content)
+        self._tend_tendency_content.setStyleSheet("background:transparent;")
+        self._tend_tendency_layout.setContentsMargins(4,4,4,4)
+        self._tend_tendency_layout.setSpacing(4)
+        
+        lead_names_tend = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        self._tend_tendency_canvases = []
+        for name in lead_names_tend:
+            lbl = QLabel(f"Lead {name}")
+            lbl.setStyleSheet(f"color:{COL_GREEN};font-size:10px;border:none;")
+            self._tend_tendency_layout.addWidget(lbl)
+            canvas = TendencyCanvas(height=70)
+            canvas.set_threshold(self._tend_st_threshold_mv)
+            canvas.clicked.connect(lambda idx=len(self._tend_tendency_canvases), c=canvas: self._tend_on_tendency_clicked(idx, c))
+            self._tend_tendency_layout.addWidget(canvas)
+            self._tend_tendency_canvases.append(canvas)
+        
+        self._tend_tendency_scroll.setWidget(self._tend_tendency_content)
+        right_panel_layout.addWidget(self._tend_tendency_scroll, 1)
+        
+        main_content.addWidget(right_panel, 2)
+        tend_layout.addLayout(main_content, 1)
+        
+        # Connect tend chart mode buttons
+        self._tend_st_mode_btn.clicked.connect(lambda: self._tend_set_mode("ST"))
+        self._tend_t_mode_btn.clicked.connect(lambda: self._tend_set_mode("T"))
+        
+        # Add widgets to main stack
+        self._main_stack.addWidget(normal_view_widget)
+        self._main_stack.addWidget(tend_widget)
+        self._main_stack.setCurrentIndex(0)
+        
+        main_layout.addWidget(self._main_stack, 1)
+
+    def _set_view_mode(self, mode):
+        self._current_view_mode = mode
+        
+        # Update button styles
+        self._tend_chart_btn.setStyleSheet(_style_btn())
+        self._st_btn.setStyleSheet(_style_btn())
+        self._t_btn.setStyleSheet(_style_btn())
+        
+        if mode == "TEND_CHART":
+            self._tend_chart_btn.setStyleSheet(_style_active_btn())
+            self._main_stack.setCurrentIndex(1)
+            self._tend_update_hr_graph()
+            self._tend_update_tendency_graphs()
+            if self._replay_engine:
+                self._tend_update_ecg_strip()
+        elif mode == "ST":
+            self._st_btn.setStyleSheet(_style_active_btn())
+            self._main_stack.setCurrentIndex(0)
+            self._set_tendency_mode("ST")
+        elif mode == "T":
+            self._t_btn.setStyleSheet(_style_active_btn())
+            self._main_stack.setCurrentIndex(0)
+            self._set_tendency_mode("T")
 
     def _set_tendency_mode(self, mode: str):
         self._current_tendency_mode = mode
         if mode == "ST":
-            self._st_btn.setStyleSheet(_style_active_btn())
-            self._t_btn.setStyleSheet(_style_btn())
             self._st_title.setText("ST tendency(mV)")
         else:
-            self._t_btn.setStyleSheet(_style_active_btn())
-            self._st_btn.setStyleSheet(_style_btn())
             self._st_title.setText("T tendency(mV)")
         self._refresh_plot()
 
-    def update_from_metrics(self, metrics_list: list):
+    def set_replay_frame(self, data):
+        if self._current_view_mode in ["ST", "T"]:
+            if data is None or data.shape[0] < 1: return
+            N = data.shape[1]
+            fs = 500.0
+            n_samples = min(N, int(10 * fs))
+            x = np.linspace(0, n_samples/fs, n_samples) if n_samples > 0 else []
+            if n_samples > 0:
+                lead2_idx = 1 if data.shape[0] > 1 else 0
+                self._mini_strip.set_data(x, data[lead2_idx, :n_samples].copy())
+                for i, ts in enumerate(self._ch_strips):
+                    if i < data.shape[0]:
+                        ts.set_data(x, data[i, :n_samples].copy())
+        elif self._current_view_mode == "TEND_CHART":
+            self._tend_update_ecg_strip()
+
+    def update_from_metrics(self, metrics_list):
         self._metrics = metrics_list
         self._refresh_plot()
+        if self._current_view_mode == "TEND_CHART":
+            self._tend_update_hr_graph()
+            self._tend_update_tendency_graphs()
 
     def _refresh_plot(self):
         if self._current_tendency_mode == "ST":
@@ -5377,9 +5617,186 @@ class HolterSTPanel(QWidget):
         if n_samples > 0:
             lead2_idx = 1 if data.shape[0] > 1 else 0
             self._mini_strip.set_data(x, data[lead2_idx, :n_samples].copy())
-            for i, strip in enumerate(self._ch_strips):
-                if i < data.shape[0]:
-                    strip.set_data(x, data[i, :n_samples].copy())
+            
+    # --- Tend chart methods ---
+    def _tend_set_mode(self, mode):
+        self._tend_current_tendency_mode = mode
+        if mode == "ST":
+            self._tend_st_mode_btn.setStyleSheet(_style_active_btn())
+            self._tend_t_mode_btn.setStyleSheet(_style_btn())
+            self._tend_tendency_title.setText("ST Trends")
+        else:
+            self._tend_t_mode_btn.setStyleSheet(_style_active_btn())
+            self._tend_st_mode_btn.setStyleSheet(_style_btn())
+            self._tend_tendency_title.setText("T Trends")
+        self._tend_update_tendency_graphs()
+        
+    def _tend_update_hr_graph(self):
+        hr_vals = [m.get('hr_mean', 0) for m in self._metrics]
+        self._tend_hr_canvas.set_data(hr_vals)
+        self._tend_hr_canvas.set_current_index(self._tend_current_metric_index)
+        
+    def _tend_update_tendency_graphs(self):
+        if self._tend_scan_results:
+            st_vals = [res['st_mv'] for res in self._tend_scan_results]
+            t_vals = [res['t_mv'] for res in self._tend_scan_results]
+        else:
+            st_vals = [m.get('st_mv', 0.0) for m in self._metrics]
+            t_vals = [m.get('t_mv', 0.0) for m in self._metrics]
+            
+        for i, canvas in enumerate(self._tend_tendency_canvases):
+            if self._tend_current_tendency_mode == "ST":
+                canvas.set_tendency_mode("ST")
+                canvas.set_data(st_vals)
+            else:
+                canvas.set_tendency_mode("T")
+                canvas.set_data(t_vals)
+            canvas.set_current_index(self._tend_current_metric_index)
+                
+    def _tend_update_ecg_strip(self):
+        if self._replay_engine:
+            data = self._replay_engine.get_all_leads_data(window_sec=3.0)
+            if data is not None:
+                self._tend_ecg_strip.set_data(data, self._replay_engine.fs)
+                r_peak_idx = data.shape[1] // 2
+                fs = self._replay_engine.fs
+                self._tend_ecg_strip.set_marker_positions(
+                    i_pos=r_peak_idx + int(self._tend_i_offset_ms * fs / 1000),
+                    j_pos=r_peak_idx + int(self._tend_j_offset_ms * fs / 1000),
+                    k_pos=r_peak_idx + int(self._tend_get_k_offset_ms() * fs / 1000),
+                    t_pos=r_peak_idx + int(250 * fs / 1000)
+                )
+    
+    def _tend_get_k_offset_ms(self):
+        if self._tend_adjust_k_by_hr and self._metrics:
+            current_metric = self._metrics[self._tend_current_metric_index]
+            hr = current_metric.get('hr_mean', 75)
+            if hr > 100:
+                return self._tend_k_offset_ms - int((hr - 100) * 0.5)
+            elif hr < 60:
+                return self._tend_k_offset_ms + int((60 - hr) * 0.5)
+        return self._tend_k_offset_ms
+        
+    def _tend_on_start_scan(self):
+        self._tend_is_scanning = True
+        self._tend_scan_results = []
+        if self._replay_engine:
+            self._tend_scan_thread = threading.Thread(target=self._tend_run_scan, daemon=True)
+            self._tend_scan_thread.start()
+            
+    def _tend_run_scan(self):
+        fs = self._replay_engine.fs
+        for metric in self._metrics:
+            t_sec = metric.get('t', 0.0)
+            self._replay_engine.seek(t_sec)
+            data = self._replay_engine.get_all_leads_data(window_sec=2.0)
+            
+            lead_results = {}
+            for i in range(min(12, data.shape[0])):
+                lead_data = data[i]
+                st_mv, t_mv = self._tend_analyze_lead(lead_data, fs)
+                lead_results[i] = {'st_mv': st_mv, 't_mv': t_mv}
+                
+            self._tend_scan_results.append({
+                't_sec': t_sec,
+                'st_mv': lead_results.get(1, {}).get('st_mv', 0.0),
+                't_mv': lead_results.get(1, {}).get('t_mv', 0.0),
+                'lead_results': lead_results
+            })
+            
+            if self._tend_auto_update:
+                QMetaObject.invokeMethod(self, "_tend_update_tendency_graphs", Qt.QueuedConnection)
+                time.sleep(0.01)
+                
+        self._tend_is_scanning = False
+        
+    def _tend_analyze_lead(self, lead_data: np.ndarray, fs: int):
+        from scipy.signal import butter, filtfilt, find_peaks
+        
+        if len(lead_data) < fs * 0.5:
+            return 0.0, 0.0
+            
+        b, a = butter(2, [5.0 / (fs / 2), 15.0 / (fs / 2)], btype='band')
+        filtered = filtfilt(b, a, lead_data)
+        
+        peaks, _ = find_peaks(np.abs(filtered), distance=int(0.2 * fs))
+        if len(peaks) == 0:
+            return 0.0, 0.0
+            
+        r_peak = peaks[len(peaks) // 2]
+        
+        fs = fs
+        i_idx = max(0, r_peak + int(self._tend_i_offset_ms * fs / 1000))
+        j_idx = min(len(lead_data) - 1, r_peak + int(self._tend_j_offset_ms * fs / 1000))
+        k_idx = min(len(lead_data) - 1, r_peak + int(self._tend_get_k_offset_ms() * fs / 1000))
+        t_start = min(len(lead_data) - 1, r_peak + int(150 * fs / 1000))
+        t_end = min(len(lead_data), r_peak + int(400 * fs / 1000))
+        
+        baseline = lead_data[i_idx] if 0 <= i_idx < len(lead_data) else 0.0
+        st = lead_data[k_idx] if 0 <= k_idx < len(lead_data) else 0.0
+        
+        t_amp = 0.0
+        if t_start < t_end:
+            t_seg = lead_data[t_start:t_end]
+            if len(t_seg) > 0:
+                peak_idx = np.argmax(np.abs(t_seg - baseline))
+                t_amp = t_seg[peak_idx] - baseline
+        
+        adc_scale = 1.0 / 200.0
+        return (st - baseline) * adc_scale, t_amp * adc_scale
+        
+    def _tend_on_confirm_scan(self):
+        if not self._tend_scan_results:
+            return
+        _show_message_box(self, QMessageBox.Information, "Scan Complete", f"Processed {len(self._tend_scan_results)} segments")
+        
+    def _tend_on_reset_defaults(self):
+        self._tend_i_offset_ms = self._tend_default_i_offset_ms
+        self._tend_j_offset_ms = self._tend_default_j_offset_ms
+        self._tend_k_offset_ms = self._tend_default_k_offset_ms
+        self._tend_update_ecg_strip()
+        
+    def _tend_on_toggle_auto_update(self, checked):
+        self._tend_auto_update = checked
+        
+    def _tend_on_toggle_adjust_k(self, checked):
+        self._tend_adjust_k_by_hr = checked
+        self._tend_update_ecg_strip()
+        
+    def _tend_on_threshold_changed(self, value):
+        self._tend_st_threshold_mv = value
+        for canvas in self._tend_tendency_canvases:
+            canvas.set_threshold(value)
+        
+    def _tend_on_hr_canvas_clicked(self, index):
+        self._tend_current_metric_index = index
+        self._tend_update_hr_graph()
+        self._tend_update_tendency_graphs()
+        if self._replay_engine:
+            t_sec = self._metrics[index].get('t', 0.0)
+            self._replay_engine.seek(t_sec)
+            self._tend_update_ecg_strip()
+            
+    def _tend_on_tendency_clicked(self, lead_idx, canvas):
+        idx = canvas.get_clicked_index()
+        if idx is not None:
+            self._tend_on_hr_canvas_clicked(idx)
+            
+    def _tend_on_marker_moved(self, marker_name, pos_samples):
+        if not self._replay_engine:
+            return
+            
+        fs = self._replay_engine.fs
+        center_idx = self._tend_ecg_strip._data.shape[1] // 2 if len(self._tend_ecg_strip._data.shape) >1 else len(self._tend_ecg_strip._data)//2
+        delta_ms = int((pos_samples - center_idx) * 1000 / fs)
+        
+        if marker_name == 'I':
+            self._tend_i_offset_ms = delta_ms
+        elif marker_name == 'J':
+            self._tend_j_offset_ms = delta_ms
+        elif marker_name == 'K':
+            self._tend_k_offset_ms = delta_ms
+
 
 
 class STCanvas(QWidget):
@@ -5422,6 +5839,717 @@ class STCanvas(QWidget):
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
         if len(d) > 0:
             painter.drawText(w - 70, 14, f"{d[min(len(d)//2,len(d)-1)]:.3f}mV")
+
+
+# -----------------------------------------------------------------------------
+# 14. TEND CHART DIALOG (ST/T TREND SCAN)
+# -----------------------------------------------------------------------------
+class TendChartDialog(QDialog):
+    currentIndexChanged = pyqtSignal(int)
+    def __init__(self, parent=None, metrics_list=None, replay_engine=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tend Chart - ST/T Trend Scan")
+        self.setStyleSheet(f"background:{COL_BG};")
+        self.resize(1400, 900)
+        
+        self._metrics = metrics_list or []
+        self._replay_engine = replay_engine
+        self._current_tendency_mode = "ST"
+        self._scan_start_index = 0
+        self._is_scanning = False
+        self._current_metric_index = 0
+        self._auto_update = False
+        self._adjust_k_by_hr = True
+        self._st_threshold_mv = 0.1
+        
+        # I/J/K point offsets (in ms from R-peak)
+        self._i_offset_ms = -120  # PR segment baseline
+        self._j_offset_ms = 80    # J-point (end of QRS)
+        self._k_offset_ms = 120   # ST measurement point
+        
+        self._default_i_offset_ms = -120
+        self._default_j_offset_ms = 80
+        self._default_k_offset_ms = 120
+        
+        self._scan_results = []
+        
+        self._build_ui()
+        self._update_hr_graph()
+        self._update_tendency_graphs()
+        
+        if self._replay_engine:
+            self._update_ecg_strip()
+        
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        
+        # Toolbar row
+        toolbar = QHBoxLayout()
+        
+        self._start_btn = QPushButton("Start")
+        self._start_btn.setStyleSheet(_style_btn())
+        self._start_btn.setFixedHeight(32)
+        self._start_btn.clicked.connect(self._on_start_scan)
+        toolbar.addWidget(self._start_btn)
+        
+        self._confirm_btn = QPushButton("Confirm")
+        self._confirm_btn.setStyleSheet(_style_btn())
+        self._confirm_btn.setFixedHeight(32)
+        self._confirm_btn.clicked.connect(self._on_confirm_scan)
+        toolbar.addWidget(self._confirm_btn)
+        
+        self._default_btn = QPushButton("Default")
+        self._default_btn.setStyleSheet(_style_btn())
+        self._default_btn.setFixedHeight(32)
+        self._default_btn.clicked.connect(self._on_reset_defaults)
+        toolbar.addWidget(self._default_btn)
+        
+        self._auto_update_btn = QPushButton("Update automatically")
+        self._auto_update_btn.setCheckable(True)
+        self._auto_update_btn.setStyleSheet(_style_btn())
+        self._auto_update_btn.setFixedHeight(32)
+        self._auto_update_btn.clicked.connect(self._on_toggle_auto_update)
+        toolbar.addWidget(self._auto_update_btn)
+        
+        self._adjust_k_btn = QPushButton("Adjust K by HR")
+        self._adjust_k_btn.setCheckable(True)
+        self._adjust_k_btn.setChecked(True)
+        self._adjust_k_btn.setStyleSheet(_style_btn())
+        self._adjust_k_btn.setFixedHeight(32)
+        self._adjust_k_btn.clicked.connect(self._on_toggle_adjust_k)
+        toolbar.addWidget(self._adjust_k_btn)
+        
+        # ST threshold setting
+        threshold_lbl = QLabel("ST Threshold (mV):")
+        threshold_lbl.setStyleSheet(f"color:{COL_GREEN};")
+        toolbar.addWidget(threshold_lbl)
+        self._threshold_spin = QDoubleSpinBox()
+        self._threshold_spin.setRange(0.01, 1.0)
+        self._threshold_spin.setSingleStep(0.01)
+        self._threshold_spin.setValue(self._st_threshold_mv)
+        self._threshold_spin.valueChanged.connect(self._on_threshold_changed)
+        self._threshold_spin.setFixedHeight(32)
+        self._threshold_spin.setStyleSheet(f"QDoubleSpinBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        toolbar.addWidget(self._threshold_spin)
+        
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+        
+        # Main content (split into left and right
+        main_content = QHBoxLayout()
+        
+        # Left: HR graph + ECG strip
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        
+        # HR graph
+        hr_frame = QFrame()
+        hr_frame.setStyleSheet(f"background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;")
+        hr_layout = QVBoxLayout(hr_frame)
+        self._hr_title = QLabel("Entire HR Graph")
+        self._hr_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        hr_layout.addWidget(self._hr_title)
+        self._hr_canvas = HRTrendCanvas()
+        self._hr_canvas.clicked.connect(self._on_hr_canvas_clicked)
+        hr_layout.addWidget(self._hr_canvas)
+        left_layout.addWidget(hr_frame, 1)
+        
+        # ECG strip with I/J/K markers
+        ecg_frame = QFrame()
+        ecg_frame.setStyleSheet(f"background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;")
+        ecg_layout = QVBoxLayout(ecg_frame)
+        self._ecg_title = QLabel("ECG Strip (drag I/J/K markers)")
+        self._ecg_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        ecg_layout.addWidget(self._ecg_title)
+        self._ecg_strip = STTMarkerCanvas(height=200)
+        self._ecg_strip.markerMoved.connect(self._on_marker_moved)
+        ecg_layout.addWidget(self._ecg_strip)
+        left_layout.addWidget(ecg_frame, 1)
+        
+        main_content.addWidget(left_panel, 1)
+        
+        # Right: Tendency charts
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        
+        # Mode buttons
+        mode_row = QHBoxLayout()
+        self._st_mode_btn = QPushButton("ST")
+        self._st_mode_btn.setStyleSheet(_style_active_btn())
+        self._t_mode_btn = QPushButton("T")
+        self._t_mode_btn.setStyleSheet(_style_btn())
+        for btn in [self._st_mode_btn, self._t_mode_btn]:
+            btn.setFixedHeight(32)
+            mode_row.addWidget(btn)
+        mode_row.addStretch()
+        right_layout.addLayout(mode_row)
+        
+        # Tendency charts scroll
+        self._tendency_title = QLabel("ST Trends")
+        self._tendency_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        right_layout.addWidget(self._tendency_title)
+        
+        self._tendency_scroll = QScrollArea()
+        self._tendency_scroll.setWidgetResizable(True)
+        self._tendency_scroll.setStyleSheet(f"QScrollArea{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+        
+        self._tendency_content = QWidget()
+        self._tendency_layout = QVBoxLayout(self._tendency_content)
+        self._tendency_content.setStyleSheet("background:transparent;")
+        
+        self._tendency_layout.setContentsMargins(4, 4, 4, 4)
+        self._tendency_layout.setSpacing(4)
+        
+        lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        self._tendency_canvases = []
+        for name in lead_names:
+            lbl = QLabel(f"Lead {name}")
+            lbl.setStyleSheet(f"color:{COL_GREEN};font-size:10px;border:none;")
+            self._tendency_layout.addWidget(lbl)
+            canvas = TendencyCanvas(height=70)
+            canvas.set_threshold(self._st_threshold_mv)
+            canvas.clicked.connect(lambda idx=len(self._tendency_canvases), c=canvas: self._on_tendency_clicked(idx, c))
+            self._tendency_layout.addWidget(canvas)
+            self._tendency_canvases.append(canvas)
+        
+        self._tendency_scroll.setWidget(self._tendency_content)
+        right_layout.addWidget(self._tendency_scroll, 1)
+        
+        main_content.addWidget(right_panel, 2)
+        
+        layout.addLayout(main_content, 1)
+        
+        # Connect mode buttons
+        self._st_mode_btn.clicked.connect(lambda: self._set_mode("ST"))
+        self._t_mode_btn.clicked.connect(lambda: self._set_mode("T"))
+        
+    def _set_mode(self, mode):
+        self._current_tendency_mode = mode
+        if mode == "ST":
+            self._st_mode_btn.setStyleSheet(_style_active_btn())
+            self._t_mode_btn.setStyleSheet(_style_btn())
+            self._tendency_title.setText("ST Trends")
+        else:
+            self._t_mode_btn.setStyleSheet(_style_active_btn())
+            self._st_mode_btn.setStyleSheet(_style_btn())
+            self._tendency_title.setText("T Trends")
+        self._update_tendency_graphs()
+        
+    def _update_hr_graph(self):
+        hr_vals = [m.get('hr_mean', 0) for m in self._metrics]
+        self._hr_canvas.set_data(hr_vals)
+        self._hr_canvas.set_current_index(self._current_metric_index)
+        
+    def _update_tendency_graphs(self):
+        # For now, use lead II data for all leads (in real scenario, we'd need per-lead metrics)
+        if self._scan_results:
+            st_vals = [res['st_mv'] for res in self._scan_results]
+            t_vals = [res['t_mv'] for res in self._scan_results]
+        else:
+            st_vals = [m.get('st_mv', 0.0) for m in self._metrics]
+            t_vals = [m.get('t_mv', 0.0) for m in self._metrics]
+            
+        for i, canvas in enumerate(self._tendency_canvases):
+            if self._current_tendency_mode == "ST":
+                canvas.set_tendency_mode("ST")
+                canvas.set_data(st_vals)
+            else:
+                canvas.set_tendency_mode("T")
+                canvas.set_data(t_vals)
+            canvas.set_current_index(self._current_metric_index)
+                
+    def _update_ecg_strip(self):
+        if self._replay_engine:
+            # Get current window data
+            data = self._replay_engine.get_all_leads_data(window_sec=3.0)
+            if data is not None:
+                self._ecg_strip.set_data(data, self._replay_engine.fs)
+                
+                # Set marker positions based on offsets
+                r_peak_idx = data.shape[1] // 2  # Center as approximate R peak
+                fs = self._replay_engine.fs
+                self._ecg_strip.set_marker_positions(
+                    i_pos=r_peak_idx + int(self._i_offset_ms * fs / 1000),
+                    j_pos=r_peak_idx + int(self._j_offset_ms * fs / 1000),
+                    k_pos=r_peak_idx + int(self._get_k_offset_ms() * fs / 1000),
+                    t_pos=r_peak_idx + int(250 * fs / 1000)
+                )
+    
+    def _get_k_offset_ms(self):
+        if self._adjust_k_by_hr and self._metrics:
+            current_metric = self._metrics[self._current_metric_index]
+            hr = current_metric.get('hr_mean', 75)
+            if hr > 100:
+                return self._k_offset_ms - int((hr - 100) * 0.5)
+            elif hr < 60:
+                return self._k_offset_ms + int((60 - hr) * 0.5)
+        return self._k_offset_ms
+        
+    def _on_start_scan(self):
+        self._is_scanning = True
+        self._scan_results = []
+        if self._replay_engine:
+            # Run scan in background thread
+            self._scan_thread = threading.Thread(target=self._run_scan, daemon=True)
+            self._scan_thread.start()
+            
+    def _run_scan(self):
+        fs = self._replay_engine.fs
+        for metric in self._metrics:
+            t_sec = metric.get('t', 0.0)
+            self._replay_engine.seek(t_sec)
+            data = self._replay_engine.get_all_leads_data(window_sec=2.0)
+            
+            # Calculate ST/T for each lead
+            lead_results = {}
+            for i in range(min(12, data.shape[0])):
+                lead_data = data[i]
+                st_mv, t_mv = self._analyze_lead(lead_data, fs)
+                lead_results[i] = {'st_mv': st_mv, 't_mv': t_mv}
+                
+            # Use lead II for display
+            self._scan_results.append({
+                't_sec': t_sec,
+                'st_mv': lead_results.get(1, {}).get('st_mv', 0.0),
+                't_mv': lead_results.get(1, {}).get('t_mv', 0.0),
+                'lead_results': lead_results
+            })
+            
+            if self._auto_update:
+                # Update UI incrementally
+                QMetaObject.invokeMethod(self, "_update_tendency_graphs", Qt.QueuedConnection)
+                time.sleep(0.01)
+                
+        self._is_scanning = False
+        
+    def _analyze_lead(self, lead_data: np.ndarray, fs: int):
+        """Calculate ST deviation and T-wave amplitude for a single lead."""
+        from scipy.signal import butter, filtfilt, find_peaks
+        
+        if len(lead_data) < fs * 0.5:
+            return 0.0, 0.0
+            
+        # Filter to find R-peak
+        b, a = butter(2, [5.0 / (fs / 2), 15.0 / (fs / 2)], btype='band')
+        filtered = filtfilt(b, a, lead_data)
+        
+        # Find R-peaks in the segment
+        peaks, _ = find_peaks(np.abs(filtered), distance=int(0.2 * fs))
+        if len(peaks) == 0:
+            return 0.0, 0.0
+            
+        r_peak = peaks[len(peaks) // 2]
+        
+        # Calculate offsets
+        fs = fs
+        i_idx = max(0, r_peak + int(self._i_offset_ms * fs / 1000))
+        j_idx = min(len(lead_data) - 1, r_peak + int(self._j_offset_ms * fs / 1000))
+        k_idx = min(len(lead_data) - 1, r_peak + int(self._get_k_offset_ms() * fs / 1000))
+        t_start = min(len(lead_data) - 1, r_peak + int(150 * fs / 1000))
+        t_end = min(len(lead_data), r_peak + int(400 * fs / 1000))
+        
+        baseline = lead_data[i_idx] if 0 <= i_idx < len(lead_data) else 0.0
+        st = lead_data[k_idx] if 0 <= k_idx < len(lead_data) else 0.0
+        
+        # T-wave
+        t_amp = 0.0
+        if t_start < t_end:
+            t_seg = lead_data[t_start:t_end]
+            if len(t_seg) > 0:
+                peak_idx = np.argmax(np.abs(t_seg - baseline))
+                t_amp = t_seg[peak_idx] - baseline
+        
+        # ADC to mV conversion
+        adc_scale = 1.0 / 200.0
+        return (st - baseline) * adc_scale, t_amp * adc_scale
+        
+    def _on_confirm_scan(self):
+        if not self._scan_results:
+            return
+        _show_message_box(self, QMessageBox.Information, "Scan Complete", f"Processed {len(self._scan_results)} segments")
+        
+    def _on_reset_defaults(self):
+        self._i_offset_ms = self._default_i_offset_ms
+        self._j_offset_ms = self._default_j_offset_ms
+        self._k_offset_ms = self._default_k_offset_ms
+        self._update_ecg_strip()
+        
+    def _on_toggle_auto_update(self, checked):
+        self._auto_update = checked
+        
+    def _on_toggle_adjust_k(self, checked):
+        self._adjust_k_by_hr = checked
+        self._update_ecg_strip()
+        
+    def _on_threshold_changed(self, value):
+        self._st_threshold_mv = value
+        for canvas in self._tendency_canvases:
+            canvas.set_threshold(value)
+        
+    def _on_hr_canvas_clicked(self, index):
+        self._current_metric_index = index
+        self.currentIndexChanged.emit(index)
+        self._update_hr_graph()
+        self._update_tendency_graphs()
+        if self._replay_engine:
+            t_sec = self._metrics[index].get('t', 0.0)
+            self._replay_engine.seek(t_sec)
+            self._update_ecg_strip()
+            
+    def _on_tendency_clicked(self, lead_idx, canvas):
+        idx = canvas.get_clicked_index()
+        if idx is not None:
+            self._on_hr_canvas_clicked(idx)
+            
+    def _on_marker_moved(self, marker_name, pos_samples):
+        """Update offset when marker is dragged on ECG strip."""
+        if not self._replay_engine:
+            return
+            
+        fs = self._replay_engine.fs
+        center_idx = self._ecg_strip._data.shape[1] // 2 if len(self._ecg_strip._data.shape) >1 else len(self._ecg_strip._data)//2
+        delta_ms = int((pos_samples - center_idx) * 1000 / fs)
+        
+        if marker_name == 'I':
+            self._i_offset_ms = delta_ms
+        elif marker_name == 'J':
+            self._j_offset_ms = delta_ms
+        elif marker_name == 'K':
+            self._k_offset_ms = delta_ms
+            
+    def update_from_metrics(self, metrics_list):
+        self._metrics = metrics_list
+        self._update_hr_graph()
+        self._update_tendency_graphs()
+
+
+class HRTrendCanvas(QWidget):
+    clicked = pyqtSignal(int)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = []
+        self._current_index = 0
+        self.setStyleSheet(f"background:{COL_BLACK};border:none;")
+        self.setMouseTracking(True)
+        
+    def set_data(self, vals):
+        self._data = vals
+        self.update()
+        
+    def set_current_index(self, idx):
+        self._current_index = idx
+        self.update()
+        
+    def mousePressEvent(self, event):
+        event.accept()
+        x = event.x()
+        n = len(self._data)
+        if n > 1:
+            idx = int(round(x / (self.width() / (n-1))))
+            idx = max(0, min(n-1, idx))
+            self.clicked.emit(idx)
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(COL_BLACK))
+        w, h = self.width(), self.height()
+        
+        # Draw grid lines
+        grid_pen = QPen(QColor(COL_GREEN_DRK))
+        grid_pen.setWidthF(0.5)
+        painter.setPen(grid_pen)
+        # Horizontal lines
+        for y in [h//4, h//2, 3*h//4]:
+            painter.drawLine(0, y, w, y)
+        # Vertical lines
+        for x in [w//4, w//2, 3*w//4]:
+            painter.drawLine(x, 0, x, h)
+            
+        if not self._data:
+            return
+            
+        # Plot HR data
+        pen = QPen(QColor("#00FF00"))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        d = np.array(self._data)
+        mn = d[d > 0]
+        if len(mn) == 0:
+            mn_val, mx_val = 40, 200
+        else:
+            mn_val, mx_val = max(40, mn.min() - 10), min(200, d.max() + 10)
+        rng = mx_val - mn_val
+        n = len(d)
+        x_scale = w / max(n - 1, 1)
+        for i in range(1, n):
+            if d[i-1] <= 0 or d[i] <=0:
+                continue
+            x1 = int((i-1) * x_scale)
+            y1 = int(h - 10 - (d[i-1] - mn_val) / rng * (h - 20))
+            x2 = int(i * x_scale)
+            y2 = int(h - 10 - (d[i] - mn_val) / rng * (h - 20))
+            painter.drawLine(x1, y1, x2, y2)
+            
+        # Draw current index marker
+        if 0 <= self._current_index < n:
+            x = int(self._current_index * x_scale)
+            marker_pen = QPen(QColor("#FFFF00"))
+            marker_pen.setWidth(2)
+            painter.setPen(marker_pen)
+            painter.drawLine(x, 0, x, h)
+
+
+class TendencyCanvas(QWidget):
+    clicked = pyqtSignal()
+    def __init__(self, parent=None, height: int = 70):
+        super().__init__(parent)
+        self._data = []
+        self._mode = "ST"
+        self._threshold = 0.1
+        self._current_index = 0
+        self._clicked_index = None
+        self.setFixedHeight(height)
+        self.setStyleSheet(f"background:{COL_BLACK};border:none;")
+        self.setMouseTracking(True)
+        
+    def set_tendency_mode(self, mode):
+        self._mode = mode
+        
+    def set_threshold(self, threshold):
+        self._threshold = threshold
+        self.update()
+        
+    def set_data(self, vals):
+        self._data = vals
+        self.update()
+        
+    def set_current_index(self, idx):
+        self._current_index = idx
+        self.update()
+        
+    def get_clicked_index(self):
+        return self._clicked_index
+        
+    def mousePressEvent(self, event):
+        event.accept()
+        x = event.x()
+        n = len(self._data)
+        if n > 1:
+            idx = int(round(x / (self.width() / (n-1))))
+            idx = max(0, min(n-1, idx))
+            self._clicked_index = idx
+            self.clicked.emit()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(COL_BLACK))
+        w, h = self.width(), self.height()
+        # Zero line
+        pen = QPen(QColor(COL_GREEN_DRK))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        mid = h // 2
+        painter.drawLine(0, mid, w, mid)
+        
+        if not self._data:
+            return
+            
+        d = np.array(self._data)
+        mn, mx = min(d.min(), -0.2), max(d.max(), 0.2)
+        rng = max(mx - mn, 0.4)
+        
+        n = len(d)
+        x_scale = w / max(n - 1, 1)
+        for i in range(1, n):
+            val = d[i]
+            if self._mode == "ST":
+                # ST: red if outside range, green if inside
+                if abs(val) > self._threshold:
+                    pen = QPen(QColor("#FF0000"))
+                else:
+                    pen = QPen(QColor("#00FF00"))
+            else:
+                # T: green if up, blue if down
+                if val > 0:
+                    pen = QPen(QColor("#00FF00"))
+                else:
+                    pen = QPen(QColor("#0099FF"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            x1 = int((i-1) * x_scale)
+            y1 = int(h - 5 - (d[i-1] - mn) / rng * (h - 10))
+            x2 = int(i * x_scale)
+            y2 = int(h - 5 - (d[i] - mn) / rng * (h - 10))
+            painter.drawLine(x1, y1, x2, y2)
+            
+        # Draw current index marker
+        if 0 <= self._current_index < n:
+            x = int(self._current_index * x_scale)
+            marker_pen = QPen(QColor("#FFFF00"))
+            marker_pen.setWidth(2)
+            painter.setPen(marker_pen)
+            painter.drawLine(x, 0, x, h)
+            
+        # Draw numeric value at current index
+        if 0 <= self._current_index < n:
+            val = d[self._current_index]
+            text = f"{val:.3f} mV"
+            painter.setPen(QColor(COL_GREEN))
+            font = QFont()
+            font.setPointSize(9)
+            painter.setFont(font)
+            text_x = w - 80
+            text_y = 15
+            painter.drawText(text_x, text_y, text)
+
+
+class STTMarkerCanvas(QWidget):
+    markerMoved = pyqtSignal(str, int)
+    def __init__(self, parent=None, height: int = 200):
+        super().__init__(parent)
+        self._data = np.zeros((1, 100))
+        self._fs = 500
+        self._i_pos = 0
+        self._j_pos = 0
+        self._k_pos = 0
+        self._t_pos = 0
+        self._dragging_marker = None
+        self.setFixedHeight(height)
+        self.setStyleSheet(f"background:{COL_BLACK};border:none;")
+        self.setMouseTracking(True)
+        
+    def set_data(self, data, fs):
+        self._data = data
+        self._fs = fs
+        self.update()
+        
+    def set_marker_positions(self, i_pos, j_pos, k_pos, t_pos):
+        self._i_pos = i_pos
+        self._j_pos = j_pos
+        self._k_pos = k_pos
+        self._t_pos = t_pos
+        self.update()
+        
+    def mousePressEvent(self, event):
+        event.accept()
+        x = event.x()
+        w = self.width()
+        n_samples = self._data.shape[1] if len(self._data.shape) >1 else len(self._data)
+        sample_x = int((x / w) * n_samples)
+        # Check which marker is near
+        markers = [('I', self._i_pos), ('J', self._j_pos), ('K', self._k_pos), ('T', self._t_pos)]
+        for name, pos in markers:
+            pos_x = (pos / n_samples) * w
+            if abs(x - pos_x) < 10:
+                self._dragging_marker = name
+                break
+                
+    def mouseMoveEvent(self, event):
+        if self._dragging_marker is None:
+            return
+        x = event.x()
+        w = self.width()
+        n_samples = self._data.shape[1] if len(self._data.shape) >1 else len(self._data)
+        new_pos = int((x / w) * n_samples)
+        new_pos = max(0, min(n_samples - 1, new_pos))
+        if self._dragging_marker == 'I':
+            self._i_pos = new_pos
+        elif self._dragging_marker == 'J':
+            self._j_pos = new_pos
+        elif self._dragging_marker == 'K':
+            self._k_pos = new_pos
+        elif self._dragging_marker == 'T':
+            self._t_pos = new_pos
+        self.markerMoved.emit(self._dragging_marker, new_pos)
+        self.update()
+        
+    def mouseReleaseEvent(self, event):
+        self._dragging_marker = None
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(COL_BLACK))
+        w, h = self.width(), self.height()
+        
+        n_leads = self._data.shape[0] if len(self._data.shape) >1 else 1
+        lead_h = h // n_leads
+        n_samples = self._data.shape[1] if len(self._data.shape) >1 else len(self._data)
+        x_scale = w / max(n_samples - 1, 1) if n_samples > 1 else w
+        
+        colors = [
+            "#00FF00",
+            "#0099FF",
+            "#FF9900",
+            "#FF0000",
+            "#9900FF",
+            "#00FFFF",
+            "#FFFF00",
+            "#FF00FF",
+            "#00FF99",
+            "#99FF00",
+            "#FF99FF",
+            "#99FFFF"
+        ]
+        
+        for i in range(n_leads):
+            lead_data = self._data[i] if n_leads > 1 else self._data
+            y0 = i * lead_h
+            # Normalize and draw
+            if len(lead_data) > 0:
+                mn = np.min(lead_data)
+                mx = np.max(lead_data)
+                rng = mx - mn if (mx - mn) > 0 else 1
+                y_offset = y0 + lead_h // 2
+                y_scale = (lead_h - 20) / rng * 0.5
+                
+                # Draw grid lines
+                grid_pen = QPen(QColor(COL_GREEN_DRK))
+                grid_pen.setWidthF(0.5)
+                painter.setPen(grid_pen)
+                for grid_y in [y0 + lead_h//4, y0 + lead_h//2, y0 + 3*lead_h//4]:
+                    painter.drawLine(0, grid_y, w, grid_y)
+                
+                # Draw ECG
+                pen = QPen(QColor(colors[i % len(colors)]))
+                pen.setWidth(1)
+                painter.setPen(pen)
+                for x in range(1, len(lead_data)):
+                    x1 = int((x-1)*x_scale)
+                    y1 = int(y_offset - (lead_data[x-1] - mn) * y_scale)
+                    x2 = int(x * x_scale)
+                    y2 = int(y_offset - (lead_data[x] - mn) * y_scale)
+                    painter.drawLine(x1, y1, x2, y2)
+        
+        # Draw markers
+        marker_colors = {
+            'I': "#FF9900",
+            'J': "#00FFFF",
+            'K': "#FF00FF",
+            'T': "#00FF00"
+        }
+        marker_labels = {
+            'I': "I",
+            'J': "J",
+            'K': "K",
+            'T': "T"
+        }
+        
+        for name, pos in [('I', self._i_pos), ('J', self._j_pos), ('K', self._k_pos), ('T', self._t_pos)]:
+            x = int(pos * x_scale)
+            if 0 <= x < w:
+                pen = QPen(QColor(marker_colors[name]))
+                pen.setWidth(2)
+                painter.setPen(pen)
+                painter.drawLine(x, 0, x, h)
+                
+                # Draw label
+                font = QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.drawText(x + 5, 15, marker_labels[name])
 
 
 # -----------------------------------------------------------------------------
@@ -6911,7 +8039,7 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._events_panel, "EVENTS")
 
         # ST Tendency
-        self._st_panel = HolterSTPanel()
+        self._st_panel = HolterSTPanel(replay_engine=self._replay_engine)
         self._st_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._st_panel, "ST TENDENCY")
 
@@ -6929,7 +8057,7 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._edit_strips_panel, "EDIT STRIPS")
 
         # Report Tendency
-        self._report_tendency_panel = HolterSTPanel()
+        self._report_tendency_panel = HolterSTPanel(replay_engine=self._replay_engine)
         self._tabs.addTab(self._report_tendency_panel, "REPORT TENDENCY")
 
         # Report Table

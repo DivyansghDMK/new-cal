@@ -351,8 +351,10 @@ class HolterAnalysisWorker(threading.Thread):
 
         try:
             result["st_mv"] = round(self._estimate_st(best_signal, r_peaks, fs), 4)
+            result["t_mv"] = round(self._estimate_t(best_signal, r_peaks, fs), 4)
         except Exception:
             result["st_mv"] = 0.0
+            result["t_mv"] = 0.0
 
         try:
             if self._calc_sqi is not None and len(r_peaks) >= 3:
@@ -482,6 +484,31 @@ class HolterAnalysisWorker(threading.Thread):
                 st_vals.append((st - bl) * adc_scale)
 
         return float(np.median(st_vals)) if st_vals else 0.0
+
+    def _estimate_t(self, lead_ii: np.ndarray, r_peaks: np.ndarray, fs: int) -> float:
+        """Estimate average T-wave amplitude (mV) from peak after R."""
+        if len(r_peaks) < 3:
+            return 0.0
+        adc_scale = 1.0 / 200.0
+        t_window_start = int(0.15 * fs)   # Start looking for T-wave ~150ms after R
+        t_window_end = int(0.4 * fs)     # End looking ~400ms after R (adjust based on HR)
+        baseline_offset = -int(0.15 * fs)
+
+        t_vals = []
+        for r in r_peaks[1:-1]:
+            t_start = r + t_window_start
+            t_end = r + t_window_end
+            bl_idx = r + baseline_offset
+            if 0 <= bl_idx < len(lead_ii) and 0 <= t_start < t_end <= len(lead_ii):
+                bl = lead_ii[bl_idx]
+                t_segment = lead_ii[t_start:t_end]
+                if len(t_segment) > 0:
+                    # Find peak in absolute values to handle both positive and negative T-waves
+                    peak_idx = np.argmax(np.abs(t_segment - bl))
+                    t_peak = t_segment[peak_idx]
+                    t_vals.append((t_peak - bl) * adc_scale)
+
+        return float(np.median(t_vals)) if t_vals else 0.0
 
     def _classify_beats(
         self,

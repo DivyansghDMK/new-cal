@@ -108,6 +108,7 @@ class HolterStreamWriter:
             'brady_beats': 0,
             'pauses': 0,
             'avg_st_mv': 0.0,
+            'avg_t_mv': 0.0,
             'patient_info': dict(patient_info or {}),
             'chunks_analyzed': 0,
             'beat_class_totals': {},
@@ -182,6 +183,7 @@ class HolterStreamWriter:
                 'brady_beats': 0,
                 'pauses': 0,
                 'avg_st_mv': 0.0,
+                'avg_t_mv': 0.0,
                 'patient_info': dict(self.patient_info or {}),
                 'chunks_analyzed': 0,
                 'beat_class_totals': {},
@@ -396,6 +398,7 @@ class HolterStreamWriter:
         qualities = [m.get('quality', 0) for m in ml if m.get('quality', 0) > 0]
         all_rr = [m.get('longest_rr', 0) for m in ml]
         st_vals = [m.get('st_mv', 0.0) for m in ml]
+        t_vals = [m.get('t_mv', 0.0) for m in ml]
         duration_sec = float(sum(m.get('duration', 0.0) or 0.0 for m in ml))
 
         arrhy_counts: Dict[str, int] = {}
@@ -424,6 +427,7 @@ class HolterStreamWriter:
             'brady_beats': sum(m.get('brady_beats', 0) for m in ml),
             'pauses': sum(m.get('pauses', 0) for m in ml),
             'avg_st_mv': float(np.mean(st_vals)) if st_vals else 0.0,
+            'avg_t_mv': float(np.mean(t_vals)) if t_vals else 0.0,
             'patient_info': dict(self.patient_info or {}),
             'chunks_analyzed': len(ml),
             'beat_class_totals': beat_class_totals,
