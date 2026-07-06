@@ -32,6 +32,7 @@ class FullDisclosureOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._mouse_enabled = True
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self._selection_center_x = 0.0
         self._selection_center_y = 0.0
@@ -39,6 +40,11 @@ class FullDisclosureOverlay(QWidget):
         self._pixels_per_sec = 25.0
         self._is_dragging = False
         self.on_selection_made = None
+        
+    def set_mouse_enabled(self, enabled):
+        self._mouse_enabled = enabled
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, not enabled)
+        self.update()
 
     def set_pixels_per_sec(self, pps):
         self._pixels_per_sec = max(1.0, pps)
@@ -108,7 +114,7 @@ class HolterFullDisclosureDialog(QDialog):
         self._paper_speed = 25.0
         self._gain        = 1.0
         self._gain_label  = "10mm/mV"
-        self._strip_length = 3.0
+        self._strip_length = 2.0
         self._current_start = 0.0
         self._window_sec  = self._BASE_WIN_SEC
         self._selected_duration = None
@@ -272,6 +278,8 @@ class HolterFullDisclosureDialog(QDialog):
         self.overlay = FullDisclosureOverlay(canvas_frame)
         self.overlay.set_strip_length(self._strip_length)
         self.overlay.on_selection_made = self._on_selection
+        # Enable mouse on overlay initially
+        self.overlay.set_mouse_enabled(True)
         canvas_frame.installEventFilter(self)
         self._canvas_frame = canvas_frame
         layout.addWidget(canvas_frame, 1)
@@ -434,6 +442,9 @@ class HolterFullDisclosureDialog(QDialog):
         elif "15 Min" in text: self._window_sec = 900.0
         else: self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
         
+        # Always enable mouse on overlay for dragging
+        self.overlay.set_mouse_enabled(True)
+        
         self._current_start = 0.0
         self._update_scrollbar_range()
         self.time_scrollbar.setValue(0)
@@ -489,6 +500,12 @@ class HolterFullDisclosureDialog(QDialog):
         else:
             self.overlay.hide()
             self.clear_magnifier_focus()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            event.ignore()
+        else:
+            super().keyPressEvent(event)
 
     def _on_selection(self, start_offset, duration):
         sel_abs = self._current_start + start_offset

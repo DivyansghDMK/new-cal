@@ -9517,7 +9517,7 @@ class ECGTestPage(QWidget):
         if show_record_mgmt and hasattr(self._holter_ui, '_tabs'):
             for i in range(self._holter_ui._tabs.count()):
                 tab_text = self._holter_ui._tabs.tabText(i)
-                if "Record Mgmt" in tab_text or "Manage Records" in tab_text:
+                if "Record Mgmt" in tab_text or "Manage Records" in tab_text or "RECORDINGS" in tab_text:
                     self._holter_ui._tabs.setCurrentIndex(i)
                     break
 
