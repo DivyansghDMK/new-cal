@@ -30,6 +30,7 @@ import json
 import time
 import math
 import shutil
+import gc
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
@@ -390,6 +391,35 @@ def _table_style():
             background: none;
         }}
     """
+
+
+def _show_message_box(parent, icon, title, text, buttons=QMessageBox.Ok, default_button=QMessageBox.NoButton):
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(icon)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStandardButtons(buttons)
+    msg_box.setDefaultButton(default_button)
+    # Apply stylesheet for visibility against dark backgrounds
+    msg_box.setStyleSheet(f"""
+        QLabel {{
+            color: {COL_WHITE};
+        }}
+        QPushButton {{
+            background-color: {UI_PANEL_ALT};
+            color: {UI_TEXT};
+            border: 1px solid {UI_BORDER};
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: bold;
+            min-width: 80px;
+        }}
+        QPushButton:hover {{
+            background-color: {UI_ACCENT};
+        }}
+    """)
+    return msg_box.exec_()
 
 
 def _sec_to_hms(s: float) -> str:
@@ -1974,12 +2004,16 @@ class HolterReplayPanel(QWidget):
                 rr_points.append((t0, rr_val, beat_class))
 
         rr_n = [r for r in rr_all if r > 200]
+        rr_n_classes = [p[2] for p in rr_points if p[1] > 200]
         filtered_points = [p for p in rr_points if _class_matches_filter(p[2], self._class_filter)]
         filtered_rr = [p[1] for p in filtered_points if p[1] > 200]
+        filtered_classes = [p[2] for p in filtered_points if p[1] > 200]
         plot_rr = filtered_rr if len(filtered_rr) >= 2 else rr_n
+        plot_classes = filtered_classes if len(filtered_rr) >= 2 else rr_n_classes
         if len(plot_rr) >= 2:
             rr_x = plot_rr[:-1]
             rr_y = plot_rr[1:]
+            plot_beat_classes = plot_classes[:-1]  # use the first beat's class for each point
             lo = float(np.percentile(plot_rr, 5))
             hi = float(np.percentile(plot_rr, 95))
             if hi - lo < 250:
@@ -1988,7 +2022,7 @@ class HolterReplayPanel(QWidget):
                 hi = center + 500.0
             lo = max(0.0, lo - 50.0)
             hi = hi + 50.0
-            self._lorenz_canvas.set_data(rr_x, rr_y, x_range=(lo, hi), y_range=(lo, hi))
+            self._lorenz_canvas.set_data(rr_x, rr_y, x_range=(lo, hi), y_range=(lo, hi), beat_classes=plot_beat_classes)
         else:
             self._lorenz_canvas.set_data([], [])
         if hasattr(self, "_rr_trend_full"):
@@ -2152,19 +2186,21 @@ class HolterReplayPanel(QWidget):
 # â”€â”€ Helper canvas widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class LorenzCanvas(QWidget):
-    """Simple RR scatter / Poincar? plot."""
+    """Simple RR scatter / Poincaré plot."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._x = []
         self._y = []
+        self._beat_classes = []
         self._x_range = None
         self._y_range = None
         self.setMinimumSize(200, 180)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
 
-    def set_data(self, x, y, x_range=None, y_range=None):
+    def set_data(self, x, y, x_range=None, y_range=None, beat_classes=None):
         self._x = list(x)
         self._y = list(y)
+        self._beat_classes = list(beat_classes) if beat_classes is not None else []
         self._x_range = x_range
         self._y_range = y_range
         self.update()
@@ -2226,11 +2262,21 @@ class LorenzCanvas(QWidget):
             end = to_px(x_max, x_max)
             painter.drawLine(start[0], start[1], end[0], end[1])
 
-        pen = QPen(QColor("#39D353"))
-        pen.setWidth(1)
-        painter.setPen(pen)
-        painter.setBrush(QBrush(QColor(57, 211, 83, 180)))
-        for x, y in zip(self._x, self._y):
+        # Color map for beat classes
+        color_map = {
+            "N": QColor(57, 211, 83, 180),    # Green for Normal
+            "S": QColor(255, 51, 51, 180),     # Red for Supraventricular
+            "V": QColor(255, 153, 0, 180),     # Orange for Ventricular
+            "P": QColor(0, 229, 255, 180),     # Cyan for Paced
+            "AF": QColor(255, 215, 0, 180),     # Gold for AF
+            "X": QColor(136, 136, 136, 180),  # Gray for Artifact
+            "Other": QColor(57, 211, 83, 180)     # Default green
+        }
+        for i, (x, y) in enumerate(zip(self._x, self._y)):
+            beat_class = self._beat_classes[i] if i < len(self._beat_classes) else "Other"
+            color = color_map.get(beat_class, color_map["Other"])
+            painter.setPen(QPen(color))
+            painter.setBrush(QBrush(color))
             px, py = to_px(x, y)
             painter.drawEllipse(px - 2, py - 2, 4, 4)
 
@@ -4300,7 +4346,13 @@ class HolterRecordManagementPanel(QWidget):
         super().__init__()
         self.output_dir = output_dir
         self._selected_session = ""
+        self._active_session = ""
         self._build_ui()
+        self.refresh_records()
+        
+    def set_active_session(self, session_dir: str):
+        """Set the active session to highlight in the table."""
+        self._active_session = session_dir
         self.refresh_records()
 
     def _find_template_host(self):
@@ -4361,7 +4413,6 @@ class HolterRecordManagementPanel(QWidget):
         self._table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self._table.verticalScrollBar().setSingleStep(1)
         self._table.itemSelectionChanged.connect(self._sync_selected_session)
-        self._table.cellClicked.connect(self._open_row)
         self._table.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self._table, 1)
         self._action_buttons["Browse"].clicked.connect(self._browse_root)
@@ -4461,10 +4512,14 @@ class HolterRecordManagementPanel(QWidget):
         for row_values, session_dir in rows:
             r = self._table.rowCount()
             self._table.insertRow(r)
+            
+            is_active = os.path.normpath(session_dir) == os.path.normpath(self._active_session)
             for c, v in enumerate(row_values):
                 item = QTableWidgetItem(str(v))
                 item.setForeground(QColor(COL_GREEN if c == 0 else COL_WHITE))
                 item.setData(Qt.UserRole, session_dir)
+                if is_active:
+                    item.setBackground(QColor(46, 84, 137, 150))  # Semi-transparent blue highlight
                 self._table.setItem(r, c, item)
         if self._table.rowCount() > 0:
             self._table.selectRow(0)
@@ -4503,12 +4558,12 @@ class HolterRecordManagementPanel(QWidget):
         if not src:
             return
         if not os.path.exists(os.path.join(src, "recording.ecgh")):
-            QMessageBox.warning(self, "Import Session", "Select a session folder that contains recording.ecgh.")
+            _show_message_box(self, QMessageBox.Warning, "Import Session", "Select a session folder that contains recording.ecgh.")
             return
         os.makedirs(self.output_dir, exist_ok=True)
         dest = os.path.join(self.output_dir, os.path.basename(os.path.normpath(src)))
         if os.path.exists(dest):
-            QMessageBox.warning(self, "Import Session", "That session already exists in the recordings folder.")
+            _show_message_box(self, QMessageBox.Warning, "Import Session", "That session already exists in the recordings folder.")
             return
         shutil.copytree(src, dest)
         self.refresh_records()
@@ -4517,44 +4572,117 @@ class HolterRecordManagementPanel(QWidget):
     def _export_session(self):
         src = self._selected_path()
         if not src:
-            QMessageBox.information(self, "Export Session", "Select a recording to export first.")
+            _show_message_box(self, QMessageBox.Information, "Export Session", "Select a recording to export first.")
             return
         dest_root = QFileDialog.getExistingDirectory(self, "Export Session To")
         if not dest_root:
             return
         dest = os.path.join(dest_root, os.path.basename(os.path.normpath(src)))
         if os.path.exists(dest):
-            QMessageBox.warning(self, "Export Session", "That session already exists in the destination.")
+            _show_message_box(self, QMessageBox.Warning, "Export Session", "That session already exists in the destination.")
             return
         shutil.copytree(src, dest)
-        QMessageBox.information(self, "Export Session", f"Session exported to:\n{dest}")
+        _show_message_box(self, QMessageBox.Information, "Export Session", f"Session exported to:\n{dest}")
 
     def _backup_root(self):
         if not os.path.isdir(self.output_dir):
-            QMessageBox.information(self, "Backup", "No recordings folder found.")
+            _show_message_box(self, QMessageBox.Information, "Backup", "No recordings folder found.")
             return
         dest_root = QFileDialog.getExistingDirectory(self, "Backup Recordings To")
         if not dest_root:
             return
         dest = os.path.join(dest_root, os.path.basename(os.path.normpath(self.output_dir)) or "recordings_backup")
         if os.path.exists(dest):
-            QMessageBox.warning(self, "Backup", "That backup folder already exists.")
+            _show_message_box(self, QMessageBox.Warning, "Backup", "That backup folder already exists.")
             return
         shutil.copytree(self.output_dir, dest)
-        QMessageBox.information(self, "Backup", f"Recordings backed up to:\n{dest}")
+        _show_message_box(self, QMessageBox.Information, "Backup", f"Recordings backed up to:\n{dest}")
 
     def _delete_session(self):
         src = self._selected_path()
         if not src:
-            QMessageBox.information(self, "Delete Session", "Select a recording to delete first.")
+            _show_message_box(self, QMessageBox.Information, "Delete Session", "Select a recording to delete first.")
             return
-        if QMessageBox.question(self, "Delete Session",
+        if _show_message_box(self, QMessageBox.Question, "Delete Session",
                                 f"Delete this recording?\n\n{src}",
                                 QMessageBox.Yes | QMessageBox.No,
                                 QMessageBox.No) != QMessageBox.Yes:
             return
-        shutil.rmtree(src, ignore_errors=True)
-        self.refresh_records()
+        
+        # First, try to find the main window and close the session if it's currently loaded
+        try:
+            # Find the main HolterUI window
+            main_window = self.window()
+            if main_window and hasattr(main_window, "close_current_session_if_needed"):
+                main_window.close_current_session_if_needed(src)
+        except Exception:
+            pass
+        
+        # Force garbage collection to clean up any unreferenced file handles
+        gc.collect()
+        
+        # First, try to delete individual files with retries
+        max_file_retries = 4
+        last_error = None
+        
+        # Try to delete all files in the directory first
+        if os.path.exists(src):
+            try:
+                for root, dirs, files in os.walk(src, topdown=False):
+                    for file_name in files:
+                        file_path = os.path.join(root, file_name)
+                        # Try to delete this file with retries
+                        for file_attempt in range(max_file_retries):
+                            try:
+                                os.remove(file_path)
+                                break
+                            except Exception as e:
+                                last_error = e
+                                if file_attempt < max_file_retries - 1:
+                                    gc.collect()
+                                    time.sleep(0.3)
+                                else:
+                                    pass
+                    # Try to delete subdirectories
+                    for dir_name in dirs:
+                        dir_path = os.path.join(root, dir_name)
+                        for dir_attempt in range(max_file_retries):
+                            try:
+                                os.rmdir(dir_path)
+                                break
+                            except Exception as e:
+                                last_error = e
+                                if dir_attempt < max_file_retries - 1:
+                                    gc.collect()
+                                    time.sleep(0.3)
+                                else:
+                                    pass
+            except Exception as e:
+                last_error = e
+        
+        # Now try rmtree
+        max_retries = 7
+        retry_delay = 0.6
+        
+        for attempt in range(max_retries):
+            try:
+                gc.collect()
+                if os.path.exists(src):
+                    shutil.rmtree(src, ignore_errors=False)
+                self.refresh_records()
+                _show_message_box(self, QMessageBox.Information, "Delete Session", "Recording deleted successfully.")
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    gc.collect()
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.4  # exponential backoff
+                else:
+                    break
+        
+        # If we got here, all retries failed
+        _show_message_box(self, QMessageBox.Warning, "Delete Session", f"Failed to delete recording:\n{str(last_error)}")
 
 
 # -----------------------------------------------------------------------------
@@ -6822,6 +6950,8 @@ class HolterMainWindow(QDialog):
             output_dir=_resolve_recordings_dir(self.session_dir)
         )
         self._record_mgmt_panel.session_selected.connect(self.load_completed_session)
+        if self.session_dir:
+            self._record_mgmt_panel.set_active_session(self.session_dir)
         self._tabs.addTab(self._record_mgmt_panel, "RECORDINGS")
 
         # Report Preview
@@ -7245,7 +7375,7 @@ class HolterMainWindow(QDialog):
         self._load_session()
         if hasattr(self, '_record_mgmt_panel'):
             self._record_mgmt_panel.output_dir = _resolve_recordings_dir(session_dir)
-            self._record_mgmt_panel.refresh_records()
+            self._record_mgmt_panel.set_active_session(self.session_dir)
         if hasattr(self, '_replay_panel') and getattr(self, '_replay_engine', None):
             self._replay_panel.set_replay_engine(self._replay_engine)
             try:
@@ -7256,6 +7386,24 @@ class HolterMainWindow(QDialog):
         self._refresh_ui()
         if hasattr(self, '_tabs'):
             self._tabs.setCurrentIndex(0)
+
+    def close_current_session_if_needed(self, session_to_delete: str) -> bool:
+        """
+        Closes the current session if it matches the session being deleted.
+        Returns True if the session was closed.
+        """
+        if not hasattr(self, 'session_dir') or not self.session_dir:
+            return False
+        if not os.path.normpath(self.session_dir) == os.path.normpath(session_to_delete):
+            return False
+        if hasattr(self, "_replay_engine") and self._replay_engine:
+            try:
+                self._replay_engine.close()
+            except Exception:
+                pass
+            self._replay_engine = None
+        self.session_dir = None
+        return True
 
     def closeEvent(self, event):
         if self._writer:
