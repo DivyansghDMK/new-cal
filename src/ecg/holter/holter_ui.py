@@ -411,19 +411,23 @@ def _show_message_box(parent, icon, title, text, buttons=QMessageBox.Ok, default
         }}
         QMessageBox QPushButton {{
             background-color: {UI_PANEL_ALT};
-            color: {UI_TEXT};
+            color: #FFFFFF;
             border: 1px solid {UI_BORDER};
             border-radius: 5px;
             padding: 7px 20px;
             min-width: 70px;
+            font-weight: bold;
         }}
         QMessageBox QPushButton:hover {{
             background-color: #1A2C49;
+            color: #FFFFFF;
         }}
         QMessageBox QPushButton:pressed {{
             background-color: {UI_BORDER};
+            color: #FFFFFF;
         }}
     """)
+    return msg_box.exec_()
     return msg_box.exec_()
 
 
@@ -4053,8 +4057,19 @@ class HolterBeatTemplatePanel(QWidget):
         keys = list(keys or self._selected_template_keys)
         key_set = set(keys)
         rows = [row for row in self._template_rows if self._row_key(row) in key_set]
+        
+        # Check if only one template is selected
         if len(rows) < 2:
+            _show_message_box(
+                self,
+                QMessageBox.Information,
+                "Merge Templates",
+                "Only one template selected.\n\n"
+                "Ctrl + Click to select manually to merge template\n"
+                "Shift + Click to select all to merge template"
+            )
             return
+        
         options = [
             ("Normal", "N"),
             ("Atrial Premature", "S"),
@@ -4161,7 +4176,7 @@ class HolterBeatTemplatePanel(QWidget):
         func_menu.addAction("Select All").triggered.connect(self._select_all_visible)
         func_menu.addAction("Reverse Selection").triggered.connect(self._reverse_visible_selection)
         merge_action = menu.addAction("Merge template")
-        merge_action.setEnabled(len(target_keys) >= 2)
+        merge_action.setEnabled(True)  # Always enable - let merge function handle validation
         merge_action.triggered.connect(lambda: self._merge_selected_templates(target_keys))
         ok_menu = menu.addMenu("Template OK/Cancel")
         ok_menu.addAction("Confirm").triggered.connect(lambda: self._apply_template_viewed(target_keys, True))
@@ -5644,15 +5659,35 @@ class HolterSTPanel(QWidget):
         for canvas in self._st_canvases:
             canvas.set_data(vals)
 
-    def set_replay_frame(self, data):
-        if data is None or data.shape[0] < 1: return
+    def update_st_ecg_display(self, data):
+        """Update ECG display for ST/T normal view mode."""
+        if data is None or data.shape[0] < 1: 
+            return
+        
         N = data.shape[1]
         fs = 500.0
         n_samples = min(N, int(10 * fs))
         x = np.linspace(0, n_samples/fs, n_samples) if n_samples > 0 else []
+        
         if n_samples > 0:
             lead2_idx = 1 if data.shape[0] > 1 else 0
             self._mini_strip.set_data(x, data[lead2_idx, :n_samples].copy())
+            for i, ts in enumerate(self._ch_strips):
+                if i < data.shape[0]:
+                    ts.set_data(x, data[i, :n_samples].copy())
+
+    def set_replay_frame(self, data):
+        """Main entry point for updating ECG displays based on current view mode."""
+        if data is None or data.shape[0] < 1: 
+            return
+        
+        if self._current_view_mode in ["ST", "T"]:
+            # Update left-side ECG strips (all 12 leads) for ST/T mode
+            self.update_st_ecg_display(data)
+        
+        elif self._current_view_mode == "TEND_CHART":
+            # Update tendency chart ECG strip
+            self._tend_update_ecg_strip()
             
     # --- Tend chart methods ---
     def _tend_set_mode(self, mode):
@@ -5765,21 +5800,29 @@ class HolterSTPanel(QWidget):
         i_idx = max(0, r_peak + int(self._tend_i_offset_ms * fs / 1000))
         j_idx = min(len(lead_data) - 1, r_peak + int(self._tend_j_offset_ms * fs / 1000))
         k_idx = min(len(lead_data) - 1, r_peak + int(self._tend_get_k_offset_ms() * fs / 1000))
+        
+        # T wave: measure from J point (end of QRS) to T peak
         t_start = min(len(lead_data) - 1, r_peak + int(150 * fs / 1000))
         t_end = min(len(lead_data), r_peak + int(400 * fs / 1000))
         
+        # ST baseline: measure at I point (before J)
         baseline = lead_data[i_idx] if 0 <= i_idx < len(lead_data) else 0.0
-        st = lead_data[k_idx] if 0 <= k_idx < len(lead_data) else 0.0
         
+        # ST measurement: ST deflection at K point relative to baseline
+        st_value = lead_data[k_idx] if 0 <= k_idx < len(lead_data) else 0.0
+        st = (st_value - baseline)
+        
+        # T wave: measure from J point baseline (more accurate)
+        j_baseline = lead_data[j_idx] if 0 <= j_idx < len(lead_data) else baseline
         t_amp = 0.0
         if t_start < t_end:
             t_seg = lead_data[t_start:t_end]
             if len(t_seg) > 0:
-                peak_idx = np.argmax(np.abs(t_seg - baseline))
-                t_amp = t_seg[peak_idx] - baseline
+                peak_idx = np.argmax(np.abs(t_seg - j_baseline))
+                t_amp = t_seg[peak_idx] - j_baseline
         
         adc_scale = 1.0 / 200.0
-        return (st - baseline) * adc_scale, t_amp * adc_scale
+        return st * adc_scale, t_amp * adc_scale
         
     def _tend_on_confirm_scan(self):
         if not self._tend_scan_results:

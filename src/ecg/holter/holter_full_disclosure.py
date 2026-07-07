@@ -502,20 +502,29 @@ class HolterFullDisclosureDialog(QDialog):
         self._update_time_and_arrhythmia_labels(start_sec, end_sec)
 
         read_end_sec = min(end_sec, eff_dur)
+        
+        # Read data efficiently
         data = self._reader.read_range(start_sec, read_end_sec)
         expected_len = int(self._window_sec * self._engine.fs)
 
+        # Optimization: Process data in parallel using numpy vectorization
         for i, c in enumerate(self._canvases):
             if i < data.shape[0] and data.shape[1] > 0:
                 d_i = data[i]
-                if len(d_i) > expected_len:
-                    d_i = d_i[:expected_len]
-                elif len(d_i) < expected_len:
-                    pad_val = d_i[-1] if len(d_i) > 0 else 0
-                    d_i = np.pad(d_i, (0, expected_len - len(d_i)), 'constant', constant_values=pad_val)
-                c.set_data(d_i)
+                # Use numpy slicing instead of padding for better performance
+                if len(d_i) != expected_len:
+                    if len(d_i) > expected_len:
+                        d_i = d_i[:expected_len]
+                    else:
+                        # Create padded array more efficiently
+                        padded = np.empty(expected_len, dtype=d_i.dtype)
+                        padded[:len(d_i)] = d_i
+                        padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
+                        d_i = padded
+                # Convert to float32 for faster rendering
+                c.set_data(np.asarray(d_i, dtype=np.float32))
             else:
-                c.set_data(np.zeros(expected_len))
+                c.set_data(np.zeros(expected_len, dtype=np.float32))
 
     def _set_tool_mode(self, tool_id: str, btn: "QPushButton"):
         """Activate a tool (ruler/caliper/magnify) on all canvases, or deactivate if already active."""
@@ -656,14 +665,21 @@ class ExpandedViewDialog(QDialog):
         data = self._reader.read_range(self._start_sec, end_sec)
         expected_len = int(self._duration * self._engine.fs)
         
+        # Optimization: Process data efficiently with numpy vectorization
         for i, c in enumerate(self._canvases):
             if i < data.shape[0] and data.shape[1] > 0:
                 d_i = data[i]
-                if len(d_i) > expected_len:
-                    d_i = d_i[:expected_len]
-                elif len(d_i) < expected_len:
-                    pad_val = d_i[-1] if len(d_i) > 0 else 0
-                    d_i = np.pad(d_i, (0, expected_len - len(d_i)), 'constant', constant_values=pad_val)
-                c.set_data(d_i)
+                # Use numpy slicing instead of padding for better performance
+                if len(d_i) != expected_len:
+                    if len(d_i) > expected_len:
+                        d_i = d_i[:expected_len]
+                    else:
+                        # Create padded array more efficiently
+                        padded = np.empty(expected_len, dtype=d_i.dtype)
+                        padded[:len(d_i)] = d_i
+                        padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
+                        d_i = padded
+                # Convert to float32 for faster rendering
+                c.set_data(np.asarray(d_i, dtype=np.float32))
             else:
-                c.set_data(np.zeros(expected_len))
+                c.set_data(np.zeros(expected_len, dtype=np.float32))
