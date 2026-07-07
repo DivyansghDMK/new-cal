@@ -400,6 +400,30 @@ def _show_message_box(parent, icon, title, text, buttons=QMessageBox.Ok, default
     msg_box.setText(text)
     msg_box.setStandardButtons(buttons)
     msg_box.setDefaultButton(default_button)
+    # Set dark theme style with white text
+    msg_box.setStyleSheet(f"""
+        QMessageBox {{
+            background-color: {UI_PANEL};
+        }}
+        QMessageBox QLabel {{
+            color: {UI_TEXT};
+            background-color: transparent;
+        }}
+        QMessageBox QPushButton {{
+            background-color: {UI_PANEL_ALT};
+            color: {UI_TEXT};
+            border: 1px solid {UI_BORDER};
+            border-radius: 5px;
+            padding: 7px 20px;
+            min-width: 70px;
+        }}
+        QMessageBox QPushButton:hover {{
+            background-color: #1A2C49;
+        }}
+        QMessageBox QPushButton:pressed {{
+            background-color: {UI_BORDER};
+        }}
+    """)
     return msg_box.exec_()
 
 
@@ -4422,7 +4446,19 @@ class HolterRecordManagementPanel(QWidget):
         self._table = QTableWidget(0, len(cols))
         self._table.setHorizontalHeaderLabels(cols)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._table.setStyleSheet(_table_style())
+        self._table.setStyleSheet(
+            _table_style() +
+            """
+            QTableWidget::item:selected {
+                background-color: rgba(66, 153, 225, 70);
+                color: #F3F7FB;
+                border: 1px solid rgba(255, 255, 255, 90);
+            }
+            QTableWidget::item:selected:active {
+                background-color: rgba(66, 153, 225, 110);
+            }
+            """
+        )
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -6592,8 +6628,22 @@ class HolterEditEventPanel(QWidget):
         self._ev_table = QTableWidget(0, len(cols))
         self._ev_table.setHorizontalHeaderLabels(cols)
         self._ev_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._ev_table.setStyleSheet(_table_style())
+        self._ev_table.setStyleSheet(
+            _table_style() +
+            """
+            QTableWidget::item:selected {
+                background-color: rgba(66, 153, 225, 70);
+                color: #F3F7FB;
+                border: 1px solid rgba(255, 255, 255, 90);
+            }
+            QTableWidget::item:selected:active {
+                background-color: rgba(66, 153, 225, 110);
+            }
+            """
+        )
         self._ev_table.verticalHeader().setVisible(False)
+        self._ev_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._ev_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._ev_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._ev_table.cellClicked.connect(self._on_click)
         left_layout.addWidget(self._ev_table, 1)
@@ -6763,6 +6813,7 @@ class HolterEditEventPanel(QWidget):
 
     def _on_click(self, row, col):
         if row < len(self._events):
+            self._ev_table.selectRow(row)
             self.seek_requested.emit(self._events[row]['timestamp'])
             item = self._ev_table.item(row, 0)
             if item:
@@ -6874,8 +6925,24 @@ class HolterEditStripsPanel(QWidget):
         self._ev_table = QTableWidget(0, len(cols))
         self._ev_table.setHorizontalHeaderLabels(cols)
         self._ev_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._ev_table.setStyleSheet(_table_style())
+        self._ev_table.setStyleSheet(
+            _table_style() +
+            """
+            QTableWidget::item:selected {
+                background-color: rgba(66, 153, 225, 70);
+                color: #F3F7FB;
+                border: 1px solid rgba(255, 255, 255, 90);
+            }
+            QTableWidget::item:selected:active {
+                background-color: rgba(66, 153, 225, 110);
+            }
+            """
+        )
         self._ev_table.verticalHeader().setVisible(False)
+        self._ev_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._ev_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._ev_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._ev_table.cellClicked.connect(self._on_event_clicked)
         left_layout.addWidget(self._ev_table, 1)
 
         nav_row = QHBoxLayout()
@@ -7079,6 +7146,11 @@ class HolterEditStripsPanel(QWidget):
         if value and value > 0:
             return f"{float(value):.0f} bpm"
         return "-- bpm"
+
+    def _on_event_clicked(self, row, col):
+        if row < len(self._events):
+            self._ev_table.selectRow(row)
+            self.seek_requested.emit(self._events[row]['timestamp'])
 
     def _build_focus_cards(self):
         summary = self._summary or {}
@@ -8532,6 +8604,20 @@ class HolterMainWindow(QDialog):
             self._replay_engine = None
         self.session_dir = None
         return True
+
+    def changeEvent(self, event):
+        """Handle window state changes to preserve maximized state."""
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            # When window state changes, re-apply maximized state
+            if self.isVisible():
+                QTimer.singleShot(100, self.showMaximized)
+
+    def showEvent(self, event):
+        """Ensure window maintains maximized state when shown."""
+        super().showEvent(event)
+        # Restore maximized state when window is shown
+        QTimer.singleShot(50, self.showMaximized)
 
     def closeEvent(self, event):
         if self._writer:
