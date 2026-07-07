@@ -502,20 +502,50 @@ class HolterFullDisclosureDialog(QDialog):
         self._update_time_and_arrhythmia_labels(start_sec, end_sec)
 
         read_end_sec = min(end_sec, eff_dur)
+        
+        # Read data efficiently
         data = self._reader.read_range(start_sec, read_end_sec)
         expected_len = int(self._window_sec * self._engine.fs)
+        
+        # Get beat annotations for this window
+        beat_annotations = []
+        try:
+            for m in self._engine._metrics:
+                all_beats = m.get('all_beats', [])
+                if not all_beats:
+                    continue
+                for beat in all_beats:
+                    ts = float(beat.get('timestamp', 0.0))
+                    if start_sec <= ts <= end_sec:
+                        beat_annotations.append({
+                            'timestamp': ts,
+                            'label': str(beat.get('label', 'N'))
+                        })
+            beat_annotations.sort(key=lambda b: b['timestamp'])
+        except Exception as e:
+            print(f"[Full Disclosure] Error loading beat annotations: {e}")
+        
+        # Generate time array for ECG strips
+        x = np.linspace(0, self._window_sec, expected_len)
 
+        # Optimization: Process data in parallel using numpy vectorization
         for i, c in enumerate(self._canvases):
             if i < data.shape[0] and data.shape[1] > 0:
                 d_i = data[i]
-                if len(d_i) > expected_len:
-                    d_i = d_i[:expected_len]
-                elif len(d_i) < expected_len:
-                    pad_val = d_i[-1] if len(d_i) > 0 else 0
-                    d_i = np.pad(d_i, (0, expected_len - len(d_i)), 'constant', constant_values=pad_val)
-                c.set_data(d_i)
+                # Use numpy slicing instead of padding for better performance
+                if len(d_i) != expected_len:
+                    if len(d_i) > expected_len:
+                        d_i = d_i[:expected_len]
+                    else:
+                        # Create padded array more efficiently
+                        padded = np.empty(expected_len, dtype=d_i.dtype)
+                        padded[:len(d_i)] = d_i
+                        padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
+                        d_i = padded
+                # Convert to float32 for faster rendering and pass beat annotations
+                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec)
             else:
-                c.set_data(np.zeros(expected_len))
+                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec)
 
     def _set_tool_mode(self, tool_id: str, btn: "QPushButton"):
         """Activate a tool (ruler/caliper/magnify) on all canvases, or deactivate if already active."""
@@ -656,14 +686,42 @@ class ExpandedViewDialog(QDialog):
         data = self._reader.read_range(self._start_sec, end_sec)
         expected_len = int(self._duration * self._engine.fs)
         
+        # Get beat annotations for this window
+        beat_annotations = []
+        try:
+            for m in self._engine._metrics:
+                all_beats = m.get('all_beats', [])
+                if not all_beats:
+                    continue
+                for beat in all_beats:
+                    ts = float(beat.get('timestamp', 0.0))
+                    if self._start_sec <= ts <= end_sec:
+                        beat_annotations.append({
+                            'timestamp': ts,
+                            'label': str(beat.get('label', 'N'))
+                        })
+            beat_annotations.sort(key=lambda b: b['timestamp'])
+        except Exception as e:
+            print(f"[Expanded View] Error loading beat annotations: {e}")
+        
+        # Generate time array for ECG strips
+        x = np.linspace(0, self._duration, expected_len)
+        
+        # Optimization: Process data efficiently with numpy vectorization
         for i, c in enumerate(self._canvases):
             if i < data.shape[0] and data.shape[1] > 0:
                 d_i = data[i]
-                if len(d_i) > expected_len:
-                    d_i = d_i[:expected_len]
-                elif len(d_i) < expected_len:
-                    pad_val = d_i[-1] if len(d_i) > 0 else 0
-                    d_i = np.pad(d_i, (0, expected_len - len(d_i)), 'constant', constant_values=pad_val)
-                c.set_data(d_i)
+                # Use numpy slicing instead of padding for better performance
+                if len(d_i) != expected_len:
+                    if len(d_i) > expected_len:
+                        d_i = d_i[:expected_len]
+                    else:
+                        # Create padded array more efficiently
+                        padded = np.empty(expected_len, dtype=d_i.dtype)
+                        padded[:len(d_i)] = d_i
+                        padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
+                        d_i = padded
+                # Convert to float32 for faster rendering and pass beat annotations
+                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
             else:
-                c.set_data(np.zeros(expected_len))
+                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
