@@ -1230,6 +1230,8 @@ class HolterReplayPanel(QWidget):
         self._lead_names_ordered = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
         self._lead_strips = {}   # lead_name -> ECGStripCanvas
         self._ch_strips = []     # backward-compat list for gain/speed handlers
+        self._detected_r_peaks = []  # Store R-peak timestamps for vertical line overlay
+        
         for lead in self._lead_names_ordered:
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
@@ -1593,9 +1595,11 @@ class HolterReplayPanel(QWidget):
             try:
                 current_pos = float(self._replay_engine.current_position())
                 self._replay_engine.seek(current_pos)
-                self._replay_panel.set_replay_frame(
-                    self._replay_engine.get_all_leads_data(window_sec=float(self._strip_length_sec))
-                )
+                window_sec = float(self._strip_length_sec)
+                data = self._replay_engine.get_all_leads_data(window_sec=window_sec)
+                beat_annotations = self._replay_engine.get_beat_annotations(window_sec=window_sec)
+                start_sec = self._replay_engine.current_position() - window_sec / 2
+                self._replay_panel.set_replay_frame(data, beat_annotations=beat_annotations, start_sec=start_sec)
             except Exception:
                 pass
         elif getattr(self, '_live_source', None) is not None and hasattr(self, '_replay_panel'):
@@ -2041,7 +2045,7 @@ class HolterReplayPanel(QWidget):
             self._rr_trend_zoom.set_points(recent)
         self._update_overview_table(metrics_list, rr_n)
             
-    def set_replay_frame(self, data):
+    def set_replay_frame(self, data, beat_annotations=None, start_sec=0.0):
         """Update all 12 lead strips and compute Lorenz from data when no RR metrics."""
         if data is None or data.shape[0] < 12:
             return
@@ -2082,13 +2086,13 @@ class HolterReplayPanel(QWidget):
         lead_strips = getattr(self, "_lead_strips", {})
         for idx, lead in enumerate(lead_names):
             if idx < data.shape[0] and lead in lead_strips:
-                lead_strips[lead].set_data(x, data[idx].copy())
+                lead_strips[lead].set_data(x, data[idx].copy(), beat_annotations=beat_annotations, start_sec=start_sec)
 
         # Mini strip follows the selected lead from the dropdown
         if hasattr(self, "_mini_strip") and data.shape[0] > 0:
             lead_idx = max(0, min(int(getattr(self, "_selected_lead_idx", 1)), data.shape[0] - 1))
             selected_lead = self._lead_combo.currentText() if hasattr(self, "_lead_combo") else lead_names[lead_idx]
-            self._mini_strip.set_data(x, data[lead_idx].copy())
+            self._mini_strip.set_data(x, data[lead_idx].copy(), beat_annotations=beat_annotations, start_sec=start_sec)
             try:
                 self._mini_strip.lead_name = selected_lead
             except Exception:
@@ -2256,10 +2260,9 @@ class LorenzCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(QPen(QColor("#1C2C43"), 1))
         painter.drawRect(left, top, plot_w, plot_h)
+        # Draw only horizontal grid lines (vertical lines removed per user request)
         for frac in (0.25, 0.5, 0.75):
-            x = int(left + frac * plot_w)
             y = int(top + frac * plot_h)
-            painter.drawLine(x, top, x, top + plot_h)
             painter.drawLine(left, y, left + plot_w, y)
 
         if x_max > x_min:
@@ -2296,12 +2299,13 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = ""):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
         self._pen_width = pen_width
         self.lead_name = lead_name
+        self._show_vertical_lines = show_vertical_lines  # Control whether to show R-peak vertical lines
         self._gain = 1.0
         self._speed = 25
         self.setFixedHeight(height)
@@ -2380,7 +2384,51 @@ class ECGStripCanvas(QWidget):
             
         self._beat_annotations = beat_annotations or []
         self._start_sec = start_sec
+        self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
         self.update()
+    
+    def _calculate_rr_intervals(self):
+        """Calculate RR intervals (N-N intervals) between consecutive R-peaks."""
+        if not self._beat_annotations:
+            lead_name = getattr(self, 'lead_name', 'Unknown')
+            print(f"[ECGStripCanvas] No beat annotations for {lead_name}")
+            return []
+        
+        # Filter and sort beats by timestamp
+        beats_in_window = []
+        end_sec = self._start_sec + (len(self._data) / self._fs) if len(self._data) > 0 else self._start_sec
+        
+        for beat in self._beat_annotations:
+            ts = beat.get('timestamp', 0.0)
+            if self._start_sec <= ts <= end_sec:
+                beats_in_window.append({
+                    'timestamp': ts,
+                    'label': beat.get('label', 'N')
+                })
+        
+        beats_in_window.sort(key=lambda x: x['timestamp'])
+        
+        # Calculate intervals between consecutive beats
+        intervals = []
+        for i in range(len(beats_in_window) - 1):
+            curr_beat = beats_in_window[i]
+            next_beat = beats_in_window[i + 1]
+            
+            # Calculate RR interval in ms
+            rr_ms = (next_beat['timestamp'] - curr_beat['timestamp']) * 1000.0
+            
+            intervals.append({
+                'start_ts': curr_beat['timestamp'],
+                'end_ts': next_beat['timestamp'],
+                'rr_ms': rr_ms,
+                'start_label': curr_beat['label'],
+                'end_label': next_beat['label']
+            })
+        
+        lead_name = getattr(self, 'lead_name', 'Unknown')
+        print(f"[ECGStripCanvas] {lead_name}: Found {len(beats_in_window)} beats, {len(intervals)} intervals in window [{self._start_sec:.2f}, {end_sec:.2f}]s")
+        
+        return intervals
 
     def mousePressEvent(self, event):
         if self._mode == TOOL_MAGNIFY and event.button() == Qt.LeftButton:
@@ -2503,38 +2551,185 @@ class ECGStripCanvas(QWidget):
             y2 = h - (d[i] - mn) / rng * h
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
             
-        # --- Draw Clinical Beat Annotations ---
-        if hasattr(self, '_beat_annotations') and self._beat_annotations:
-            font = painter.font()
-            font.setPixelSize(10)
-            font.setBold(True)
-            painter.setFont(font)
+        # --- Draw Clinical Beat Annotations (R-peaks as N labels) ONLY on Lead I ---
+        lead_name = getattr(self, 'lead_name', '')
+        show_vertical_lines = getattr(self, '_show_vertical_lines', True)
+        
+        if lead_name == 'I' and show_vertical_lines:
+            # Detect R-peaks in real-time from the ECG signal
+            detected_peaks = []
+            special_beats = {}  # Map timestamp to special beat labels (S, V, P, AF, X)
             
-            end_sec = self._start_sec + len(d) / self._fs
+            # First, get special beats from annotations if available
+            if hasattr(self, '_beat_annotations') and self._beat_annotations:
+                end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
+                for beat in self._beat_annotations:
+                    ts = beat['timestamp']
+                    lbl = beat.get('label', 'N')
+                    if self._start_sec <= ts <= end_sec and lbl != 'N':
+                        special_beats[ts] = lbl
             
-            for beat in self._beat_annotations:
-                ts = beat['timestamp']
-                # Check if beat is within the visible window
-                if self._start_sec <= ts <= end_sec:
+            # Detect R-peaks from the signal
+            if len(d) > 50:
+                try:
+                    from scipy.signal import find_peaks
+                    
+                    # Simple R-peak detection
+                    # 1. Find local maxima in the signal
+                    signal = np.asarray(d, dtype=float)
+                    
+                    # Normalize signal for better peak detection
+                    sig_mean = np.mean(signal)
+                    sig_std = np.std(signal)
+                    if sig_std > 0:
+                        normalized = (signal - sig_mean) / sig_std
+                    else:
+                        normalized = signal - sig_mean
+                    
+                    # Find peaks with minimum distance (0.3s = 150 samples at 500Hz)
+                    # and height threshold (signal should be above mean)
+                    min_distance = int(0.3 * self._fs)  # Minimum 300ms between R-peaks
+                    peaks, properties = find_peaks(normalized, 
+                                                   distance=min_distance,
+                                                   height=0.5,  # Above 0.5 std
+                                                   prominence=0.3)
+                    
+                    # Convert peak indices to timestamps
+                    for peak_idx in peaks:
+                        ts = self._start_sec + (peak_idx / self._fs)
+                        detected_peaks.append(ts)
+                    
+                    # Store detected peaks in parent panel for cross-lead vertical lines
+                    parent = self.parent()
+                    while parent is not None:
+                        if hasattr(parent, '_detected_r_peaks'):
+                            parent._detected_r_peaks = detected_peaks
+                            parent._r_peak_start_sec = self._start_sec
+                            parent._r_peak_data_len = len(d)
+                            break
+                        parent = parent.parent()
+                        
+                except Exception as e:
+                    print(f"[ECGStripCanvas] R-peak detection error: {e}")
+            
+            # Draw N labels AND vertical lines for all detected peaks on Lead I
+            if detected_peaks:
+                font = painter.font()
+                font.setPixelSize(10)
+                font.setBold(True)
+                painter.setFont(font)
+                
+                end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
+                
+                for ts in detected_peaks:
                     # Calculate x coordinate
-                    pct = (ts - self._start_sec) / (end_sec - self._start_sec)
+                    pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
                     
-                    lbl = beat['label']
-                    # Color code labels: Normal=White, PVC=Red, PAC=Cyan, AF=Magenta, Pause/Block=Yellow
+                    # Draw vertical yellow line at R-peak position on Lead I (only if enabled)
+                    if show_vertical_lines:
+                        painter.setPen(QPen(QColor("#FFFF00"), 1))
+                        painter.drawLine(bx, 0, bx, h)
+                    
+                    # Check if this peak has a special label
+                    lbl = 'N'  # Default to N
+                    for special_ts, special_lbl in special_beats.items():
+                        if abs(ts - special_ts) < 0.05:  # Within 50ms
+                            lbl = special_lbl
+                            break
+                    
+                    # Color code labels
                     if lbl == 'N':
                         color = COL_WHITE
                     elif lbl == 'V':
                         color = "#FF3333"
                     elif lbl == 'S':
                         color = "#00FFFF"
-                    elif lbl == 'AF':
+                    elif lbl in ['AF', 'P']:
                         color = "#FF00FF"
                     else:
                         color = "#FFFF00"
                         
                     painter.setPen(QPen(QColor(color)))
-                    painter.drawText(bx - 4, 12, lbl)
+                    # Shift label to the left by 8 pixels to avoid overlapping with yellow line
+                    painter.drawText(bx - 8, 12, lbl)
+                
+                # Calculate and store RR intervals from detected peaks
+                self._rr_intervals = []
+                for i in range(len(detected_peaks) - 1):
+                    curr_ts = detected_peaks[i]
+                    next_ts = detected_peaks[i + 1]
+                    rr_ms = (next_ts - curr_ts) * 1000.0
+                    
+                    self._rr_intervals.append({
+                        'start_ts': curr_ts,
+                        'end_ts': next_ts,
+                        'rr_ms': rr_ms,
+                        'start_label': 'N',
+                        'end_label': 'N'
+                    })
+        
+        # --- Draw vertical yellow lines spanning all leads (for non-Lead-I strips) ---
+        # Lead I handles its own line drawing above, other leads draw the lines here
+        elif lead_name != 'I' and show_vertical_lines:  # Only draw if flag is enabled
+            parent = self.parent()
+            while parent is not None:
+                if hasattr(parent, '_detected_r_peaks') and hasattr(parent, '_r_peak_start_sec'):
+                    detected_peaks = parent._detected_r_peaks
+                    start_sec = parent._r_peak_start_sec
+                    data_len = parent._r_peak_data_len if hasattr(parent, '_r_peak_data_len') else 0
+                    
+                    if detected_peaks and data_len > 0:
+                        end_sec = start_sec + (data_len / self._fs) if data_len > 0 else start_sec
+                        
+                        for ts in detected_peaks:
+                            pct = (ts - start_sec) / (end_sec - start_sec) if (end_sec - start_sec) > 0 else 0.0
+                            bx = int(pct * w)
+                            
+                            # Draw vertical yellow line
+                            painter.setPen(QPen(QColor("#FFFF00"), 1))
+                            painter.drawLine(bx, 0, bx, h)
+                    break
+                parent = parent.parent()
+        
+        # --- Draw N-N (R-R) Interval Labels ONLY on Lead I ---
+        if lead_name == 'I' and hasattr(self, '_rr_intervals') and self._rr_intervals:
+            font = painter.font()
+            font.setPixelSize(9)
+            font.setBold(False)
+            painter.setFont(font)
+            
+            end_sec = self._start_sec + len(d) / self._fs
+            
+            for interval in self._rr_intervals:
+                start_ts = interval['start_ts']
+                end_ts = interval['end_ts']
+                rr_ms = interval['rr_ms']
+                
+                # Check if interval is within visible window
+                if (self._start_sec <= start_ts <= end_sec) or (self._start_sec <= end_ts <= end_sec):
+                    # Calculate x coordinates for start and end
+                    start_pct = (start_ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                    end_pct = (end_ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                    
+                    start_x = int(start_pct * w)
+                    end_x = int(end_pct * w)
+                    mid_x = (start_x + end_x) // 2
+                    
+                    # Draw interval value between the two R-peaks
+                    # Position it at mid-height of the waveform, slight offset from top
+                    interval_text = f"{int(rr_ms)}"
+                    
+                    # Color: yellow for long intervals (>1200ms), orange for short (<600ms), white otherwise
+                    if rr_ms > 1200:
+                        color = "#FFFF00"  # Yellow for pauses
+                    elif rr_ms < 600:
+                        color = "#FFA500"  # Orange for fast beats
+                    else:
+                        color = "#CCCCCC"  # Light gray for normal intervals
+                    
+                    painter.setPen(QPen(QColor(color)))
+                    painter.drawText(mid_x - 10, 22, interval_text)
                     
         if self._mode == TOOL_RULER and self._start_pos and self._curr_pos:
             rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
@@ -2883,13 +3078,14 @@ class HolterRRTrendCanvas(QWidget):
             return inner.left() + int(((t - t_min) / t_rng) * iw)
 
         # â”€â”€ Vertical grid every ~2 hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        grid_interval = 7200.0  # 2 hours in seconds
-        t_grid = (int(t_min / grid_interval) + 1) * grid_interval
-        while t_grid < t_max:
-            xp = to_x(t_grid)
-            painter.setPen(QPen(QColor("#1e3d5a"), 1, Qt.DashLine))
-            painter.drawLine(xp, inner.top(), xp, inner.bottom())
-            t_grid += grid_interval
+        # Vertical grid removed per user request
+        # grid_interval = 7200.0  # 2 hours in seconds
+        # t_grid = (int(t_min / grid_interval) + 1) * grid_interval
+        # while t_grid < t_max:
+        #     xp = to_x(t_grid)
+        #     painter.setPen(QPen(QColor("#1e3d5a"), 1, Qt.DashLine))
+        #     painter.drawLine(xp, inner.top(), xp, inner.bottom())
+        #     t_grid += grid_interval
 
         # â”€â”€ Scatter dots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         painter.setPen(Qt.NoPen)
@@ -3032,7 +3228,8 @@ class HolterExpertReviewPanel(QWidget):
             lbl.setFixedWidth(34)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead)
+            # Disable vertical lines for 12-Lead ECG Overview
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False)
             strip.set_gain(1.0)
             self._expert_lead_strips[lead] = strip
             row_h.addWidget(lbl)
@@ -3042,14 +3239,14 @@ class HolterExpertReviewPanel(QWidget):
         leads_scroll.setWidget(leads_container)
         center_l.addWidget(leads_scroll, 1)
 
-        # Rhythm strip at bottom (Lead II)
+        # Rhythm strip at bottom (Lead II) - also disable vertical lines
         rhythm_row = QHBoxLayout()
         rhythm_row.setSpacing(4)
         rlbl = QLabel("II")
         rlbl.setFixedWidth(34)
         rlbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rlbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9)
+        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False)
         rhythm_row.addWidget(rlbl)
         rhythm_row.addWidget(self._mini, 1)
         center_l.addLayout(rhythm_row)
@@ -3202,7 +3399,7 @@ class HolterExpertReviewPanel(QWidget):
             self._overview.setItem(i, 0, ki)
             self._overview.setItem(i, 1, vi)
 
-    def set_replay_frame(self, data):
+    def set_replay_frame(self, data, beat_annotations=None, start_sec=0.0):
         if data is None or not isinstance(data, np.ndarray) or data.ndim != 2 or data.shape[1] == 0:
             return
         n = data.shape[1]
@@ -3212,12 +3409,12 @@ class HolterExpertReviewPanel(QWidget):
             if i < data.shape[0]:
                 strip = self._expert_lead_strips.get(lead)
                 if strip:
-                    strip.set_data(x, data[i].copy())
+                    strip.set_data(x, data[i].copy(), beat_annotations=beat_annotations, start_sec=start_sec)
         # Rhythm strip: Lead II (index 1)
         if data.shape[0] > 1:
-            self._mini.set_data(x, data[1].copy())
+            self._mini.set_data(x, data[1].copy(), beat_annotations=beat_annotations, start_sec=start_sec)
         elif data.shape[0] > 0:
-            self._mini.set_data(x, data[0].copy())
+            self._mini.set_data(x, data[0].copy(), beat_annotations=beat_annotations, start_sec=start_sec)
 
     def _on_template_clicked(self, row, _col):
         if 0 <= row < len(self._template_rows):
@@ -5230,7 +5427,8 @@ class HolterAFPanel(QWidget):
             lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
             scroll_layout.addWidget(lbl)
             
-            strip = ECGStripCanvas(height=120)
+            # Disable vertical lines and labels for AF Analysis panel
+            strip = ECGStripCanvas(height=120, show_vertical_lines=False)
             strip.lead_name = lead_names[i]
             scroll_layout.addWidget(strip)
             self._thumb_strips.append(strip)
@@ -5238,7 +5436,8 @@ class HolterAFPanel(QWidget):
         scroll_area.setWidget(scroll_content)
         right_layout.addWidget(scroll_area, 1)
 
-        self._af_ecg_strip = ECGStripCanvas(height=70)
+        # Disable vertical lines for bottom ECG strip too
+        self._af_ecg_strip = ECGStripCanvas(height=70, show_vertical_lines=False)
         right_layout.addWidget(self._af_ecg_strip)
 
         self._af_lorenz = LorenzCanvas()
@@ -5376,7 +5575,8 @@ class HolterSTPanel(QWidget):
             lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
             scroll_layout.addWidget(lbl)
             
-            strip = ECGStripCanvas(height=80)
+            # Disable vertical lines for ST Tendency panel
+            strip = ECGStripCanvas(height=80, show_vertical_lines=False)
             strip.lead_name = lead_names[i]
             scroll_layout.addWidget(strip)
             self._ch_strips.append(strip)
@@ -8280,14 +8480,16 @@ class HolterMainWindow(QDialog):
                 # Use the replay panel's current strip length (changes with paper speed)
                 window_sec = self._current_replay_window_sec()
                 data = self._replay_engine.get_all_leads_data(window_sec=float(window_sec))
+                beat_annotations = self._replay_engine.get_beat_annotations(window_sec=float(window_sec))
+                start_sec = self._replay_engine.current_position() - window_sec / 2
                 if hasattr(self, '_wave_panel'):
-                    self._wave_panel.set_replay_frame(data)
-                self._broadcast_replay_frame(data)
+                    self._wave_panel.set_replay_frame(data, beat_annotations=beat_annotations, start_sec=start_sec)
+                self._broadcast_replay_frame(data, beat_annotations=beat_annotations, start_sec=start_sec)
             except Exception:
                 pass
 
 
-    def _broadcast_replay_frame(self, data):
+    def _broadcast_replay_frame(self, data, beat_annotations=None, start_sec=0.0):
         for panel in [getattr(self, p, None) for p in [
             '_replay_panel', '_lorenz_panel', '_hist_panel', '_af_panel',
             '_st_panel', '_edit_event_panel', '_edit_strips_panel', '_events_panel',
@@ -8295,7 +8497,13 @@ class HolterMainWindow(QDialog):
         ]]:
             if panel and hasattr(panel, 'set_replay_frame'):
                 try:
-                    panel.set_replay_frame(data)
+                    panel.set_replay_frame(data, beat_annotations=beat_annotations, start_sec=start_sec)
+                except TypeError:
+                    # Fallback for panels that don't accept beat_annotations
+                    try:
+                        panel.set_replay_frame(data)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 

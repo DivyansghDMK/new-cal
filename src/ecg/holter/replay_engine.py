@@ -247,6 +247,32 @@ class HolterReplayEngine:
         start, end = self._window_bounds(window_sec)
         return self._reader.read_range(start, end)
 
+    def get_beat_annotations(self, window_sec: float = 10.0) -> List[dict]:
+        """
+        Returns beat annotations (R-peaks with labels) for the current window.
+        Returns list of dicts with 'timestamp' and 'label' keys.
+        """
+        start, end = self._window_bounds(window_sec)
+        beats = []
+        
+        # Gather all beats from metrics that fall within the window
+        for m in self._metrics:
+            all_beats = m.get('all_beats', [])
+            if not all_beats:
+                continue
+            
+            for beat in all_beats:
+                ts = float(beat.get('timestamp', 0.0))
+                if start <= ts <= end:
+                    beats.append({
+                        'timestamp': ts,
+                        'label': str(beat.get('label', 'N'))
+                    })
+        
+        # Sort by timestamp
+        beats.sort(key=lambda b: b['timestamp'])
+        return beats
+
     def get_metrics_at(self, target_sec: float) -> Optional[dict]:
         """Returns the metrics chunk closest to target_sec."""
         if not self._metrics:
