@@ -410,6 +410,7 @@ class HolterFullDisclosureDialog(QDialog):
         self.btn_gain.setText(f"Gain: {self._gain_label}")
         for c in self._canvases:
             c.set_gain(self._gain)
+            c.update()  # Force repaint with new gain
         # Restore selection box when gain is changed
         self._deactivate_tools()
 
@@ -725,3 +726,207 @@ class ExpandedViewDialog(QDialog):
                 c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
             else:
                 c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
+
+class HolterToolHandlers:
+    """
+    Centralized button/tool handler implementations for Holter UI.
+    Extracted from holter_ui.py to reduce file size and improve maintainability.
+    """
+    
+    @staticmethod
+    def handle_patient_information(parent):
+        """Show patient information dialog."""
+        if hasattr(parent, '_show_patient_information'):
+            parent._show_patient_information()
+    
+    @staticmethod
+    def handle_full_disclosure(parent):
+        """Open Full Disclosure dialog."""
+        if hasattr(parent, "_replay_engine") and parent._replay_engine:
+            from .holter_full_disclosure import HolterFullDisclosureDialog
+            dialog = HolterFullDisclosureDialog(parent._replay_engine, parent)
+            dialog.exec_()
+        else:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(parent, "No Data", "No valid replay engine found for Full Disclosure.")
+    
+    @staticmethod
+    def handle_goto_template(parent):
+        """Show tool information popup."""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtCore import Qt
+        
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Holter ECG Software Tools - Explained")
+        box.setTextFormat(Qt.PlainText)
+        box.setText(
+            "Ruler: measure interval/amplitude and BPM.\n"
+            "Caliper: compare regularity and coupling across beats.\n"
+            "Magnify: zoom-highlight subtle waveform details.\n"
+            "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
+            "End-to-end flow:\n"
+            "Raw recording -> Gain optimization -> Magnify flagged events -> "
+            "Measure intervals (QT/PR/pause) -> Parallel comparison -> Final report."
+        )
+        box.setStyleSheet(
+            "QMessageBox{background:#10151c;color:#f3f7fb;}"
+            "QLabel{color:#f3f7fb;font-size:12px;}"
+            "QPushButton{background:#1f6feb;color:white;border:1px solid #4b82d0;border-radius:4px;padding:6px 14px;min-width:70px;}"
+            "QPushButton:hover{background:#2d7df2;}"
+        )
+        box.exec_()
+    
+    @staticmethod
+    def handle_gain_settings(parent, btn=None):
+        """Cycle through gain settings."""
+        try:
+            from .theme import GAINS
+        except ImportError:
+            from ecg.holter.theme import GAINS
+        
+        gains = [g / 10.0 for g in GAINS]
+        curr_g = getattr(parent, '_curr_gain_idx', 1)
+        next_g = (curr_g + 1) % len(gains)
+        parent._curr_gain_idx = next_g
+        val = gains[next_g]
+        
+        for s in getattr(parent, "_ch_strips", []):
+            s.set_gain(val)
+            s.update()  # Force repaint with new gain
+        if hasattr(parent, "_mini_strip") and parent._mini_strip:
+            parent._mini_strip.set_gain(val)
+            parent._mini_strip.update()  # Force repaint
+        if btn:
+            btn.setText(f"Gain: {int(val*10)}mm/mV")
+    
+    @staticmethod
+    def handle_paper_speed(parent, btn=None):
+        """Cycle through paper speed settings."""
+        try:
+            from .theme import PAPER_SPEEDS
+        except ImportError:
+            from ecg.holter.theme import PAPER_SPEEDS
+        
+        speeds = PAPER_SPEEDS
+        curr_s = getattr(parent, '_curr_speed_idx', 1)
+        next_s = (curr_s + 1) % len(speeds)
+        parent._curr_speed_idx = next_s
+        val = speeds[next_s]
+        
+        for s in getattr(parent, "_ch_strips", []):
+            s.set_paper_speed(int(val))
+        if hasattr(parent, "_mini_strip"):
+            parent._mini_strip.set_paper_speed(int(val))
+        if btn:
+            btn.setText(f"Paper speed:{val}mm/s")
+        
+        # Adjust strip_length_sec so the replay engine delivers the right amount of data.
+        parent._strip_length_sec = 10.0 * (25.0 / max(1.0, float(val)))
+        if getattr(parent, "_replay_engine", None):
+            try:
+                parent._replay_engine.set_window_length(parent._strip_length_sec)
+            except Exception:
+                pass
+        
+        # Re-seek to force data reload with the new strip length
+        try:
+            current_pos = parent._slider_value_to_sec(parent._slider.value())
+            parent.seek_requested.emit(current_pos)
+        except Exception:
+            pass
+    
+    @staticmethod
+    def handle_strip_length(parent, btn=None):
+        """Cycle through strip length settings."""
+        lengths = [3, 7, 10, 15, 30]
+        curr_l = getattr(parent, '_curr_length_idx', 1)
+        next_l = (curr_l + 1) % len(lengths)
+        parent._curr_length_idx = next_l
+        val = lengths[next_l]
+        parent._strip_length_sec = float(val)
+        
+        if getattr(parent, "_replay_engine", None):
+            try:
+                parent._replay_engine.set_window_length(parent._strip_length_sec)
+            except Exception:
+                pass
+        if btn:
+            btn.setText(f"Strip Length:{val}s")
+    
+    @staticmethod
+    def apply_tool_mode_to_strips(parent, mode):
+        """Apply tool mode to all ECG strips."""
+        try:
+            from .tool_engine import canonical_tool
+        except ImportError:
+            from ecg.holter.tool_engine import canonical_tool
+        
+        canonical_mode = canonical_tool(mode)
+        parent._tool_engine.set_tool(canonical_mode)
+        
+        for strip in getattr(parent, "_ch_strips", []):
+            if hasattr(strip, 'set_mode'):
+                strip.set_mode(canonical_mode)
+        if hasattr(parent._mini_strip, 'set_mode'):
+            parent._mini_strip.set_mode(canonical_mode)
+        for strip in getattr(parent, "_template_thumbs", []):
+            if hasattr(strip, 'set_mode'):
+                strip.set_mode(canonical_mode)
+    
+    @staticmethod
+    def handle_add_event(parent):
+        """Open Add Event dialog."""
+        try:
+            from .add_event_dialog import AddEventDialog
+        except ImportError:
+            from ecg.holter.add_event_dialog import AddEventDialog
+        
+        from datetime import datetime
+        
+        # Get current time and position
+        start_time = datetime.now()
+        current_sec = 0.0
+        hr = 0.0
+        
+        if hasattr(parent, '_replay_engine') and parent._replay_engine:
+            try:
+                current_sec = parent._replay_engine.current_position()
+                # Get start time from reader if available
+                if hasattr(parent._replay_engine, '_reader') and hasattr(parent._replay_engine._reader, 'start_time'):
+                    start_time = datetime.fromtimestamp(parent._replay_engine._reader.start_time)
+            except Exception:
+                pass
+        
+        # Get current HR from status if available
+        if hasattr(parent, '_current_bpm'):
+            hr = parent._current_bpm
+        
+        # Open dialog
+        dialog = AddEventDialog(parent, start_time=start_time, current_sec=current_sec, hr=hr)
+        dialog.event_added.connect(lambda data: HolterToolHandlers._on_event_added(parent, data))
+        dialog.exec_()
+    
+    @staticmethod
+    def _on_event_added(parent, event_data: dict):
+        """Handle event data from Add Event dialog."""
+        print(f"[Add Event] Event added: {event_data}")
+        
+        # Add event to parent's event list
+        if hasattr(parent, '_custom_events'):
+            parent._custom_events.append(event_data)
+        else:
+            parent._custom_events = [event_data]
+        
+        # Handle different actions
+        action = event_data.get('action', 'add_event')
+        
+        if action == 'instant_print':
+            # TODO: Implement instant print
+            print("[Add Event] Instant print triggered")
+        elif action == 'export_pdf':
+            # TODO: Implement PDF export
+            print("[Add Event] PDF export triggered")
+        elif action == 'add_event':
+            # Just add to event list
+            print(f"[Add Event] Event added at timestamp {event_data['timestamp']}")
