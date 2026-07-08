@@ -1201,7 +1201,8 @@ class HolterReplayPanel(QWidget):
         th_l.setSpacing(4)
         self._template_thumbs = []
         for idx in range(4):
-            s = ECGStripCanvas(height=70, color="#22E36E", pen_width=0.8)
+            # Thumbnails in replay: disable annotations
+            s = ECGStripCanvas(height=70, color="#22E36E", pen_width=0.8, show_annotations=False)
             s.set_gain(1.0)
             self._template_thumbs.append(s)
             th_l.addWidget(s, idx // 2, idx % 2)
@@ -1241,7 +1242,8 @@ class HolterReplayPanel(QWidget):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
             # Height 60px makes them compact enough to fit well, but scrollable if needed
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead)
+            # Replay mode: disable annotations (show_annotations=False)
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_annotations=False)
             strip.set_gain(1.0)
             self._lead_strips[lead] = strip
             self._ch_strips.append(strip)
@@ -1261,7 +1263,8 @@ class HolterReplayPanel(QWidget):
         rhythm_lbl.setFixedWidth(34)
         rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9)
+        # Replay mode: disable annotations
+        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9, show_annotations=False)
         rhythm_row.addWidget(rhythm_lbl)
         rhythm_row.addWidget(self._mini_strip, 1)
         ecg_right_layout.addLayout(rhythm_row)
@@ -1472,40 +1475,33 @@ class HolterReplayPanel(QWidget):
             mini_strip.clear_interaction()
 
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
+        """
+        Main tool mode dispatcher - delegates to HolterToolHandlers.
+        Keeps holter_ui.py clean by moving implementations to holter_full_disclosure.py.
+        """
+        from .holter_full_disclosure import HolterToolHandlers
+        
+        # Patient Information
         if "Patient information" in tool_name:
-            self._show_patient_information()
+            HolterToolHandlers.handle_patient_information(self)
             return
+        
+        # Full Disclosure
         if "Full Disc." in tool_name:
-            if hasattr(self, "_replay_engine") and self._replay_engine:
-                from .holter_full_disclosure import HolterFullDisclosureDialog
-                dialog = HolterFullDisclosureDialog(self._replay_engine, self)
-                dialog.exec_()
-            else:
-                QMessageBox.warning(self, "No Data", "No valid replay engine found for Full Disclosure.")
+            HolterToolHandlers.handle_full_disclosure(self)
             return
+        
+        # Goto Template (Info Dialog)
         if "Goto Template" in tool_name:
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Information)
-            box.setWindowTitle("Holter ECG Software Tools - Explained")
-            box.setTextFormat(Qt.PlainText)
-            box.setText(
-                "Ruler: measure interval/amplitude and BPM.\n"
-                "Caliper: compare regularity and coupling across beats.\n"
-                "Magnify: zoom-highlight subtle waveform details.\n"
-                "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
-                "End-to-end flow:\n"
-                "Raw recording -> Gain optimization -> Magnify flagged events -> "
-                "Measure intervals (QT/PR/pause) -> Parallel comparison -> Final report."
-            )
-            box.setStyleSheet(
-                "QMessageBox{background:#10151c;color:#f3f7fb;}"
-                "QLabel{color:#f3f7fb;font-size:12px;}"
-                "QPushButton{background:#1f6feb;color:white;border:1px solid #4b82d0;border-radius:4px;padding:6px 14px;min-width:70px;}"
-                "QPushButton:hover{background:#2d7df2;}"
-            )
-            box.exec_()
+            HolterToolHandlers.handle_goto_template(self)
+            return
+        
+        # Add Event
+        if "Add Event" in tool_name or "space" in tool_name.lower():
+            HolterToolHandlers.handle_add_event(self)
             return
 
+        # Tool name conversions
         if "Measuring Ruler" in tool_name:
             tool_name = TOOL_RULER
         elif "Parallel Ruler" in tool_name:
@@ -1513,70 +1509,23 @@ class HolterReplayPanel(QWidget):
         elif "Magnifying Glass" in tool_name:
             tool_name = TOOL_MAGNIFY
 
-        # Handle state cycles for Gain, Speed, Length
+        # Gain Settings
         if "Gain Settings" in tool_name:
-            gains = [g / 10.0 for g in GAINS]
-            curr_g = getattr(self, '_curr_gain_idx', 1)
-            next_g = (curr_g + 1) % len(gains)
-            self._curr_gain_idx = next_g
-            val = gains[next_g]
-            for s in getattr(self, "_ch_strips", []):
-                s.set_gain(val)
-            if hasattr(self, "_mini_strip"):
-                self._mini_strip.set_gain(val)
-            if btn: btn.setText(f"Gain: {int(val*10)}mm/mV")
+            HolterToolHandlers.handle_gain_settings(self, btn)
             return
+        
+        # Paper Speed
         elif "Paper speed" in tool_name:
-            speeds = PAPER_SPEEDS
-            curr_s = getattr(self, '_curr_speed_idx', 1)
-            next_s = (curr_s + 1) % len(speeds)
-            self._curr_speed_idx = next_s
-            val = speeds[next_s]
-            for s in getattr(self, "_ch_strips", []):
-                s.set_paper_speed(int(val))
-            if hasattr(self, "_mini_strip"):
-                self._mini_strip.set_paper_speed(int(val))
-            if btn: btn.setText(f"Paper speed:{val}mm/s")
-            # Adjust strip_length_sec so the replay engine delivers the right amount of data.
-            # Reference: 25mm/s = 10s window; scale inversely with speed.
-            self._strip_length_sec = 10.0 * (25.0 / max(1.0, float(val)))
-            if getattr(self, "_replay_engine", None):
-                try:
-                    self._replay_engine.set_window_length(self._strip_length_sec)
-                except Exception:
-                    pass
-            # Re-seek to force data reload with the new strip length
-            try:
-                current_pos = self._slider_value_to_sec(self._slider.value())
-                self.seek_requested.emit(current_pos)
-            except Exception:
-                pass
+            HolterToolHandlers.handle_paper_speed(self, btn)
             return
+        
+        # Strip Length
         elif "Strip Length" in tool_name:
-            lengths = [3, 7, 10, 15, 30]
-            curr_l = getattr(self, '_curr_length_idx', 1)
-            next_l = (curr_l + 1) % len(lengths)
-            self._curr_length_idx = next_l
-            val = lengths[next_l]
-            self._strip_length_sec = float(val)
-            if getattr(self, "_replay_engine", None):
-                try:
-                    self._replay_engine.set_window_length(self._strip_length_sec)
-                except Exception:
-                    pass
-            if btn: btn.setText(f"Strip Length:{val}s")
+            HolterToolHandlers.handle_strip_length(self, btn)
             return
 
-        mode = canonical_tool(tool_name)
-        self._tool_engine.set_tool(mode)
-        for strip in getattr(self, "_ch_strips", []):
-            if hasattr(strip, 'set_mode'):
-                strip.set_mode(mode)
-        if hasattr(self._mini_strip, 'set_mode'):
-            self._mini_strip.set_mode(mode)
-        for strip in getattr(self, "_template_thumbs", []):
-            if hasattr(strip, 'set_mode'):
-                strip.set_mode(mode)
+        # Apply tool mode to strips (Ruler, Caliper, Magnify)
+        HolterToolHandlers.apply_tool_mode_to_strips(self, tool_name)
 
     def _set_time_scope(self, scope: str):
         self._time_scope = scope
@@ -2299,13 +2248,14 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True, show_annotations: bool = True):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
         self._pen_width = pen_width
         self.lead_name = lead_name
         self._show_vertical_lines = show_vertical_lines  # Control whether to show R-peak vertical lines
+        self._show_annotations = show_annotations  # Control whether to show N labels and RR numbers
         self._gain = 1.0
         self._speed = 25
         self.setFixedHeight(height)
@@ -2316,6 +2266,8 @@ class ECGStripCanvas(QWidget):
         self._curr_pos = None
         self._hover_pos = None
         self._magnify_locked = False
+        self._caliper_line1 = None
+        self._caliper_line2 = None
         self._magnify_pos = None
         self._fs = 500.0
 
@@ -2354,6 +2306,8 @@ class ECGStripCanvas(QWidget):
         self._hover_pos = None
         self._magnify_locked = False
         self._magnify_pos = None
+        self._caliper_line1 = None
+        self._caliper_line2 = None
         self.update()
 
     def clear_interaction(self):
@@ -2362,6 +2316,8 @@ class ECGStripCanvas(QWidget):
         self._hover_pos = None
         self._magnify_locked = False
         self._magnify_pos = None
+        self._caliper_line1 = None
+        self._caliper_line2 = None
         self.update()
 
     def set_data(self, *args, beat_annotations=None, start_sec=0.0):
@@ -2443,6 +2399,15 @@ class ECGStripCanvas(QWidget):
             self.update()
             return
 
+        if self._mode == TOOL_CALIPER and event.button() == Qt.LeftButton:
+            if self._caliper_line1 is None:
+                self._caliper_line1 = event.pos().x()
+                self._caliper_line2 = None
+            else:
+                self._caliper_line2 = event.pos().x()
+            self.update()
+            return
+
         if self._mode != TOOL_SELECT:
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
@@ -2462,6 +2427,15 @@ class ECGStripCanvas(QWidget):
             self._hover_pos = event.pos()
             self.update()
             return
+        
+        # For caliper tool, show preview of second line while hovering (if first line is set)
+        if self._mode == TOOL_CALIPER:
+            if self._caliper_line1 is not None and self._caliper_line2 is None:
+                # First line is set, show preview of second line as hover
+                self._hover_pos = event.pos()
+                self.update()
+            return
+            
         self._hover_pos = event.pos()
         if self._mode != TOOL_SELECT and self._start_pos is not None:
             self._curr_pos = event.pos()
@@ -2503,6 +2477,12 @@ class ECGStripCanvas(QWidget):
             d = sig + shift
             mn = 0.0
             rng = 4096.0
+        
+        # Apply gain: higher gain = taller waves
+        # Center around baseline, apply gain, then shift back
+        if hasattr(self, '_gain') and self._gain != 1.0:
+            center = (mn + rng / 2.0)
+            d = center + (d - center) * self._gain
             
         return d, mn, rng
 
@@ -2613,7 +2593,7 @@ class ECGStripCanvas(QWidget):
                     print(f"[ECGStripCanvas] R-peak detection error: {e}")
             
             # Draw N labels AND vertical lines for all detected peaks on Lead I
-            if detected_peaks:
+            if detected_peaks and self._show_annotations:  # Only show if annotations enabled
                 font = painter.font()
                 font.setPixelSize(10)
                 font.setBold(True)
@@ -2654,7 +2634,8 @@ class ECGStripCanvas(QWidget):
                     # Shift label to the left by 8 pixels to avoid overlapping with yellow line
                     painter.drawText(bx - 8, 12, lbl)
                 
-                # Calculate and store RR intervals from detected peaks
+            # Calculate and store RR intervals from detected peaks (always keep for internal use)
+            if detected_peaks:
                 self._rr_intervals = []
                 for i in range(len(detected_peaks) - 1):
                     curr_ts = detected_peaks[i]
@@ -2671,7 +2652,7 @@ class ECGStripCanvas(QWidget):
         
         # --- Draw vertical yellow lines spanning all leads (for non-Lead-I strips) ---
         # Lead I handles its own line drawing above, other leads draw the lines here
-        elif lead_name != 'I' and show_vertical_lines:  # Only draw if flag is enabled
+        elif lead_name != 'I' and show_vertical_lines and self._show_annotations:  # Only draw if flag AND annotations enabled
             parent = self.parent()
             while parent is not None:
                 if hasattr(parent, '_detected_r_peaks') and hasattr(parent, '_r_peak_start_sec'):
@@ -2693,7 +2674,7 @@ class ECGStripCanvas(QWidget):
                 parent = parent.parent()
         
         # --- Draw N-N (R-R) Interval Labels ONLY on Lead I ---
-        if lead_name == 'I' and hasattr(self, '_rr_intervals') and self._rr_intervals:
+        if lead_name == 'I' and hasattr(self, '_rr_intervals') and self._rr_intervals and self._show_annotations:  # Only show if annotations enabled
             font = painter.font()
             font.setPixelSize(9)
             font.setBold(False)
@@ -2741,14 +2722,29 @@ class ECGStripCanvas(QWidget):
             dy_mv = amplitude_mv_from_pixels(abs(self._curr_pos.y() - self._start_pos.y()), max(1, h), rng, ADC_TO_MV)
             painter.setPen(QPen(QColor("#00FFFF")))
             painter.drawText(self._curr_pos.x(), max(12, self._curr_pos.y() - 6), ruler_label(ms, dy_mv, bpm))
-        elif self._mode == TOOL_CALIPER and self._start_pos and self._curr_pos:
-            ppen = QPen(QColor("#FFFF00"), 1)
-            painter.setPen(ppen)
-            painter.drawLine(self._start_pos.x(), 0, self._start_pos.x(), h)
-            painter.drawLine(self._curr_pos.x(), 0, self._curr_pos.x(), h)
-            dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
-            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, caliper_label(ms))
+        elif self._mode == TOOL_CALIPER:
+
+            if self._caliper_line1 is not None:
+                ppen = QPen(QColor("#FFFF00"), 1)
+                painter.setPen(ppen)
+                
+                painter.drawLine(self._caliper_line1, 0, self._caliper_line1, h)
+                
+                
+                if self._caliper_line2 is not None:
+                    painter.drawLine(self._caliper_line2, 0, self._caliper_line2, h)
+                    dx = abs(self._caliper_line2 - self._caliper_line1)
+                    ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
+                    painter.drawText(min(self._caliper_line1, self._caliper_line2) + dx//2, 12, caliper_label(ms))
+                elif self._hover_pos is not None:
+                    
+                    pen_preview = QPen(QColor("#FFFF00"), 1, Qt.DashLine)
+                    painter.setPen(pen_preview)
+                    hover_x = self._hover_pos.x()
+                    painter.drawLine(hover_x, 0, hover_x, h)
+                    dx = abs(hover_x - self._caliper_line1)
+                    ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
+                    painter.drawText(min(self._caliper_line1, hover_x) + dx//2, 12, caliper_label(ms))
         elif self._mode == TOOL_MAGNIFY:
             host = self._find_magnifier_host()
             if host is not None and hasattr(host, "_magnifier_overlay"):
@@ -3645,6 +3641,7 @@ class TemplateCardWidget(QFrame):
         if window is not None and hasattr(window, "_show_template_card_menu"):
             return window
         return None
+
     def _build_ui(self):
         self.setMinimumHeight(196)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -3689,8 +3686,9 @@ class TemplateCardWidget(QFrame):
         self.id_edit.setFixedWidth(70)
         self.id_edit.setPlaceholderText("T ID")
         self.class_combo = QComboBox()
-        self.class_combo.addItems(["N", "S", "V", "F", "Q", "R", "O", "P", "X", "Other"])
-        self.class_combo.setFixedWidth(58)
+        # Updated options: N, S, V, P, AF, X, Other, Unconfirmed
+        self.class_combo.addItems(["N", "S", "V", "P", "AF", "X", "Other", "Unconfirmed"])
+        self.class_combo.setFixedWidth(95)  # Increased width for "Unconfirmed"
         self.count_pill = QLabel("0 beats")
         self.count_pill.setAlignment(Qt.AlignCenter)
         self.count_pill.setStyleSheet(f"color:{UI_TEXT};font-size:11px;font-weight:800;background:#152235;border:1px solid {self._accent};border-radius:10px;padding:4px 8px;")
@@ -3761,8 +3759,8 @@ class TemplateCardWidget(QFrame):
         bottom.addWidget(self.view_toggle)
         layout.addLayout(bottom)
 
-        self.id_edit.editingFinished.connect(lambda: self.template_id_changed.emit(self, self.id_edit.text()))
-        self.class_combo.currentTextChanged.connect(lambda text: self.class_changed.emit(self, text))
+        self.id_edit.editingFinished.connect(self._on_id_edit_finished)
+        self.class_combo.currentTextChanged.connect(self._on_class_changed)
         self.view_toggle.toggled.connect(self._on_view_toggle)
 
         for widget in [self.id_edit, self.class_combo, self.count_pill, self.badge_container, self.thumb, self.template_no, self.view_toggle]:
@@ -3789,23 +3787,28 @@ class TemplateCardWidget(QFrame):
             return
         return super().contextMenuEvent(event)
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.MouseButtonPress and getattr(event, "button", lambda: None)() == Qt.LeftButton:
-            self.clicked.emit(self, event)
-        elif event.type() == QEvent.ContextMenu:
-            host = self._find_template_host()
-            if host is not None and hasattr(host, "_show_template_card_menu"):
-                try:
-                    global_pos = obj.mapToGlobal(event.pos())
-                except Exception:
-                    global_pos = self.mapToGlobal(event.pos())
-                host._show_template_card_menu(self, global_pos)
-                return True
-        return super().eventFilter(obj, event)
-
     def _on_view_toggle(self, checked: bool):
         self.view_toggle.setText("\u25c9" if checked else "\u25cb")
         self.viewed_changed.emit(self, bool(checked))
+
+    def _on_id_edit_finished(self):
+        try:
+            self.template_id_changed.emit(self, self.id_edit.text())
+        except Exception as e:
+            print(f"Error in _on_id_edit_finished: {e}")
+
+    def _on_class_changed(self, text: str):
+        try:
+            # Defer processing to avoid destroying widget during signal emission
+            QTimer.singleShot(0, lambda: self._handle_class_changed(text))
+        except Exception as e:
+            print(f"Error in _on_class_changed: {e}")
+    
+    def _handle_class_changed(self, text: str):
+        try:
+            self.class_changed.emit(self, text)
+        except Exception as e:
+            print(f"Error in _handle_class_changed: {e}")
 
     def _apply_styles(self):
         if self._selected:
@@ -4045,6 +4048,7 @@ class HolterBeatTemplatePanel(QWidget):
         for row in self._template_rows:
             label = str(row.get("label", "N") or "N").strip() or "N"
             code = _template_filter_key(label)
+            
             if self._current_filter == "all":
                 filtered.append(row)
             elif self._current_filter == "unconfirmed" and not row.get("viewed", True):
@@ -4067,7 +4071,8 @@ class HolterBeatTemplatePanel(QWidget):
         self._stat_cards["total"].value.setText(f"{int(total_beats):,}")
         self._stat_cards["templates"].value.setText(str(len(self._template_rows)))
         self._stat_cards["unconfirmed"].value.setText(str(unconfirmed))
-        preferred = ["N", "S", "V", "P", "AF", "X", "Other", "F", "Q", "R", "O"]
+
+        preferred = ["N", "S", "V", "P", "AF", "X", "Unconfirmed"]
         dist_parts = []
         for key in preferred:
             value = int(label_totals.pop(key, 0) or 0)
@@ -4170,43 +4175,66 @@ class HolterBeatTemplatePanel(QWidget):
         new_keys.extend(key for key in visible if key not in selected)
         self._set_selected_keys(new_keys)
     def _set_filter(self, key: str):
-        self._current_filter = key
-        for k, btn in self._filter_buttons.items():
-            btn.setChecked(k == key)
-            btn.setStyleSheet(_style_active_btn() if k == key else _style_btn())
-        self._refresh_stats()
-        self._render_cards()
+        try:
+            self._current_filter = key
+            for k, btn in self._filter_buttons.items():
+                btn.setChecked(k == key)
+                btn.setStyleSheet(_style_active_btn() if k == key else _style_btn())
+            self._refresh_stats()
+            self._render_cards()
+        except Exception as e:
+            print(f"Error in _set_filter: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_card_template_id_changed(self, card, text: str):
-        old_key = str(getattr(card, "_template_key", "") or "")
-        new_id = str(text or "").strip() or old_key
-        row = self._row_for_key(old_key)
-        if row is None:
-            return
-        row["template_id"] = new_id
-        row["template_key"] = new_id
-        if old_key != new_id:
-            self._rename_template_key(old_key, new_id)
-        self._refresh_stats()
-        self._render_cards()
+        try:
+            old_key = str(getattr(card, "_template_key", "") or "")
+            new_id = str(text or "").strip() or old_key
+            row = self._row_for_key(old_key)
+            if row is None:
+                return
+            row["template_id"] = new_id
+            row["template_key"] = new_id
+            if old_key != new_id:
+                self._rename_template_key(old_key, new_id)
+            self._refresh_stats()
+            # Defer card rendering to avoid destroying card during signal
+            QTimer.singleShot(10, self._render_cards)
+        except Exception as e:
+            print(f"Error in _on_card_template_id_changed: {e}")
 
     def _on_card_class_changed(self, card, text: str):
-        key = str(getattr(card, "_template_key", "") or "")
-        row = self._row_for_key(key)
-        if row is None:
-            return
-        row["label"] = str(text or "N").strip() or "N"
-        self._refresh_stats()
-        self._render_cards()
+        try:
+            key = str(getattr(card, "_template_key", "") or "")
+            row = self._row_for_key(key)
+            if row is None:
+                return
+            row["label"] = str(text or "N").strip() or "N"
+            
+            if text == "Unconfirmed":
+                row["viewed"] = False
+            else:
+                row["viewed"] = True  # Mark as viewed for other classifications
+            
+            self._refresh_stats()
+            # Defer card rendering to avoid destroying card during signal
+            QTimer.singleShot(10, self._render_cards)
+        except Exception as e:
+            print(f"Error in _on_card_class_changed: {e}")
 
     def _on_card_viewed_changed(self, card, viewed: bool):
-        key = str(getattr(card, "_template_key", "") or "")
-        row = self._row_for_key(key)
-        if row is None:
-            return
-        row["viewed"] = bool(viewed)
-        self._refresh_stats()
-        self._render_cards()
+        try:
+            key = str(getattr(card, "_template_key", "") or "")
+            row = self._row_for_key(key)
+            if row is None:
+                return
+            row["viewed"] = bool(viewed)
+            self._refresh_stats()
+            # Defer card rendering to avoid destroying card during signal
+            QTimer.singleShot(10, self._render_cards)
+        except Exception as e:
+            print(f"Error in _on_card_viewed_changed: {e}")
 
     def _delete_selected_templates(self, keys=None):
         keys = list(keys or self._selected_template_keys)
@@ -4365,7 +4393,17 @@ class HolterBeatTemplatePanel(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(f"QMenu {{ background: #0B1220; color: {UI_TEXT}; border: 1px solid {UI_BORDER}; padding: 6px; }} QMenu::item {{ padding: 6px 20px 6px 18px; border-radius: 4px; }} QMenu::item:selected {{ background: {UI_ACCENT}; color: #07111F; }} QMenu::separator {{ height: 1px; background: {UI_BORDER}; margin: 6px 4px; }}")
         prop_menu = menu.addMenu("Template properties")
-        for title, code in [("Normal (N)", "N"), ("Atrial Premature (S)", "S"), ("Ventricular Premature (V)", "V"), ("Artifact (X)", "X"), ("Atrial Fibrillation (Q)", "Q"), ("Atrial Flutter (R)", "R"), ("Blocked PAC (O)", "O"), ("Paced (P)", "P"), ("Other", "Other")]:
+        # Updated options: N, S, V, P, AF, X, Other, Unconfirmed
+        for title, code in [
+            ("Normal (N)", "N"),
+            ("Atrial Premature (S)", "S"),
+            ("Ventricular Premature (V)", "V"),
+            ("Paced (P)", "P"),
+            ("Atrial Fibrillation (AF)", "AF"),
+            ("Artifact (X)", "X"),
+            ("Other", "Other"),
+            ("Unconfirmed", "Unconfirmed")
+        ]:
             action = prop_menu.addAction(title)
             action.triggered.connect(lambda checked=False, c=code: self._apply_template_label(target_keys, c))
         func_menu = menu.addMenu("Function")
@@ -4421,93 +4459,113 @@ class HolterBeatTemplatePanel(QWidget):
             self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0))
 
     def _render_cards(self):
-        while self._cards_layout.count():
-            item = self._cards_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-        self._card_widgets = []
-        filtered = self._filtered_rows()
-        columns = 3 if len(filtered) <= 6 else 4
-        filtered_keys = [self._row_key(row) for row in filtered]
-        selected_visible = [key for key in filtered_keys if key in set(self._selected_template_keys)]
-        if filtered and not selected_visible:
-            self._set_selected_keys([filtered_keys[0]])
-        elif selected_visible:
-            self._selected_template_key = selected_visible[0]
-        elif not self._selected_template_keys:
-            self._selected_template_key = ""
+        try:
+            # Disconnect all signals from old cards before deleting
+            for card in self._card_widgets:
+                try:
+                    card.clicked.disconnect()
+                    card.template_id_changed.disconnect()
+                    card.class_changed.disconnect()
+                    card.viewed_changed.disconnect()
+                except Exception:
+                    pass
+            
+            while self._cards_layout.count():
+                item = self._cards_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            
+            self._card_widgets = []
+            filtered = self._filtered_rows()
+            columns = 3 if len(filtered) <= 6 else 4
+            filtered_keys = [self._row_key(row) for row in filtered]
+            selected_visible = [key for key in filtered_keys if key in set(self._selected_template_keys)]
+            if filtered and not selected_visible:
+                self._set_selected_keys([filtered_keys[0]])
+            elif selected_visible:
+                self._selected_template_key = selected_visible[0]
+            elif not self._selected_template_keys:
+                self._selected_template_key = ""
 
-        for idx, row in enumerate(filtered):
-            label = str(row.get("label", "N") or "N").strip() or "N"
-            label_code = label[:1].upper() if label else "N"
-            accent = {"N": "#2D9CDB", "V": "#F2994A", "S": "#E2B93B", "F": "#7F8C8D", "Q": "#B06CFD", "R": "#A97FFF", "O": "#F2C94C", "P": "#56CCF2", "X": "#EB5757"}.get(label_code, UI_BORDER)
-            card = TemplateCardWidget(accent=accent)
-            rr = row.get("rr", []) or []
-            qrs = row.get("qrs", []) or []
-            rr_med = float(np.median(rr)) if rr else 0.0
-            qrs_med = float(np.median(qrs)) if qrs else 0.0
-            waveform = self._resolve_template_waveform(row, rr_med, qrs_med)
-            template_key = self._row_key(row)
-            card.clicked.connect(self._on_card_clicked)
-            card.template_id_changed.connect(self._on_card_template_id_changed)
-            card.class_changed.connect(self._on_card_class_changed)
-            card.viewed_changed.connect(self._on_card_viewed_changed)
-            card.set_template_data({
-                "template_key": template_key,
-                "index": idx + 1,
-                "template_id": row.get("template_id", f"T{idx+1}"),
-                "label": row.get("label", "N"),
-                "count": row.get("count", 0),
-                "viewed": row.get("viewed", True),
-                "ambiguous": row.get("ambiguous", False),
-                "inserted": row.get("inserted", False),
-                "demix": row.get("demix", False),
-                "auto_update": row.get("auto_update", False),
-                "waveform": waveform,
-            })
-            card.set_selected(template_key in set(self._selected_template_keys))
-            row_idx, col_idx = divmod(len(self._card_widgets), columns)
-            self._cards_layout.addWidget(card, row_idx, col_idx)
-            self._card_widgets.append(card)
-        if self._card_widgets:
-            self._cards_layout.setRowStretch(max(0, (len(self._card_widgets) + columns - 1) // columns), 1)
-        for c in range(columns, 6):
-            self._cards_layout.setColumnStretch(c, 1)
-        self._sync_card_selection()
+            for idx, row in enumerate(filtered):
+                label = str(row.get("label", "N") or "N").strip() or "N"
+                label_code = label[:1].upper() if label else "N"
+                accent = {"N": "#2D9CDB", "V": "#F2994A", "S": "#E2B93B", "F": "#7F8C8D", "Q": "#B06CFD", "R": "#A97FFF", "O": "#F2C94C", "P": "#56CCF2", "X": "#EB5757"}.get(label_code, UI_BORDER)
+                card = TemplateCardWidget(accent=accent)
+                rr = row.get("rr", []) or []
+                qrs = row.get("qrs", []) or []
+                rr_med = float(np.median(rr)) if rr else 0.0
+                qrs_med = float(np.median(qrs)) if qrs else 0.0
+                waveform = self._resolve_template_waveform(row, rr_med, qrs_med)
+                template_key = self._row_key(row)
+                card.clicked.connect(self._on_card_clicked)
+                card.template_id_changed.connect(self._on_card_template_id_changed)
+                card.class_changed.connect(self._on_card_class_changed)
+                card.viewed_changed.connect(self._on_card_viewed_changed)
+                card.set_template_data({
+                    "template_key": template_key,
+                    "index": idx + 1,
+                    "template_id": row.get("template_id", f"T{idx+1}"),
+                    "label": row.get("label", "N"),
+                    "count": row.get("count", 0),
+                    "viewed": row.get("viewed", True),
+                    "ambiguous": row.get("ambiguous", False),
+                    "inserted": row.get("inserted", False),
+                    "demix": row.get("demix", False),
+                    "auto_update": row.get("auto_update", False),
+                    "waveform": waveform,
+                })
+                card.set_selected(template_key in set(self._selected_template_keys))
+                row_idx, col_idx = divmod(len(self._card_widgets), columns)
+                self._cards_layout.addWidget(card, row_idx, col_idx)
+                self._card_widgets.append(card)
+            if self._card_widgets:
+                self._cards_layout.setRowStretch(max(0, (len(self._card_widgets) + columns - 1) // columns), 1)
+            for c in range(columns, 6):
+                self._cards_layout.setColumnStretch(c, 1)
+            self._sync_card_selection()
+        except Exception as e:
+            import traceback
+            print(f"Error in _render_cards: {e}")
+            traceback.print_exc()
 
     def _resolve_template_waveform(self, row: dict, rr_ms: float, qrs_ms: float):
-        key = str(row.get("template_key") or row.get("template_id") or row.get("label") or "T")
-        cached = self._waveform_cache.get(key)
-        if cached is not None:
-            return cached
-        first_ts = float(row.get("first_timestamp", 0.0) or 0.0)
-        waveform = None
-        engine = getattr(self, "_replay_engine", None)
         try:
-            if engine is not None and hasattr(engine, "_reader"):
-                fs = float(getattr(engine, "fs", 500.0) or 500.0)
-                pre = 0.18
-                post = 0.34
-                data = engine._reader.read_range(max(0.0, first_ts - pre), min(float(engine.duration_sec), first_ts + post))
-                if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[0] > 1 and data.shape[1] > 8:
-                    lead = np.asarray(data[1], dtype=float)
-                    baseline = float(np.median(lead))
-                    centered = lead - baseline
-                    if np.ptp(centered) > 1.0:
-                        x_old = np.linspace(0.0, 1.0, centered.size)
-                        x_new = np.linspace(0.0, 1.0, 240)
-                        centered = np.interp(x_new, x_old, centered)
-                        centered = centered - float(np.median(centered))
-                        peak = max(float(np.max(np.abs(centered))), 1.0)
-                        centered = np.clip(centered / peak * 420.0, -650.0, 650.0)
-                        waveform = 2048.0 + centered
-        except Exception:
+            key = str(row.get("template_key") or row.get("template_id") or row.get("label") or "T")
+            cached = self._waveform_cache.get(key)
+            if cached is not None:
+                return cached
+            first_ts = float(row.get("first_timestamp", 0.0) or 0.0)
             waveform = None
-        if waveform is None:
-            waveform = self._make_thumbnail_waveform(rr_ms, qrs_ms)
-        self._waveform_cache[key] = waveform
-        return waveform
+            engine = getattr(self, "_replay_engine", None)
+            try:
+                if engine is not None and hasattr(engine, "_reader"):
+                    fs = float(getattr(engine, "fs", 500.0) or 500.0)
+                    pre = 0.18
+                    post = 0.34
+                    data = engine._reader.read_range(max(0.0, first_ts - pre), min(float(engine.duration_sec), first_ts + post))
+                    if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[0] > 1 and data.shape[1] > 8:
+                        lead = np.asarray(data[1], dtype=float)
+                        baseline = float(np.median(lead))
+                        centered = lead - baseline
+                        if np.ptp(centered) > 1.0:
+                            x_old = np.linspace(0.0, 1.0, centered.size)
+                            x_new = np.linspace(0.0, 1.0, 240)
+                            centered = np.interp(x_new, x_old, centered)
+                            centered = centered - float(np.median(centered))
+                            peak = max(float(np.max(np.abs(centered))), 1.0)
+                            centered = np.clip(centered / peak * 420.0, -650.0, 650.0)
+                            waveform = 2048.0 + centered
+            except Exception:
+                waveform = None
+            if waveform is None:
+                waveform = self._make_thumbnail_waveform(rr_ms, qrs_ms)
+            self._waveform_cache[key] = waveform
+            return waveform
+        except Exception as e:
+            print(f"Error in _resolve_template_waveform: {e}")
+            return self._make_thumbnail_waveform(rr_ms, qrs_ms)
 
     def _make_thumbnail_waveform(self, rr_ms: float, qrs_ms: float):
         t = np.linspace(0, 1.2, 240)
@@ -5155,7 +5213,7 @@ class HolterHistogramPanel(QWidget):
         if event.button() == Qt.LeftButton:
             self._hist_canvas._selected_index = -1
             self._hist_canvas.update()
-            self._on_bar_clicked(None)
+            self._on_bar_clicked({})  # Pass empty dict instead of None
         super().mousePressEvent(event)
 
 
@@ -5247,7 +5305,8 @@ class HistogramCanvas(QWidget):
                     break
             if not clicked_bar:
                 self._selected_index = -1
-                self.bar_clicked.emit(None)
+                # Emit empty dict instead of None to match signal type
+                self.bar_clicked.emit({})
                 self.update()
         super().mousePressEvent(event)
 
@@ -5336,7 +5395,7 @@ class HistogramCanvas(QWidget):
             if selected:
                 painter.setPen(QPen(QColor('#F5D76E'), 2))
                 painter.drawRect(rect.adjusted(0, 0, -1, -1))
-            if count > 0 and (bin_count <= 20 or idx % max(1, bin_count // 10) == 0 or selected):
+            if count > 0:
                 painter.setPen(QPen(QColor(COL_WHITE)))
                 painter.drawText(rect.adjusted(0, -18, 0, -2), Qt.AlignCenter, str(count))
 
