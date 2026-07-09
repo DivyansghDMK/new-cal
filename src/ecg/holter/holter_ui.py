@@ -1,4 +1,4 @@
-"""
+﻿"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -1134,7 +1134,7 @@ class HolterReplayPanel(QWidget):
 
         # ── HR trend mini-chart (40h-48h of data at a glance) ──
         self._hr_trend_canvas = HolterRRTrendCanvas(title="Heart Rate Trend (full recording)")
-        self._hr_trend_canvas.setFixedHeight(100)
+        self._hr_trend_canvas.setFixedHeight(120)
         layout.addWidget(self._hr_trend_canvas)
         # Keep these as dummy attrs so update_lorenz doesn't crash
         self._rr_trend_full = self._hr_trend_canvas
@@ -1569,6 +1569,8 @@ class HolterReplayPanel(QWidget):
         self._rr_mode = mode
         self._btn_rr.setStyleSheet(_style_active_btn() if mode == "RR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
         self._btn_hr.setStyleSheet(_style_active_btn() if mode == "HR" else _style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
+        if hasattr(self, '_hr_trend_canvas'):
+            self._hr_trend_canvas.set_mode(mode)
 
     def _build_info_table(self, rows):
         table = QTableWidget(len(rows), 2)
@@ -1990,8 +1992,12 @@ class HolterReplayPanel(QWidget):
         if hasattr(self, "_rr_trend_full"):
             trend_points = [(t, rr) for t, rr, _cls in filtered_points] if len(filtered_points) >= 2 else [(t, rr) for t, rr, _cls in rr_points]
             self._rr_trend_full.set_points(trend_points)
-            recent = trend_points[-1200:] if len(trend_points) > 1200 else trend_points
-            self._rr_trend_zoom.set_points(recent)
+            # Only update zoom canvas separately if it's a different widget (OVERVIEW panel has two separate canvases;
+            # the REPLAY panel aliases both to the same _hr_trend_canvas — calling set_points on it twice would
+            # overwrite the full data with the recent subset)
+            if hasattr(self, "_rr_trend_zoom") and self._rr_trend_zoom is not self._rr_trend_full:
+                recent = trend_points[-1200:] if len(trend_points) > 1200 else trend_points
+                self._rr_trend_zoom.set_points(recent)
         self._update_overview_table(metrics_list, rr_n)
             
     def set_replay_frame(self, data, beat_annotations=None, start_sec=0.0):
@@ -2088,7 +2094,8 @@ class HolterReplayPanel(QWidget):
                     rr_x = rr_valid[:-1]
                     rr_y = rr_valid[1:]
                     self._lorenz_canvas.set_data(rr_x, rr_y)
-                    if hasattr(self, "_rr_trend_full"):
+                    # Only fill the trend chart from live signal if full-recording metrics haven't already populated it
+                    if hasattr(self, "_rr_trend_full") and not getattr(self._rr_trend_full, '_points', []):
                         rr_points = [(i * 0.5, rr) for i, rr in enumerate(rr_valid)]
                         self._rr_trend_full.set_points(rr_points)
                         self._rr_trend_zoom.set_points(rr_points[-400:] if len(rr_points) > 400 else rr_points)
@@ -3343,7 +3350,7 @@ class HolterRRTrendCanvas(QWidget):
         self._start_epoch = None # unix epoch for beat 0, used for HH:MM labels
         self._show_hr = False    # False=RR ms, True=HR bpm
         self._selection_range = None  # (t_start, t_end) cyan box for zoom indicator
-        self.setMinimumHeight(80)
+        self.setMinimumHeight(120)
         self.setStyleSheet("background:#0a1520;border:1px solid #1e3350;border-radius:4px;")
 
     # ------------------------------------------------------------------ API --
@@ -3356,6 +3363,15 @@ class HolterRRTrendCanvas(QWidget):
     def set_selection(self, t_start, t_end):
         """Mark a time window with a cyan box (used on the Full chart to show Recent window)."""
         self._selection_range = (t_start, t_end)
+        self.update()
+
+    def set_mode(self, mode: str):
+        if mode == "HR":
+            self._show_hr = True
+            self._title = "Heart Rate Trend (full recording)"
+        else:
+            self._show_hr = False
+            self._title = "RR Interval Trend (Full)"
         self.update()
 
     # ---------------------------------------------------------- paintEvent --

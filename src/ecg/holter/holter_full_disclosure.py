@@ -1270,30 +1270,15 @@ class HolterToolHandlers:
     
     @staticmethod
     def handle_goto_template(parent):
-        """Show tool information popup."""
-        from PyQt5.QtWidgets import QMessageBox
-        from PyQt5.QtCore import Qt
-        
-        box = QMessageBox(parent)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("Holter ECG Software Tools - Explained")
-        box.setTextFormat(Qt.PlainText)
-        box.setText(
-            "Ruler: measure interval/amplitude and BPM.\n"
-            "Caliper: compare regularity and coupling across beats.\n"
-            "Magnify: zoom-highlight subtle waveform details.\n"
-            "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
-            "End-to-end flow:\n"
-            "Raw recording -> Gain optimization -> Magnify flagged events -> "
-            "Measure intervals (QT/PR/pause) -> Parallel comparison -> Final report."
-        )
-        box.setStyleSheet(
-            "QMessageBox{background:#10151c;color:#f3f7fb;}"
-            "QLabel{color:#f3f7fb;font-size:12px;}"
-            "QPushButton{background:#1f6feb;color:white;border:1px solid #4b82d0;border-radius:4px;padding:6px 14px;min-width:70px;}"
-            "QPushButton:hover{background:#2d7df2;}"
-        )
-        box.exec_()
+        """Navigate to the Template tab."""
+        # parent is HolterReplayPanel; _focus_tab lives on the top-level HolterWindow.
+        # Walk up the widget tree until we find it.
+        target = parent
+        while target is not None:
+            if hasattr(target, '_focus_tab'):
+                target._focus_tab("template")
+                return
+            target = getattr(target, 'parentWidget', lambda: None)()
     
     @staticmethod
     def handle_gain_settings(parent, btn=None):
