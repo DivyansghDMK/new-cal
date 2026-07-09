@@ -1,4 +1,4 @@
-﻿"""
+"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -2771,9 +2771,6 @@ class ECGStripCanvas(QWidget):
         if d.size < 2:
             return
         
-        pen = QPen(QColor(self._color))
-        pen.setWidthF(self._pen_width)
-        painter.setPen(pen)
         # --- Paper speed: control how many samples are visible per screen width ---
         # At 25mm/s: show all data. At 50mm/s: stretch (show half). At 12.5mm/s: compress (show double).
         speed_factor = max(0.25, min(float(self._speed) / 25.0, 4.0))
@@ -2782,12 +2779,55 @@ class ECGStripCanvas(QWidget):
             d = d[-n_visible:]   # show the most recent n_visible samples (stretched)
         # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
         x_scale = w / max(1, len(d) - 1)
+        
+        # Determine colored intervals based on annotations
+        colored_intervals = []
+        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+            end_sec = self._start_sec + len(d) / self._fs
+            for beat in self._beat_annotations:
+                ts = beat['timestamp']
+                lbl = beat.get('label', 'N')
+                # Highlight QRS peak if the label is something other than 'N'
+                if lbl != 'N' and self._start_sec <= ts <= end_sec:
+                    color = beat.get('color', "#FFFF00")
+                    # R-peak window: ~60ms before and after (120ms QRS width)
+                    qrs_start_ts = ts - 0.06
+                    qrs_end_ts = ts + 0.06
+                    
+                    start_idx = max(0, int((qrs_start_ts - self._start_sec) * self._fs))
+                    end_idx = min(len(d) - 1, int((qrs_end_ts - self._start_sec) * self._fs))
+                    
+                    if start_idx < end_idx:
+                        colored_intervals.append((start_idx, end_idx, color))
+                        
+        colored_intervals.sort(key=lambda x: x[0])
+        
+        default_pen = QPen(QColor(self._color))
+        default_pen.setWidthF(self._pen_width)
+        
+        current_interval_idx = 0
+        num_intervals = len(colored_intervals)
+
         for i in range(1, len(d)):
             x1 = (i - 1) * x_scale
             y1 = h - (d[i-1] - mn) / rng * h
             x2 = i * x_scale
             y2 = h - (d[i] - mn) / rng * h
+            
+            # Advance interval index if we've passed the current interval
+            while current_interval_idx < num_intervals and i > colored_intervals[current_interval_idx][1]:
+                current_interval_idx += 1
+                
+            active_pen = default_pen
+            if current_interval_idx < num_intervals:
+                start_idx, end_idx, color = colored_intervals[current_interval_idx]
+                if start_idx <= i <= end_idx:
+                    active_pen = QPen(QColor(color))
+                    active_pen.setWidthF(self._pen_width * 1.5)
+            
+            painter.setPen(active_pen)
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
             
         # --- Draw Clinical Beat Annotations (R-peaks as N labels) ONLY on Lead I ---
         lead_name = getattr(self, 'lead_name', '')

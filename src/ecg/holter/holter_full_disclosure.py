@@ -809,34 +809,64 @@ class HolterFullDisclosureDialog(QDialog):
                                     best_dist = dist
                                     snapped_ts = peak_ts
                         
+                        # Determine target timestamps: all selected beats, or just the clicked one
+                        target_timestamps = []
+                        if hasattr(canvas, '_selected_beats') and canvas._selected_beats:
+                            target_timestamps = canvas._selected_beats
+                        else:
+                            target_timestamps = [snapped_ts]
+
                         # Ensure _beat_annotations list exists
                         if not hasattr(canvas, '_beat_annotations') or canvas._beat_annotations is None:
                             canvas._beat_annotations = []
                         
-                        # Try to find existing annotation within tolerance
-                        found = False
-                        for beat in canvas._beat_annotations:
-                            if abs(beat['timestamp'] - snapped_ts) < snap_tolerance_sec:
-                                beat['label'] = label
-                                beat['color'] = label_colors.get(label, "#FFFF00")
-                                print(f"[Full Disclosure] Updated beat at {snapped_ts:.3f}s as '{label}'")
-                                found = True
-                                break
+                        for target_ts in target_timestamps:
+                            # Try to find existing annotation within tolerance
+                            found = False
+                            for beat in canvas._beat_annotations:
+                                if abs(beat['timestamp'] - target_ts) < snap_tolerance_sec:
+                                    beat['label'] = label
+                                    beat['color'] = label_colors.get(label, "#FFFF00")
+                                    print(f"[Full Disclosure] Updated beat at {target_ts:.3f}s as '{label}'")
+                                    found = True
+                                    break
+                            
+                            # If no existing annotation found, create one at the target position
+                            if not found:
+                                new_beat = {
+                                    'timestamp': target_ts,
+                                    'label': label,
+                                    'color': label_colors.get(label, "#FFFF00")
+                                }
+                                canvas._beat_annotations.append(new_beat)
+                                print(f"[Full Disclosure] Created new beat annotation at {target_ts:.3f}s as '{label}'")
                         
-                        # If no existing annotation found, create one at the snapped R-peak position
-                        if not found:
-                            new_beat = {
-                                'timestamp': snapped_ts,
-                                'label': label,
-                                'color': label_colors.get(label, "#FFFF00")
-                            }
-                            canvas._beat_annotations.append(new_beat)
-                            # Keep sorted by timestamp for consistent rendering
-                            canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
-                            print(f"[Full Disclosure] Created new beat annotation at {snapped_ts:.3f}s as '{label}'")
+                        # Keep sorted by timestamp for consistent rendering
+                        canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
                         
-                        # Refresh all canvases to show the updated color
+                        # Propagate the updated beat_annotations to ALL other canvases
+                        # so that QRS peak colors are updated across every lead strip.
                         for c in self._canvases:
+                            if c is not canvas:
+                                if not hasattr(c, '_beat_annotations') or c._beat_annotations is None:
+                                    c._beat_annotations = []
+                                
+                                for target_ts in target_timestamps:
+                                    # Update or insert the annotation for this beat in each canvas
+                                    beat_found_in_c = False
+                                    for b in c._beat_annotations:
+                                        if abs(b['timestamp'] - target_ts) < snap_tolerance_sec:
+                                            b['label'] = label
+                                            b['color'] = label_colors.get(label, "#FFFF00")
+                                            beat_found_in_c = True
+                                            break
+                                    if not beat_found_in_c:
+                                        c._beat_annotations.append({
+                                            'timestamp': target_ts,
+                                            'label': label,
+                                            'color': label_colors.get(label, "#FFFF00")
+                                        })
+                                c._beat_annotations.sort(key=lambda b: b['timestamp'])
                             c.update()
                 break
     
@@ -856,16 +886,33 @@ class HolterFullDisclosureDialog(QDialog):
                         end_sec = start_sec + data_len / canvas._fs
                         click_ts = start_sec + pct * (end_sec - start_sec)
                         
-                        # Find and remove beat
-                        canvas._beat_annotations[:] = [
-                            b for b in canvas._beat_annotations 
-                            if abs(b['timestamp'] - click_ts) >= 0.1
-                        ]
-                        
-                        # Refresh all canvases
+                        # --- Snap click_ts to nearest detected R-peak ---
+                        snapped_ts = click_ts
+                        snap_tolerance_sec = 0.15
+                        if hasattr(self, '_detected_r_peaks') and self._detected_r_peaks:
+                            best_dist = snap_tolerance_sec
+                            for peak_ts in self._detected_r_peaks:
+                                dist = abs(peak_ts - click_ts)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    snapped_ts = peak_ts
+
+                        # Determine target timestamps: all selected beats, or just the clicked one
+                        target_timestamps = []
+                        if hasattr(canvas, '_selected_beats') and canvas._selected_beats:
+                            target_timestamps = canvas._selected_beats
+                        else:
+                            target_timestamps = [snapped_ts]
+                            
+                        # Remove the target beats from ALL canvases
                         for c in self._canvases:
+                            if hasattr(c, '_beat_annotations') and c._beat_annotations:
+                                # Keep beats that DO NOT match any of the target timestamps
+                                c._beat_annotations[:] = [
+                                    b for b in c._beat_annotations 
+                                    if not any(abs(b['timestamp'] - t_ts) < snap_tolerance_sec for t_ts in target_timestamps)
+                                ]
                             c.update()
-                break
 
     def _on_scrollbar_moved(self, val):
         start_sec = float(val) / 100.0
