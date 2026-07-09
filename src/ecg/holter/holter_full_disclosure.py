@@ -19,98 +19,151 @@ from PyQt5.QtCore import Qt, QEvent, QRect
 from PyQt5.QtGui import QPainter, QPen, QColor
 
 try:
-    from .theme import (COL_BLACK, COL_DARK, COL_GREEN, COL_GREEN_DRK,
+    from .theme import (COL_BLACK, COL_DARK, COL_GREEN, COL_GREEN_DRK, COL_WHITE, COL_GRID_MAJOR,
                         TOOL_RULER, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_SELECT)
     from .holter_ui import ECGStripCanvas, MagnifierOverlay
 except ImportError:
-    from ecg.holter.theme import (COL_BLACK, COL_DARK, COL_GREEN, COL_GREEN_DRK,
+    from ecg.holter.theme import (COL_BLACK, COL_DARK, COL_GREEN, COL_GREEN_DRK, COL_WHITE, COL_GRID_MAJOR,
                                    TOOL_RULER, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_SELECT)
     from ecg.holter.holter_ui import ECGStripCanvas, MagnifierOverlay
 
 
 from PyQt5.QtCore import pyqtSignal
 
-class FullDisclosureOverlay(QWidget):
-    """Transparent overlay to draw a fixed-width square selection box over the channels."""
-    
-    double_clicked = pyqtSignal(float, float)  # Emits start_sec, duration_sec
+# TODO: Expanded view / Overlay double click handler - Disabled for now
+# def _on_overlay_double_clicked(self, start_sec, duration):
+#     """Open expanded view for the selected time range."""
+#     # TODO: Expanded view disabled for now
+#     # dialog = ExpandedViewDialog(self._engine, self._current_start + start_sec, duration, self)
+#     # dialog.exec_()
+#     pass
 
+# ============================================================================
+# SELECTION BOX OVERLAY - COMMENTED OUT (Not needed for now)
+# ============================================================================
+# class FullDisclosureOverlay(QWidget):
+#     """Transparent overlay to draw a fixed-width square selection box over the channels."""
+#     
+#     double_clicked = pyqtSignal(float, float)  # Emits start_sec, duration_sec
+# 
+#     def __init__(self, parent=None):
+#         super().__init__(parent)
+#         self._mouse_enabled = True
+#         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+#         self._selection_center_x = 0.0
+#         self._selection_center_y = 0.0
+#         self._strip_length_sec = 3.0
+#         self._pixels_per_sec = 25.0
+#         self._is_dragging = False
+#         self.on_selection_made = None
+#         
+#     def set_mouse_enabled(self, enabled):
+#         self._mouse_enabled = enabled
+#         self.setAttribute(Qt.WA_TransparentForMouseEvents, not enabled)
+#         self.update()
+# 
+#     def set_pixels_per_sec(self, pps):
+#         self._pixels_per_sec = max(1.0, pps)
+#         if self._selection_center_x == 0.0:
+#             width = self._strip_length_sec * self._pixels_per_sec
+#             self._selection_center_x = 48.0 + width / 2.0
+#             self._selection_center_y = width / 2.0
+#         self.update()
+# 
+#     def set_strip_length(self, length_sec):
+#         self._strip_length_sec = length_sec
+#         self.update()
+# 
+#     def mousePressEvent(self, event):
+#         if event.button() == Qt.LeftButton:
+#             self._is_dragging = True
+#             self._selection_center_x = event.pos().x()
+#             self._selection_center_y = event.pos().y()
+#             self.update()
+#             self._emit_selection()
+# 
+#     def mouseMoveEvent(self, event):
+#         if self._is_dragging:
+#             self._selection_center_x = event.pos().x()
+#             self._selection_center_y = event.pos().y()
+#             self.update()
+# 
+#     def mouseReleaseEvent(self, event):
+#         if event.button() == Qt.LeftButton:
+#             self._is_dragging = False
+#             self._emit_selection()
+#             
+#     def mouseDoubleClickEvent(self, event):
+#         if event.button() == Qt.LeftButton:
+#             width = self._strip_length_sec * self._pixels_per_sec
+#             start = self._selection_center_x - width / 2.0
+#             start = max(48, min(start, self.width() - width))
+#             start_sec = max(0.0, (start - 48) / self._pixels_per_sec)
+#             self.double_clicked.emit(start_sec, self._strip_length_sec)
+# 
+#     def _emit_selection(self):
+#         if self.on_selection_made and self._selection_center_x is not None:
+#             width = self._strip_length_sec * self._pixels_per_sec
+#             start = self._selection_center_x - width / 2.0
+#             start = max(48, min(start, self.width() - width))
+#             start_sec = max(0.0, (start - 48) / self._pixels_per_sec)
+#             self.on_selection_made(start_sec, self._strip_length_sec)
+# 
+#     def paintEvent(self, event):
+#         painter = QPainter(self)
+#         painter.setRenderHint(QPainter.Antialiasing)
+#         width = self._strip_length_sec * self._pixels_per_sec
+#         height = 186.0
+#         start_x = self._selection_center_x - width / 2.0
+#         start_y = self._selection_center_y - height / 2.0
+#         start_x = max(48, min(start_x, self.width() - width))
+#         start_y = max(0, min(start_y, self.height() - height))
+#         rect = QRect(int(start_x), int(start_y), int(width), int(height))
+#         painter.setBrush(QColor(0, 120, 215, 80))
+#         painter.setPen(QPen(QColor(0, 120, 215, 180), 2))
+#         painter.drawRect(rect)
+# ============================================================================
+
+
+class VerticalLineOverlay(QWidget):
+    """Transparent overlay to draw vertical lines on user click/drag across all leads."""
+    
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._mouse_enabled = True
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        self._selection_center_x = 0.0
-        self._selection_center_y = 0.0
-        self._strip_length_sec = 3.0
-        self._pixels_per_sec = 25.0
-        self._is_dragging = False
-        self.on_selection_made = None
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # Let clicks pass through
+        self._line_positions = []  # List of X positions for multiple vertical lines
+        self.setStyleSheet("background: transparent;")
         
-    def set_mouse_enabled(self, enabled):
-        self._mouse_enabled = enabled
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, not enabled)
+    def set_line_position(self, x: int):
+        """Set a single X position for the vertical line (backward compatibility)."""
+        self._line_positions = [x] if x is not None else []
         self.update()
-
-    def set_pixels_per_sec(self, pps):
-        self._pixels_per_sec = max(1.0, pps)
-        if self._selection_center_x == 0.0:
-            width = self._strip_length_sec * self._pixels_per_sec
-            self._selection_center_x = 48.0 + width / 2.0
-            self._selection_center_y = width / 2.0
+    
+    def set_line_positions(self, positions: list):
+        """Set multiple X positions for vertical lines (for drag selection)."""
+        self._line_positions = positions if positions else []
         self.update()
-
-    def set_strip_length(self, length_sec):
-        self._strip_length_sec = length_sec
+        
+    def clear_line(self):
+        """Clear all vertical lines."""
+        self._line_positions = []
         self.update()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._is_dragging = True
-            self._selection_center_x = event.pos().x()
-            self._selection_center_y = event.pos().y()
-            self.update()
-            self._emit_selection()
-
-    def mouseMoveEvent(self, event):
-        if self._is_dragging:
-            self._selection_center_x = event.pos().x()
-            self._selection_center_y = event.pos().y()
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._is_dragging = False
-            self._emit_selection()
-            
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            width = self._strip_length_sec * self._pixels_per_sec
-            start = self._selection_center_x - width / 2.0
-            start = max(48, min(start, self.width() - width))
-            start_sec = max(0.0, (start - 48) / self._pixels_per_sec)
-            self.double_clicked.emit(start_sec, self._strip_length_sec)
-
-    def _emit_selection(self):
-        if self.on_selection_made and self._selection_center_x is not None:
-            width = self._strip_length_sec * self._pixels_per_sec
-            start = self._selection_center_x - width / 2.0
-            start = max(48, min(start, self.width() - width))
-            start_sec = max(0.0, (start - 48) / self._pixels_per_sec)
-            self.on_selection_made(start_sec, self._strip_length_sec)
-
+        
     def paintEvent(self, event):
+        """Draw vertical yellow lines at all set positions."""
+        if not self._line_positions:
+            return
+            
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        width = self._strip_length_sec * self._pixels_per_sec
-        height = 186.0
-        start_x = self._selection_center_x - width / 2.0
-        start_y = self._selection_center_y - height / 2.0
-        start_x = max(48, min(start_x, self.width() - width))
-        start_y = max(0, min(start_y, self.height() - height))
-        rect = QRect(int(start_x), int(start_y), int(width), int(height))
-        painter.setBrush(QColor(0, 120, 215, 80))
-        painter.setPen(QPen(QColor(0, 120, 215, 180), 2))
-        painter.drawRect(rect)
+        
+        # Draw continuous vertical yellow lines starting from y=22 (below the N label box)
+        # This prevents the line from overlapping with the N label text and square box
+        painter.setPen(QPen(QColor("#FFFF00"), 2))
+        
+        for line_x in self._line_positions:
+            if line_x is not None:
+                painter.drawLine(line_x, 22, line_x, self.height())
 
 
 class HolterFullDisclosureDialog(QDialog):
@@ -133,6 +186,14 @@ class HolterFullDisclosureDialog(QDialog):
         self._selected_duration = None
         self._active_tool = TOOL_SELECT
         self._active_tool_btn = None
+        
+        # Drag selection state
+        self._drag_start_x = None
+        self._drag_current_x = None
+        self._is_dragging = False
+        self._drag_start_timestamp = None
+        
+        self._detected_r_peaks = []
 
         self.setWindowTitle("Full Disclosure ECG")
         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
@@ -190,29 +251,30 @@ class HolterFullDisclosureDialog(QDialog):
         sep1.setStyleSheet(f"color: {COL_GREEN_DRK};")
         top_layout.addWidget(sep1)
 
-        lbl_sl = QLabel("Selection window (s):")
-        lbl_sl.setStyleSheet("color: #a0c4e8; font-size: 13px;")
-        top_layout.addWidget(lbl_sl)
-
-        self.spin_strip = QSpinBox()
-        self.spin_strip.setRange(1, 60)
-        self.spin_strip.setValue(int(self._strip_length))
-        self.spin_strip.setFixedWidth(58)
-        self.spin_strip.setStyleSheet(f"""
-            QSpinBox {{
-                background: #0d1b2a; color: {COL_GREEN};
-                border: 1px solid {COL_GREEN_DRK}; border-radius: 4px;
-                padding: 3px 6px; font-size: 13px; font-weight: bold;
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{ width: 16px; background: #162a3a; }}
-        """)
-        self.spin_strip.valueChanged.connect(self._on_strip_length_changed)
-        top_layout.addWidget(self.spin_strip)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setStyleSheet(f"color: {COL_GREEN_DRK};")
-        top_layout.addWidget(sep2)
+        # TODO: Selection window option disabled for now
+        # lbl_sl = QLabel("Selection window (s):")
+        # lbl_sl.setStyleSheet("color: #a0c4e8; font-size: 13px;")
+        # top_layout.addWidget(lbl_sl)
+        # 
+        # self.spin_strip = QSpinBox()
+        # self.spin_strip.setRange(1, 60)
+        # self.spin_strip.setValue(int(self._strip_length))
+        # self.spin_strip.setFixedWidth(58)
+        # self.spin_strip.setStyleSheet(f"""
+        #     QSpinBox {{
+        #         background: #0d1b2a; color: {COL_GREEN};
+        #         border: 1px solid {COL_GREEN_DRK}; border-radius: 4px;
+        #         padding: 3px 6px; font-size: 13px; font-weight: bold;
+        #     }}
+        #     QSpinBox::up-button, QSpinBox::down-button {{ width: 16px; background: #162a3a; }}
+        # """)
+        # self.spin_strip.valueChanged.connect(self._on_strip_length_changed)
+        # top_layout.addWidget(self.spin_strip)
+        # 
+        # sep2 = QFrame()
+        # sep2.setFrameShape(QFrame.VLine)
+        # sep2.setStyleSheet(f"color: {COL_GREEN_DRK};")
+        # top_layout.addWidget(sep2)
 
         self.time_tabs = QTabBar()
         self.time_tabs.addTab("Full disc")
@@ -275,18 +337,31 @@ class HolterFullDisclosureDialog(QDialog):
             canvas.set_paper_speed(25)
             canvas.set_gain(self._gain)
             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            
+            # Install event filter on each canvas to catch mouse clicks
+            canvas.installEventFilter(self)
 
             row.addWidget(lbl)
             row.addWidget(canvas, 1)
             self.canvas_layout.addLayout(row)
             self._canvases.append(canvas)
 
-        self.overlay = FullDisclosureOverlay(canvas_frame)
-        self.overlay.set_strip_length(self._strip_length)
-        self.overlay.on_selection_made = self._on_selection
-        self.overlay.double_clicked.connect(self._on_overlay_double_clicked)
-        # Enable mouse on overlay initially
-        self.overlay.set_mouse_enabled(True)
+        # TODO: Selection box overlay disabled for now
+        # self.overlay = FullDisclosureOverlay(canvas_frame)
+        # self.overlay.set_strip_length(self._strip_length)
+        # self.overlay.on_selection_made = self._on_selection
+        # self.overlay.double_clicked.connect(self._on_overlay_double_clicked)
+        # # Enable mouse on overlay initially
+        # self.overlay.set_mouse_enabled(True)
+        
+        # Add vertical line overlay for click tracking (spans all leads continuously)
+        self._vertical_line_overlay = VerticalLineOverlay(canvas_frame)
+        self._vertical_line_overlay.setGeometry(canvas_frame.rect())
+        self._vertical_line_overlay.raise_()  # Make sure it's on top
+        self._vertical_line_overlay.show()
+        self._clicked_vertical_line_x = None  # Track clicked X position
+        
+        # Install event filter BEFORE adding canvas_frame to layout
         canvas_frame.installEventFilter(self)
         self._canvas_frame = canvas_frame
         layout.addWidget(canvas_frame, 1)
@@ -389,15 +464,173 @@ class HolterFullDisclosureDialog(QDialog):
             self._magnifier_overlay.clear_focus(source_widget)
 
     def eventFilter(self, obj, event):
+        # Handle resize events for canvas_frame
         if obj == self._canvas_frame and event.type() == QEvent.Resize:
-            self.overlay.resize(obj.size())
-            pps = (obj.width() - 48) / max(1.0, self._window_sec)
-            self.overlay.set_pixels_per_sec(pps)
+            # Resize the vertical line overlay to match the canvas frame
+            if hasattr(self, '_vertical_line_overlay'):
+                self._vertical_line_overlay.setGeometry(obj.rect())
+        
+        # Handle RIGHT CLICK - show context menu for beat labeling
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
+            if obj == self._canvas_frame or obj in self._canvases:
+                # Get click position
+                if obj in self._canvases:
+                    click_pos_local = event.pos()
+                    click_pos_global = obj.mapTo(self._canvas_frame, click_pos_local)
+                    click_x = click_pos_global.x()
+                else:
+                    click_x = event.pos().x()
+                
+                # Show context menu
+                self._show_beat_context_menu(click_x, event.globalPos())
+                return True  # Consume the event
+        
+        # Handle mouse press - start drag selection
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            # Check if the event is from a canvas or the canvas_frame
+            if obj == self._canvas_frame or obj in self._canvases:
+                # Get click position relative to canvas_frame
+                if obj in self._canvases:
+                    click_pos_local = event.pos()
+                    click_pos_global = obj.mapTo(self._canvas_frame, click_pos_local)
+                    click_x = click_pos_global.x()
+                else:
+                    click_x = event.pos().x()
+                
+                # Start drag selection
+                self._drag_start_x = click_x
+                self._drag_current_x = click_x
+                self._is_dragging = False
+                
+                self._clicked_vertical_line_x = click_x
+                
+                # Update the overlay to draw the line
+                if hasattr(self, '_vertical_line_overlay'):
+                    self._vertical_line_overlay.set_line_position(click_x)
+                
+                # Convert click_x (global) to local Lead I coordinate
+                lead_i_canvas = None
+                for c in self._canvases:
+                    if c.lead_name == 'I':
+                        lead_i_canvas = c
+                        break
+                
+                clicked_timestamp = None
+                clicked_label = None
+                if lead_i_canvas:
+                    from PyQt5.QtCore import QPoint
+                    click_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(click_x, 0)).x()
+                    click_x_local = max(0, min(lead_i_canvas.width(), click_x_local))
+                    
+                    lead_i_canvas._check_and_store_clicked_beat(click_x_local)
+                    clicked_timestamp = lead_i_canvas._clicked_beat_timestamp
+                    clicked_label = lead_i_canvas._clicked_beat_label
+                
+                # Store the start beat
+                self._drag_start_timestamp = clicked_timestamp
+                
+                # Propagate to all canvases for single beat display
+                for canvas in self._canvases:
+                    if clicked_timestamp is not None:
+                        if lead_i_canvas and hasattr(lead_i_canvas, '_clicked_beat_x_pos'):
+                            canvas._clicked_beat_x_pos = lead_i_canvas._clicked_beat_x_pos
+                        else:
+                            canvas._clicked_beat_x_pos = click_x
+                        canvas._clicked_beat_timestamp = clicked_timestamp
+                        canvas._clicked_beat_label = clicked_label
+                        # Initialize selected beats list
+                        canvas._selected_beats = [clicked_timestamp] if clicked_timestamp else []
+                    else:
+                        canvas._clicked_beat_x_pos = None
+                        canvas._clicked_beat_timestamp = None
+                        canvas._clicked_beat_label = None
+                        canvas._selected_beats = []
+                    canvas.update()
+                
+                # Update overlay with single line position
+                if hasattr(self, '_vertical_line_overlay'):
+                    if clicked_timestamp is not None and lead_i_canvas and hasattr(lead_i_canvas, '_clicked_beat_x_pos') and lead_i_canvas._clicked_beat_x_pos is not None:
+                        from PyQt5.QtCore import QPoint
+                        beat_x_global = lead_i_canvas.mapTo(self._canvas_frame, QPoint(lead_i_canvas._clicked_beat_x_pos, 0)).x()
+                        self._vertical_line_overlay.set_line_position(beat_x_global)
+                    else:
+                        self._vertical_line_overlay.set_line_position(click_x)
+        
+        # Handle mouse move - drag to select multiple beats
+        elif event.type() == QEvent.MouseMove:
+            if hasattr(self, '_drag_start_x') and self._drag_start_x is not None:
+                # Get current drag position
+                if obj in self._canvases:
+                    drag_pos_local = event.pos()
+                    drag_pos_global = obj.mapTo(self._canvas_frame, drag_pos_local)
+                    drag_x = drag_pos_global.x()
+                else:
+                    drag_x = event.pos().x()
+                
+                # Check if user has moved enough to start drag (5 pixel threshold)
+                if not self._is_dragging and abs(drag_x - self._drag_start_x) > 5:
+                    self._is_dragging = True
+                
+                if self._is_dragging:
+                    self._drag_current_x = drag_x
+                    
+                    # Find all beats between start and current position
+                    start_x = min(self._drag_start_x, drag_x)
+                    end_x = max(self._drag_start_x, drag_x)
+                    
+                    # Get all beats in range from Lead I by mapping to local coords
+                    selected_beats = []
+                    lead_i_canvas = None
+                    for c in self._canvases:
+                        if c.lead_name == 'I':
+                            lead_i_canvas = c
+                            break
+                    
+                    if lead_i_canvas:
+                        from PyQt5.QtCore import QPoint
+                        w_i = lead_i_canvas.width()
+                        start_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(start_x, 0)).x()
+                        end_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(end_x, 0)).x()
+                        start_x_local = max(0, min(w_i, start_x_local))
+                        end_x_local = max(0, min(w_i, end_x_local))
+                        selected_beats = lead_i_canvas._find_beats_in_range(start_x_local, end_x_local)
+                    
+                    # Propagate selected beats to all canvases
+                    for canvas in self._canvases:
+                        canvas._selected_beats = selected_beats
+                        canvas.update()
+                    
+                    # Update vertical line overlay with multiple line positions
+                    if hasattr(self, '_vertical_line_overlay'):
+                        line_positions = []
+                        if selected_beats and lead_i_canvas:
+                            w = lead_i_canvas.width()
+                            start_sec = lead_i_canvas._start_sec
+                            data_len = len(lead_i_canvas._data) if hasattr(lead_i_canvas, '_data') else 0
+                            if w > 0 and data_len > 0:
+                                end_sec = start_sec + data_len / lead_i_canvas._fs
+                                for beat_ts in selected_beats:
+                                    if start_sec <= beat_ts <= end_sec:
+                                        pct = (beat_ts - start_sec) / (end_sec - start_sec) if (end_sec - start_sec) > 0 else 0.0
+                                        beat_x = int(pct * w)
+                                        from PyQt5.QtCore import QPoint
+                                        beat_x_global = lead_i_canvas.mapTo(self._canvas_frame, QPoint(beat_x, 0)).x()
+                                        line_positions.append(beat_x_global)
+                        self._vertical_line_overlay.set_line_positions(line_positions)
+        
+        # Handle mouse release - end drag selection
+        elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            if hasattr(self, '_drag_start_x'):
+                self._drag_start_x = None
+                self._drag_current_x = None
+                self._is_dragging = False
+                
         return super().eventFilter(obj, event)
 
-    def _on_strip_length_changed(self, val):
-        self._strip_length = float(val)
-        self.overlay.set_strip_length(self._strip_length)
+    # TODO: Strip length change handler disabled for now
+    # def _on_strip_length_changed(self, val):
+    #     self._strip_length = float(val)
+    #     self.overlay.set_strip_length(self._strip_length)
 
     def _cycle_gain(self):
         multipliers = [g[0] for g in self._GAIN_STEPS]
@@ -439,10 +672,222 @@ class HolterFullDisclosureDialog(QDialog):
             if hasattr(c, 'set_mode'):
                 c.set_mode(TOOL_SELECT)
         self.clear_magnifier_focus()
-        self.overlay.show()
+        # TODO: Overlay show/hide disabled for now
+        # self.overlay.show()
+
+    def _show_beat_context_menu(self, click_x: int, global_pos):
+        """Show right-click context menu for beat labeling."""
+        from PyQt5.QtWidgets import QMenu, QAction
+        
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COL_DARK};
+                color: {COL_WHITE};
+                border: 1px solid {COL_GRID_MAJOR};
+            }}
+            QMenu::item:selected {{
+                background-color: {COL_GRID_MAJOR};
+            }}
+        """)
+        
+        # Beat type options with colors
+        beat_options = [
+            ("Normal(N)", "N", "#00FF00"),  # Green
+            ("Atrial Premature(S)", "S", "#00FFFF"),  # Cyan
+            ("Ventricular Premature(V)", "V", "#FF3333"),  # Red
+            ("Paced(P)", "P", "#FF00FF"),  # Magenta
+            ("Atrial Fibrillation(AF)", "AF", "#FF00FF"),  # Magenta
+            ("Artifact(X)", "X", "#0000FF"),  # Blue
+            ("Other", "Other", "#FFFF00"),  # Yellow
+        ]
+        
+        for label, code, color in beat_options:
+            action = QAction(label, self)
+            action.triggered.connect(lambda checked, c=code, x=click_x: self._label_beat(x, c))
+            menu.addAction(action)
+        
+        menu.addSeparator()
+        
+        # Additional options
+        delete_action = QAction("Delete", self)
+        delete_action.triggered.connect(lambda: self._delete_beat_at_position(click_x))
+        menu.addAction(delete_action)
+        
+        menu.addSeparator()
+        
+        # Other options
+        add_strip_action = QAction("Add/Print Strip(space)", self)
+        menu.addAction(add_strip_action)
+        
+        interval_action = QAction("Interval reanalysis", self)
+        menu.addAction(interval_action)
+        
+        add_afib_action = QAction("Add AFib Evt.", self)
+        menu.addAction(add_afib_action)
+        
+        add_af_action = QAction("Add AF Evt.", self)
+        menu.addAction(add_af_action)
+        
+        menu.addSeparator()
+        
+        amplitude_action = QAction("Amplitude Ruler", self)
+        menu.addAction(amplitude_action)
+        
+        parallel_action = QAction("Parallel Ruler", self)
+        menu.addAction(parallel_action)
+        
+        menu.addSeparator()
+        
+        set_start_action = QAction("Set as starting", self)
+        menu.addAction(set_start_action)
+        
+        set_end_action = QAction("Set as ending", self)
+        menu.addAction(set_end_action)
+        
+        menu.addSeparator()
+        
+        equal_interval_action = QAction("equal interval bulkinsert beats", self)
+        menu.addAction(equal_interval_action)
+        
+        menu.addSeparator()
+        
+        set_max_hr_action = QAction("Set as max HR", self)
+        menu.addAction(set_max_hr_action)
+        
+        set_min_hr_action = QAction("Set as min HR", self)
+        menu.addAction(set_min_hr_action)
+        
+        set_sinus_max_action = QAction("Set as Sinus Max. HR", self)
+        menu.addAction(set_sinus_max_action)
+        
+        set_sinus_min_action = QAction("Set as Sinus Min. HR", self)
+        menu.addAction(set_sinus_min_action)
+        
+        # Show menu at cursor position
+        menu.exec_(global_pos)
+    
+    def _label_beat(self, click_x: int, label: str):
+        """Label the beat at click_x with the given label."""
+        # Define color mapping for beat types
+        label_colors = {
+            "N": "#00FF00",      # Normal - Green
+            "S": "#00FFFF",      # Atrial Premature - Cyan
+            "V": "#FF3333",      # Ventricular Premature - Red
+            "P": "#FF00FF",      # Paced - Magenta
+            "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+            "X": "#0000FF",      # Artifact - Blue
+            "Other": "#FFFF00"   # Other - Yellow
+        }
+        
+        # Find the beat at this position and update its label
+        for canvas in self._canvases:
+            if canvas.lead_name == 'I':
+                from PyQt5.QtCore import QPoint
+                local_x = canvas.mapFrom(self._canvas_frame, QPoint(click_x, 0)).x()
+                local_x = max(0, min(canvas.width(), local_x))
+                # Get beat timestamp at this position
+                w = canvas.width()
+                if w > 0:
+                    pct = local_x / float(w)
+                    start_sec = canvas._start_sec
+                    data_len = len(canvas._data) if hasattr(canvas, '_data') else 0
+                    if data_len > 0:
+                        end_sec = start_sec + data_len / canvas._fs
+                        click_ts = start_sec + pct * (end_sec - start_sec)
+                        
+                        # --- Snap click_ts to nearest detected R-peak ---
+                        snapped_ts = click_ts
+                        snap_tolerance_sec = 0.15  # 150ms tolerance
+                        
+                        # Try snapping to parent dialog's detected peaks first
+                        if hasattr(self, '_detected_r_peaks') and self._detected_r_peaks:
+                            best_dist = snap_tolerance_sec
+                            for peak_ts in self._detected_r_peaks:
+                                dist = abs(peak_ts - click_ts)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    snapped_ts = peak_ts
+                        
+                        # Ensure _beat_annotations list exists
+                        if not hasattr(canvas, '_beat_annotations') or canvas._beat_annotations is None:
+                            canvas._beat_annotations = []
+                        
+                        # Try to find existing annotation within tolerance
+                        found = False
+                        for beat in canvas._beat_annotations:
+                            if abs(beat['timestamp'] - snapped_ts) < snap_tolerance_sec:
+                                beat['label'] = label
+                                beat['color'] = label_colors.get(label, "#FFFF00")
+                                print(f"[Full Disclosure] Updated beat at {snapped_ts:.3f}s as '{label}'")
+                                found = True
+                                break
+                        
+                        # If no existing annotation found, create one at the snapped R-peak position
+                        if not found:
+                            new_beat = {
+                                'timestamp': snapped_ts,
+                                'label': label,
+                                'color': label_colors.get(label, "#FFFF00")
+                            }
+                            canvas._beat_annotations.append(new_beat)
+                            # Keep sorted by timestamp for consistent rendering
+                            canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
+                            print(f"[Full Disclosure] Created new beat annotation at {snapped_ts:.3f}s as '{label}'")
+                        
+                        # Refresh all canvases to show the updated color
+                        for c in self._canvases:
+                            c.update()
+                break
+    
+    def _delete_beat_at_position(self, click_x: int):
+        """Delete the beat at the clicked position."""
+        for canvas in self._canvases:
+            if canvas.lead_name == 'I':
+                from PyQt5.QtCore import QPoint
+                local_x = canvas.mapFrom(self._canvas_frame, QPoint(click_x, 0)).x()
+                local_x = max(0, min(canvas.width(), local_x))
+                w = canvas.width()
+                if w > 0 and hasattr(canvas, '_beat_annotations'):
+                    pct = local_x / float(w)
+                    start_sec = canvas._start_sec
+                    data_len = len(canvas._data) if hasattr(canvas, '_data') else 0
+                    if data_len > 0:
+                        end_sec = start_sec + data_len / canvas._fs
+                        click_ts = start_sec + pct * (end_sec - start_sec)
+                        
+                        # Find and remove beat
+                        canvas._beat_annotations[:] = [
+                            b for b in canvas._beat_annotations 
+                            if abs(b['timestamp'] - click_ts) >= 0.1
+                        ]
+                        
+                        # Refresh all canvases
+                        for c in self._canvases:
+                            c.update()
+                break
 
     def _on_scrollbar_moved(self, val):
         start_sec = float(val) / 100.0
+        
+        # Clear any selected beats and vertical lines when scrolling
+        self._drag_start_x = None
+        self._drag_current_x = None
+        self._is_dragging = False
+        self._drag_start_timestamp = None
+        
+        # Clear vertical lines from overlay
+        if hasattr(self, '_vertical_line_overlay'):
+            self._vertical_line_overlay.clear_line()
+            
+        # Clear beat selection from all canvases
+        for canvas in self._canvases:
+            canvas._clicked_beat_timestamp = None
+            canvas._clicked_beat_label = None
+            canvas._clicked_beat_x_pos = None
+            canvas._selected_beats = []
+            canvas.update()
+            
         self._update_canvases(start_sec)
 
     def _on_time_tab_changed(self, index):
@@ -455,8 +900,27 @@ class HolterFullDisclosureDialog(QDialog):
         elif "15 Min" in text: self._window_sec = 900.0
         else: self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
         
+        # Clear any selected beats and vertical lines when tab changes
+        self._drag_start_x = None
+        self._drag_current_x = None
+        self._is_dragging = False
+        self._drag_start_timestamp = None
+        
+        # Clear vertical lines from overlay
+        if hasattr(self, '_vertical_line_overlay'):
+            self._vertical_line_overlay.clear_line()
+        
+        # Clear beat selection from all canvases
+        for canvas in self._canvases:
+            canvas._clicked_beat_timestamp = None
+            canvas._clicked_beat_label = None
+            canvas._clicked_beat_x_pos = None
+            canvas._selected_beats = []
+            canvas.update()
+        
+        # TODO: Overlay mouse enable disabled for now
         # Always enable mouse on overlay for dragging
-        self.overlay.set_mouse_enabled(True)
+        # self.overlay.set_mouse_enabled(True)
         
         # When "Full disc" is selected, show the last part of the recording
         if "Full disc" in text:
@@ -565,13 +1029,14 @@ class HolterFullDisclosureDialog(QDialog):
         for c in self._canvases:
             if hasattr(c, 'set_mode'):
                 c.set_mode(self._active_tool)
+        # TODO: Show/hide the strip selection overlay based on tool (disabled for now)
         # Show/hide the strip selection overlay based on tool
         # When a measurement tool is active, hide the selection box
-        if self._active_tool == TOOL_SELECT:
-            self.overlay.show()
-        else:
-            self.overlay.hide()
-            self.clear_magnifier_focus()
+        # if self._active_tool == TOOL_SELECT:
+        #     self.overlay.show()
+        # else:
+        #     self.overlay.hide()
+        #     self.clear_magnifier_focus()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
@@ -585,147 +1050,153 @@ class HolterFullDisclosureDialog(QDialog):
         
     def _on_overlay_double_clicked(self, start_sec, duration):
         """Open expanded view for the selected time range."""
-        dialog = ExpandedViewDialog(self._engine, self._current_start + start_sec, duration, self)
-        dialog.exec_()
+        # TODO: Expanded view disabled for now
+        # dialog = ExpandedViewDialog(self._engine, self._current_start + start_sec, duration, self)
+        # dialog.exec_()
+        pass
 
 
-class ExpandedViewDialog(QDialog):
-    """Expanded 12-lead view for selected time range."""
-    
-    def __init__(self, replay_engine, start_sec: float, duration: float, parent=None):
-        super().__init__(parent)
-        self._engine = replay_engine
-        self._reader = replay_engine._reader
-        self._start_sec = start_sec
-        self._duration = duration
-        
-        self.setWindowTitle("Expanded View")
-        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
-        self.setWindowState(Qt.WindowMaximized)
-        
-        screen = QApplication.primaryScreen()
-        if screen:
-            self.resize(screen.availableGeometry().size())
-            
-        self.setStyleSheet(f"QDialog {{ background: {COL_BLACK}; }}")
-        
-        self._build_ui()
-        self._update_canvases()
-        
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
-        
-        top_bar = QFrame()
-        top_bar.setStyleSheet(f"background: {COL_DARK}; border-bottom: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
-        top_bar.setFixedHeight(44)
-        top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(14, 4, 14, 4)
-        top_layout.setSpacing(12)
-        
-        start_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec)
-        end_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec + self._duration)
-        self.lbl_time = QLabel(f"Time Range: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
-        self.lbl_time.setStyleSheet(f"color: {COL_GREEN}; font-weight: bold; font-size: 15px;")
-        top_layout.addWidget(self.lbl_time)
-        
-        top_layout.addStretch()
-        
-        btn_close = QPushButton("Close")
-        btn_close.setStyleSheet("""
-            QPushButton {
-                background: #0d1b2a; color: #a0c4e8;
-                border: 1px solid #2a5a6d; padding: 5px 14px;
-                font-size: 13px; font-weight: bold; border-radius: 4px;
-            }
-            QPushButton:hover {
-                background: #162a3a;
-            }
-        """)
-        btn_close.clicked.connect(self.accept)
-        top_layout.addWidget(btn_close)
-        
-        layout.addWidget(top_bar)
-        
-        canvas_frame = QFrame()
-        canvas_frame.setStyleSheet(f"background: {COL_BLACK}; border: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
-        self.canvas_layout = QVBoxLayout(canvas_frame)
-        self.canvas_layout.setContentsMargins(8, 12, 8, 12)
-        self.canvas_layout.setSpacing(6)
-        
-        self._canvases = []
-        leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
-        for lead in leads:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            
-            lbl = QLabel(lead)
-            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            lbl.setStyleSheet(
-                f"color: {COL_GREEN}; font-weight: bold; font-size: 16px;"
-                f" background: #0a0f18; border-right: 1px solid {COL_GREEN_DRK};"
-                f" padding-right: 8px; padding-top: 4px; padding-bottom:4px;"
-            )
-            lbl.setFixedWidth(52)
-            
-            canvas = ECGStripCanvas(canvas_frame, height=80, color=COL_GREEN, lead_name=lead)
-            canvas.set_paper_speed(25)
-            canvas.set_gain(2.0)  # Higher gain for expanded view
-            canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            
-            row.addWidget(lbl)
-            row.addWidget(canvas, 1)
-            self.canvas_layout.addLayout(row)
-            self._canvases.append(canvas)
-            
-        layout.addWidget(canvas_frame, 1)
-        
-    def _update_canvases(self):
-        end_sec = min(self._start_sec + self._duration, self._engine.duration_sec)
-        data = self._reader.read_range(self._start_sec, end_sec)
-        expected_len = int(self._duration * self._engine.fs)
-        
-        # Get beat annotations for this window
-        beat_annotations = []
-        try:
-            for m in self._engine._metrics:
-                all_beats = m.get('all_beats', [])
-                if not all_beats:
-                    continue
-                for beat in all_beats:
-                    ts = float(beat.get('timestamp', 0.0))
-                    if self._start_sec <= ts <= end_sec:
-                        beat_annotations.append({
-                            'timestamp': ts,
-                            'label': str(beat.get('label', 'N'))
-                        })
-            beat_annotations.sort(key=lambda b: b['timestamp'])
-        except Exception as e:
-            print(f"[Expanded View] Error loading beat annotations: {e}")
-        
-        # Generate time array for ECG strips
-        x = np.linspace(0, self._duration, expected_len)
-        
-        # Optimization: Process data efficiently with numpy vectorization
-        for i, c in enumerate(self._canvases):
-            if i < data.shape[0] and data.shape[1] > 0:
-                d_i = data[i]
-                # Use numpy slicing instead of padding for better performance
-                if len(d_i) != expected_len:
-                    if len(d_i) > expected_len:
-                        d_i = d_i[:expected_len]
-                    else:
-                        # Create padded array more efficiently
-                        padded = np.empty(expected_len, dtype=d_i.dtype)
-                        padded[:len(d_i)] = d_i
-                        padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
-                        d_i = padded
-                # Convert to float32 for faster rendering and pass beat annotations
-                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
-            else:
-                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
+# ============================================================================
+# EXPANDED VIEW DIALOG - COMMENTED OUT (Not needed for now)
+# ============================================================================
+# class ExpandedViewDialog(QDialog):
+#     """Expanded 12-lead view for selected time range."""
+#     
+#     def __init__(self, replay_engine, start_sec: float, duration: float, parent=None):
+#         super().__init__(parent)
+#         self._engine = replay_engine
+#         self._reader = replay_engine._reader
+#         self._start_sec = start_sec
+#         self._duration = duration
+#         
+#         self.setWindowTitle("Expanded View")
+#         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
+#         self.setWindowState(Qt.WindowMaximized)
+#         
+#         screen = QApplication.primaryScreen()
+#         if screen:
+#             self.resize(screen.availableGeometry().size())
+#             
+#         self.setStyleSheet(f"QDialog {{ background: {COL_BLACK}; }}")
+#         
+#         self._build_ui()
+#         self._update_canvases()
+#         
+#     def _build_ui(self):
+#         layout = QVBoxLayout(self)
+#         layout.setContentsMargins(16, 16, 16, 16)
+#         layout.setSpacing(8)
+#         
+#         top_bar = QFrame()
+#         top_bar.setStyleSheet(f"background: {COL_DARK}; border-bottom: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
+#         top_bar.setFixedHeight(44)
+#         top_layout = QHBoxLayout(top_bar)
+#         top_layout.setContentsMargins(14, 4, 14, 4)
+#         top_layout.setSpacing(12)
+#         
+#         start_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec)
+#         end_real = datetime.fromtimestamp(self._engine._reader.start_time + self._start_sec + self._duration)
+#         self.lbl_time = QLabel(f"Time Range: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
+#         self.lbl_time.setStyleSheet(f"color: {COL_GREEN}; font-weight: bold; font-size: 15px;")
+#         top_layout.addWidget(self.lbl_time)
+#         
+#         top_layout.addStretch()
+#         
+#         btn_close = QPushButton("Close")
+#         btn_close.setStyleSheet("""
+#             QPushButton {
+#                 background: #0d1b2a; color: #a0c4e8;
+#                 border: 1px solid #2a5a6d; padding: 5px 14px;
+#                 font-size: 13px; font-weight: bold; border-radius: 4px;
+#             }
+#             QPushButton:hover {
+#                 background: #162a3a;
+#             }
+#         """)
+#         btn_close.clicked.connect(self.accept)
+#         top_layout.addWidget(btn_close)
+#         
+#         layout.addWidget(top_bar)
+#         
+#         canvas_frame = QFrame()
+#         canvas_frame.setStyleSheet(f"background: {COL_BLACK}; border: 1px solid {COL_GREEN_DRK}; border-radius: 4px;")
+#         self.canvas_layout = QVBoxLayout(canvas_frame)
+#         self.canvas_layout.setContentsMargins(8, 12, 8, 12)
+#         self.canvas_layout.setSpacing(6)
+#         
+#         self._canvases = []
+#         leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+#         for lead in leads:
+#             row = QHBoxLayout()
+#             row.setContentsMargins(0, 0, 0, 0)
+#             row.setSpacing(6)
+#             
+#             lbl = QLabel(lead)
+#             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+#             lbl.setStyleSheet(
+#                 f"color: {COL_GREEN}; font-weight: bold; font-size: 16px;"
+#                 f" background: #0a0f18; border-right: 1px solid {COL_GREEN_DRK};"
+#                 f" padding-right: 8px; padding-top: 4px; padding-bottom:4px;"
+#             )
+#             lbl.setFixedWidth(52)
+#             
+#             canvas = ECGStripCanvas(canvas_frame, height=80, color=COL_GREEN, lead_name=lead)
+#             canvas.set_paper_speed(25)
+#             canvas.set_gain(2.0)  # Higher gain for expanded view
+#             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+#             
+#             row.addWidget(lbl)
+#             row.addWidget(canvas, 1)
+#             self.canvas_layout.addLayout(row)
+#             self._canvases.append(canvas)
+#             
+#         layout.addWidget(canvas_frame, 1)
+#         
+#     def _update_canvases(self):
+#         end_sec = min(self._start_sec + self._duration, self._engine.duration_sec)
+#         data = self._reader.read_range(self._start_sec, end_sec)
+#         expected_len = int(self._duration * self._engine.fs)
+#         
+#         # Get beat annotations for this window
+#         beat_annotations = []
+#         try:
+#             for m in self._engine._metrics:
+#                 all_beats = m.get('all_beats', [])
+#                 if not all_beats:
+#                     continue
+#                 for beat in all_beats:
+#                     ts = float(beat.get('timestamp', 0.0))
+#                     if self._start_sec <= ts <= end_sec:
+#                         beat_annotations.append({
+#                             'timestamp': ts,
+#                             'label': str(beat.get('label', 'N'))
+#                         })
+#             beat_annotations.sort(key=lambda b: b['timestamp'])
+#         except Exception as e:
+#             print(f"[Expanded View] Error loading beat annotations: {e}")
+#         
+#         # Generate time array for ECG strips
+#         x = np.linspace(0, self._duration, expected_len)
+#         
+#         # Optimization: Process data efficiently with numpy vectorization
+#         for i, c in enumerate(self._canvases):
+#             if i < data.shape[0] and data.shape[1] > 0:
+#                 d_i = data[i]
+#                 # Use numpy slicing instead of padding for better performance
+#                 if len(d_i) != expected_len:
+#                     if len(d_i) > expected_len:
+#                         d_i = d_i[:expected_len]
+#                     else:
+#                         # Create padded array more efficiently
+#                         padded = np.empty(expected_len, dtype=d_i.dtype)
+#                         padded[:len(d_i)] = d_i
+#                         padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
+#                         d_i = padded
+#                 # Convert to float32 for faster rendering and pass beat annotations
+#                 c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
+#             else:
+#                 c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=self._start_sec)
+# ============================================================================
 
 class HolterToolHandlers:
     """

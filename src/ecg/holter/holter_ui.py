@@ -1,4 +1,4 @@
-"""
+﻿"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -2268,8 +2268,19 @@ class ECGStripCanvas(QWidget):
         self._magnify_locked = False
         self._caliper_line1 = None
         self._caliper_line2 = None
+        # Ruler/Measuring ruler state: track start and end points separately
+        self._ruler_start = None  # Start point (persists)
+        self._ruler_end = None    # End point (current measurement)
         self._magnify_pos = None
         self._fs = 500.0
+        
+        # Click-based vertical line tracking: only show line where user clicked
+        self._clicked_beat_timestamp = None  # Timestamp of the clicked peak
+        self._clicked_beat_label = None  # Label (N, S, V, etc.) of clicked peak
+        self._clicked_beat_x_pos = None  # X pixel position of clicked beat
+        
+        # Drag selection: multiple selected beats
+        self._selected_beats = []  # List of timestamps for all selected beats
 
     def _find_magnifier_host(self):
         parent = self.parentWidget()
@@ -2308,6 +2319,8 @@ class ECGStripCanvas(QWidget):
         self._magnify_pos = None
         self._caliper_line1 = None
         self._caliper_line2 = None
+        self._ruler_start = None
+        self._ruler_end = None
         self.update()
 
     def clear_interaction(self):
@@ -2318,6 +2331,12 @@ class ECGStripCanvas(QWidget):
         self._magnify_pos = None
         self._caliper_line1 = None
         self._caliper_line2 = None
+        self._ruler_start = None
+        self._ruler_end = None
+        # Clear clicked beat
+        self._clicked_beat_timestamp = None
+        self._clicked_beat_label = None
+        self._clicked_beat_x_pos = None
         self.update()
 
     def set_data(self, *args, beat_annotations=None, start_sec=0.0):
@@ -2387,6 +2406,9 @@ class ECGStripCanvas(QWidget):
         return intervals
 
     def mousePressEvent(self, event):
+        # Let the event propagate to parent's eventFilter for vertical line handling
+        # Only consume the event if we're in a tool mode
+        
         if self._mode == TOOL_MAGNIFY and event.button() == Qt.LeftButton:
             # Click-to-lock magnifier: each click moves the zoom lens to that point.
             # Switching away from the tool clears the lock.
@@ -2408,11 +2430,28 @@ class ECGStripCanvas(QWidget):
             self.update()
             return
 
+        # Ruler/Measuring ruler: handle two-click measurement
+        if self._mode == TOOL_RULER and event.button() == Qt.LeftButton:
+            if self._ruler_start is None:
+                # First click: set start point
+                self._ruler_start = event.pos()
+                self._ruler_end = None
+            else:
+                # Second click: set end point (keeps start point fixed)
+                self._ruler_end = event.pos()
+            self.update()
+            return
+
         if self._mode != TOOL_SELECT:
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
             self._hover_pos = event.pos()
             self.update()
+            return
+        
+        # In SELECT mode, don't consume the event - let it propagate to eventFilter
+        # This allows the Full Disclosure dialog to handle vertical line drawing
+        event.ignore()
 
     def mouseMoveEvent(self, event):
         if self._mode == TOOL_MAGNIFY:
@@ -2432,6 +2471,14 @@ class ECGStripCanvas(QWidget):
         if self._mode == TOOL_CALIPER:
             if self._caliper_line1 is not None and self._caliper_line2 is None:
                 # First line is set, show preview of second line as hover
+                self._hover_pos = event.pos()
+                self.update()
+            return
+        
+        # For ruler tool, show preview of end point while hovering (if start point is set)
+        if self._mode == TOOL_RULER:
+            if self._ruler_start is not None and self._ruler_end is None:
+                # Start point is set, show preview of end point as hover
                 self._hover_pos = event.pos()
                 self.update()
             return
@@ -2492,6 +2539,217 @@ class ECGStripCanvas(QWidget):
         x = max(0, min(x, width - 1))
         return int(round((x / float(width - 1)) * (n - 1)))
 
+    def _check_and_store_clicked_beat(self, click_x: int):
+        """Check if user clicked near a beat peak and store it for display."""
+        w = self.width()
+        if w <= 0 or not hasattr(self, '_data') or self._data.size < 2:
+            self._clicked_beat_timestamp = None
+            self._clicked_beat_label = None
+            self._clicked_beat_x_pos = None
+            return
+        
+        end_sec = self._start_sec + len(self._data) / self._fs
+        tolerance_pixels = 15  # Reasonable tolerance for user clicking
+        
+        # Try to snap to the closest detected peak timestamp first
+        parent_dialog = None
+        curr = self.parent()
+        while curr is not None:
+            if hasattr(curr, '_detected_r_peaks'):
+                parent_dialog = curr
+                break
+            curr = curr.parent()
+            
+        # 1. Try to snap to detected R-peaks from parent_dialog
+        if parent_dialog and hasattr(parent_dialog, '_detected_r_peaks') and parent_dialog._detected_r_peaks:
+            best_ts = None
+            best_dist_pixels = 999999
+            for ts in parent_dialog._detected_r_peaks:
+                pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                beat_x = int(pct * w)
+                dist = abs(click_x - beat_x)
+                if dist < best_dist_pixels:
+                    best_dist_pixels = dist
+                    best_ts = ts
+                    
+            if best_dist_pixels <= tolerance_pixels:
+                self._clicked_beat_timestamp = best_ts
+                self._clicked_beat_label = 'N'
+                if hasattr(self, '_beat_annotations') and self._beat_annotations:
+                    for beat in self._beat_annotations:
+                        if abs(beat.get('timestamp', 0) - best_ts) < 0.05:
+                            self._clicked_beat_label = beat.get('label', 'N')
+                            break
+                pct = (best_ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                self._clicked_beat_x_pos = int(pct * w)
+                self.update()
+                return
+        
+        # 2. Try to snap to provided beat_annotations
+        elif hasattr(self, '_beat_annotations') and self._beat_annotations:
+            best_ts = None
+            best_dist_pixels = 999999
+            for beat in self._beat_annotations:
+                ts = beat.get('timestamp', 0.0)
+                if self._start_sec <= ts <= end_sec:
+                    pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                    beat_x = int(pct * w)
+                    dist = abs(click_x - beat_x)
+                    if dist < best_dist_pixels:
+                        best_dist_pixels = dist
+                        best_ts = ts
+                        
+            if best_dist_pixels <= tolerance_pixels:
+                self._clicked_beat_timestamp = best_ts
+                self._clicked_beat_label = 'N'
+                for beat in self._beat_annotations:
+                    if abs(beat.get('timestamp', 0) - best_ts) < 0.05:
+                        self._clicked_beat_label = beat.get('label', 'N')
+                        break
+                pct = (best_ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                self._clicked_beat_x_pos = int(pct * w)
+                self.update()
+                return
+        
+        # 3. Fallback: Check if click is actually ON or VERY NEAR a local maximum
+        # Convert click position to sample index
+        click_sample_idx = int((click_x / float(w)) * len(self._data))
+        click_sample_idx = max(0, min(click_sample_idx, len(self._data) - 1))
+        
+        # Look in a small neighborhood (±20ms) around the click
+        neighborhood_size = max(5, int(0.02 * self._fs))  # 20ms window
+        start_check = max(0, click_sample_idx - neighborhood_size)
+        end_check = min(len(self._data), click_sample_idx + neighborhood_size)
+        
+        if end_check > start_check:
+            neighborhood = self._data[start_check:end_check]
+            
+            # Find the maximum value in the neighborhood
+            local_max_idx = np.argmax(neighborhood)
+            local_max_sample_idx = start_check + local_max_idx
+            local_max_value = neighborhood[local_max_idx]
+            
+            # Check if this is a significant peak (not just noise)
+            # Compare to median baseline of entire strip
+            baseline = np.median(self._data)
+            peak_height = local_max_value - baseline
+            
+            # Need at least 100 ADC units above baseline (adjust based on your data range)
+            # This filters out flat areas and noise
+            overall_range = np.max(self._data) - np.min(self._data)
+            min_peak_height = 0.2 * overall_range  # Peak must be at least 20% of total range
+            
+            if peak_height > min_peak_height:
+                # Found a significant peak! Now check if it's close enough to click
+                ts = self._start_sec + (local_max_sample_idx / self._fs)
+                pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                beat_x = int(pct * w)
+                
+                distance = abs(click_x - beat_x)
+                
+                if distance <= tolerance_pixels:
+                    # This is a valid peak click!
+                    self._clicked_beat_timestamp = ts
+                    self._clicked_beat_label = 'N'
+                    self._clicked_beat_x_pos = beat_x
+                    self.update()
+                    return
+        
+        # No valid peak found near click - clear everything
+        self._clicked_beat_timestamp = None
+        self._clicked_beat_label = None
+        self._clicked_beat_x_pos = None
+        self.update()
+
+    def _find_beats_in_range(self, start_x: int, end_x: int):
+        """Find all R-peaks EXACTLY between start_x and end_x pixel positions."""
+        w = self.width()
+        if w <= 0 or not hasattr(self, '_data') or self._data.size < 2:
+            return []
+        
+        # Convert pixel positions to sample indices PRECISELY
+        start_sample = int((start_x / float(w)) * len(self._data))
+        end_sample = int((end_x / float(w)) * len(self._data))
+        
+        # Clamp to valid range
+        start_sample = max(0, min(start_sample, len(self._data) - 1))
+        end_sample = max(0, min(end_sample, len(self._data) - 1))
+        
+        # Ensure start < end
+        if start_sample > end_sample:
+            start_sample, end_sample = end_sample, start_sample
+        
+        # Ensure minimum range
+        if (end_sample - start_sample) < 20:
+            return []
+        
+        try:
+            # Extract ONLY the data in the selected range
+            range_data = self._data[start_sample:end_sample + 1]
+            
+            beat_timestamps = []
+            end_sec = self._start_sec + len(self._data) / self._fs
+            
+            # Peak detection parameters
+            min_samples_between = int(0.3 * self._fs)  # 300ms minimum
+            
+            # Use FULL DATA baseline for consistency
+            full_baseline = np.median(self._data)
+            full_range = np.max(self._data) - np.min(self._data)
+            threshold = full_baseline + 0.25 * full_range
+            
+            last_peak_sample = start_sample - min_samples_between - 1
+            
+            # Find local maxima ONLY within the selected range
+            for i in range(len(range_data)):
+                current_val = range_data[i]
+                
+                # Skip if below threshold
+                if current_val <= threshold:
+                    continue
+                
+                # Calculate actual sample index (in full data array)
+                actual_idx = start_sample + i
+                
+                # Check if this is a local maximum
+                is_local_max = False
+                
+                if i == 0:
+                    # First point in range - only compare with right
+                    if len(range_data) > 1 and current_val > range_data[i + 1]:
+                        is_local_max = True
+                elif i == len(range_data) - 1:
+                    # Last point in range - only compare with left
+                    if current_val > range_data[i - 1]:
+                        is_local_max = True
+                else:
+                    # Middle points - compare both sides
+                    if current_val > range_data[i - 1] and current_val > range_data[i + 1]:
+                        is_local_max = True
+                
+                # Check spacing from previous peak
+                if not is_local_max:
+                    continue
+                
+                if (actual_idx - last_peak_sample) < min_samples_between:
+                    continue
+                
+                # FINAL CHECK: Ensure beat is within selected range
+                if actual_idx < start_sample or actual_idx > end_sample:
+                    continue
+                
+                ts = self._start_sec + (actual_idx / self._fs)
+                
+                # Final timestamp validation
+                if self._start_sec <= ts <= end_sec:
+                    beat_timestamps.append(ts)
+                    last_peak_sample = actual_idx
+            
+            return sorted(beat_timestamps)
+            
+        except Exception as e:
+            return []
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(COL_BLACK))
@@ -2538,16 +2796,15 @@ class ECGStripCanvas(QWidget):
         if lead_name == 'I' and show_vertical_lines:
             # Detect R-peaks in real-time from the ECG signal
             detected_peaks = []
-            special_beats = {}  # Map timestamp to special beat labels (S, V, P, AF, X)
+            annotated_beats = {}  # Map timestamp to beat annotation dictionary
             
-            # First, get special beats from annotations if available
+            # First, get annotated beats from annotations if available
             if hasattr(self, '_beat_annotations') and self._beat_annotations:
                 end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
                 for beat in self._beat_annotations:
                     ts = beat['timestamp']
-                    lbl = beat.get('label', 'N')
-                    if self._start_sec <= ts <= end_sec and lbl != 'N':
-                        special_beats[ts] = lbl
+                    if self._start_sec <= ts <= end_sec:
+                        annotated_beats[ts] = beat
             
             # Detect R-peaks from the signal
             if len(d) > 50:
@@ -2592,7 +2849,7 @@ class ECGStripCanvas(QWidget):
                 except Exception as e:
                     print(f"[ECGStripCanvas] R-peak detection error: {e}")
             
-            # Draw N labels AND vertical lines for all detected peaks on Lead I
+            # Draw N labels for all detected peaks on Lead I (WITHOUT vertical lines)
             if detected_peaks and self._show_annotations:  # Only show if annotations enabled
                 font = painter.font()
                 font.setPixelSize(10)
@@ -2606,33 +2863,35 @@ class ECGStripCanvas(QWidget):
                     pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
                     
-                    # Draw vertical yellow line at R-peak position on Lead I (only if enabled)
-                    if show_vertical_lines:
-                        painter.setPen(QPen(QColor("#FFFF00"), 1))
-                        painter.drawLine(bx, 0, bx, h)
-                    
-                    # Check if this peak has a special label
+                    # Check if this peak has an annotation
                     lbl = 'N'  # Default to N
-                    for special_ts, special_lbl in special_beats.items():
-                        if abs(ts - special_ts) < 0.05:  # Within 50ms
-                            lbl = special_lbl
+                    color = COL_WHITE
+                    
+                    annotated_beat = None
+                    for annot_ts, beat in annotated_beats.items():
+                        if abs(ts - annot_ts) < 0.05:  # Within 50ms
+                            annotated_beat = beat
                             break
                     
-                    # Color code labels
-                    if lbl == 'N':
-                        color = COL_WHITE
-                    elif lbl == 'V':
-                        color = "#FF3333"
-                    elif lbl == 'S':
-                        color = "#00FFFF"
-                    elif lbl in ['AF', 'P']:
-                        color = "#FF00FF"
-                    else:
-                        color = "#FFFF00"
+                    if annotated_beat:
+                        lbl = annotated_beat.get('label', 'N')
+                        color = annotated_beat.get('color', None)
+                        
+                    if not color:
+                        # Color code labels fallback
+                        if lbl == 'N':
+                            color = COL_WHITE
+                        elif lbl == 'V':
+                            color = "#FF3333"
+                        elif lbl == 'S':
+                            color = "#00FFFF"
+                        elif lbl in ['AF', 'P']:
+                            color = "#FF00FF"
+                        else:
+                            color = "#FFFF00"
                         
                     painter.setPen(QPen(QColor(color)))
-                    # Shift label to the left by 8 pixels to avoid overlapping with yellow line
-                    painter.drawText(bx - 8, 12, lbl)
+                    painter.drawText(bx, 12, lbl)
                 
             # Calculate and store RR intervals from detected peaks (always keep for internal use)
             if detected_peaks:
@@ -2650,28 +2909,61 @@ class ECGStripCanvas(QWidget):
                         'end_label': 'N'
                     })
         
-        # --- Draw vertical yellow lines spanning all leads (for non-Lead-I strips) ---
-        # Lead I handles its own line drawing above, other leads draw the lines here
-        elif lead_name != 'I' and show_vertical_lines and self._show_annotations:  # Only draw if flag AND annotations enabled
-            parent = self.parent()
-            while parent is not None:
-                if hasattr(parent, '_detected_r_peaks') and hasattr(parent, '_r_peak_start_sec'):
-                    detected_peaks = parent._detected_r_peaks
-                    start_sec = parent._r_peak_start_sec
-                    data_len = parent._r_peak_data_len if hasattr(parent, '_r_peak_data_len') else 0
-                    
-                    if detected_peaks and data_len > 0:
-                        end_sec = start_sec + (data_len / self._fs) if data_len > 0 else start_sec
+        # --- Draw square boxes for selected beats (only on Lead I) ---
+        # NOTE: Vertical lines are now drawn by VerticalLineOverlay to avoid gaps
+        end_sec = self._start_sec + len(d) / self._fs
+        
+        # ONLY DRAW BOXES ON LEAD I
+        if lead_name == 'I':
+            # Check if we have multiple selected beats (drag selection)
+            if hasattr(self, '_selected_beats') and self._selected_beats and len(self._selected_beats) > 0:
+                # Draw boxes for all selected beats with their specific colors
+                painter.setBrush(Qt.NoBrush)
+                
+                for beat_ts in self._selected_beats:
+                    # Verify beat is actually in this canvas's visible range
+                    if self._start_sec <= beat_ts <= end_sec:
+                        pct = (beat_ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                        bx = int(pct * w)
                         
-                        for ts in detected_peaks:
-                            pct = (ts - start_sec) / (end_sec - start_sec) if (end_sec - start_sec) > 0 else 0.0
-                            bx = int(pct * w)
-                            
-                            # Draw vertical yellow line
-                            painter.setPen(QPen(QColor("#FFFF00"), 1))
-                            painter.drawLine(bx, 0, bx, h)
-                    break
-                parent = parent.parent()
+                        # Find the beat's color from annotations
+                        beat_color = "#FFFF00"  # Default yellow
+                        beat_label = "N"
+                        if hasattr(self, '_beat_annotations'):
+                            for beat in self._beat_annotations:
+                                if abs(beat['timestamp'] - beat_ts) < 0.01:  # Match timestamp
+                                    beat_color = beat.get('color', "#FFFF00")
+                                    beat_label = beat.get('label', 'N')
+                                    break
+                        
+                        # Draw colored square box
+                        painter.setPen(QPen(QColor(beat_color), 3))
+                        label_box = QRect(bx - 4, 0, 16, 16)
+                        painter.drawRect(label_box)
+                        
+                        # Label text is already drawn by the main R-peak loop, so we only draw the box here
+            
+            # Otherwise, draw single beat selection
+            elif self._clicked_beat_timestamp is not None:
+                if self._start_sec <= self._clicked_beat_timestamp <= end_sec:
+                    pct = (self._clicked_beat_timestamp - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
+                    bx = int(pct * w)
+                    
+                    # Find the beat's color from annotations
+                    beat_color = "#FFFF00"  # Default yellow
+                    beat_label = "N"
+                    if hasattr(self, '_beat_annotations'):
+                        for beat in self._beat_annotations:
+                            if abs(beat['timestamp'] - self._clicked_beat_timestamp) < 0.01:
+                                beat_color = beat.get('color', "#FFFF00")
+                                beat_label = beat.get('label', 'N')
+                                break
+                    
+                    # Draw colored square box
+                    painter.setPen(QPen(QColor(beat_color), 3))
+                    painter.setBrush(Qt.NoBrush)
+                    label_box = QRect(bx - 4, 0, 16, 16)
+                    painter.drawRect(label_box)
         
         # --- Draw N-N (R-R) Interval Labels ONLY on Lead I ---
         if lead_name == 'I' and hasattr(self, '_rr_intervals') and self._rr_intervals and self._show_annotations:  # Only show if annotations enabled
@@ -2712,16 +3004,36 @@ class ECGStripCanvas(QWidget):
                     painter.setPen(QPen(QColor(color)))
                     painter.drawText(mid_x - 10, 22, interval_text)
                     
-        if self._mode == TOOL_RULER and self._start_pos and self._curr_pos:
-            rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
-            painter.setPen(rpen)
-            painter.drawLine(self._start_pos, self._curr_pos)
-            dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
-            bpm = 60000 / ms if ms > 0 else 0
-            dy_mv = amplitude_mv_from_pixels(abs(self._curr_pos.y() - self._start_pos.y()), max(1, h), rng, ADC_TO_MV)
-            painter.setPen(QPen(QColor("#00FFFF")))
-            painter.drawText(self._curr_pos.x(), max(12, self._curr_pos.y() - 6), ruler_label(ms, dy_mv, bpm))
+        if self._mode == TOOL_RULER:
+            # Draw persistent ruler (start point stays after measurement)
+            if self._ruler_start is not None:
+                rpen = QPen(QColor("#00FFFF"), 2)
+                painter.setPen(rpen)
+                # Draw line from start point to end point (or hover if end not set yet)
+                end_point = self._ruler_end if self._ruler_end is not None else (self._hover_pos if self._hover_pos else self._ruler_start)
+                
+                if self._ruler_end is not None:
+                    # Final measurement: solid line
+                    painter.drawLine(self._ruler_start, self._ruler_end)
+                    dx = abs(self._ruler_end.x() - self._ruler_start.x())
+                    dy = abs(self._ruler_end.y() - self._ruler_start.y())
+                    ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
+                    bpm = 60000 / ms if ms > 0 else 0
+                    dy_mv = amplitude_mv_from_pixels(dy, max(1, h), rng, ADC_TO_MV)
+                    painter.setPen(QPen(QColor("#00FFFF")))
+                    painter.drawText(self._ruler_end.x(), max(12, self._ruler_end.y() - 6), ruler_label(ms, dy_mv, bpm))
+                elif self._hover_pos is not None:
+                    # Preview line while hovering (dashed)
+                    pen_preview = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
+                    painter.setPen(pen_preview)
+                    painter.drawLine(self._ruler_start, self._hover_pos)
+                    dx = abs(self._hover_pos.x() - self._ruler_start.x())
+                    dy = abs(self._hover_pos.y() - self._ruler_start.y())
+                    ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
+                    bpm = 60000 / ms if ms > 0 else 0
+                    dy_mv = amplitude_mv_from_pixels(dy, max(1, h), rng, ADC_TO_MV)
+                    painter.setPen(QPen(QColor("#00FFFF")))
+                    painter.drawText(self._hover_pos.x(), max(12, self._hover_pos.y() - 6), ruler_label(ms, dy_mv, bpm))
         elif self._mode == TOOL_CALIPER:
 
             if self._caliper_line1 is not None:
