@@ -1,4 +1,4 @@
-﻿"""
+"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -2261,6 +2261,7 @@ class ECGStripCanvas(QWidget):
         self._color = color
         self._pen_width = pen_width
         self.lead_name = lead_name
+        self._start_sec = 0.0
         self._show_vertical_lines = show_vertical_lines  # Control whether to show R-peak vertical lines
         self._show_annotations = show_annotations  # Control whether to show N labels and RR numbers
         self._gain = 1.0
@@ -4011,8 +4012,9 @@ class TemplateCardWidget(QFrame):
         return None
 
     def _build_ui(self):
-        self.setMinimumHeight(196)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(170)
+        self.setFixedWidth(320)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         self._card_style = """
             QFrame#templateCard {{
@@ -4357,8 +4359,53 @@ class HolterBeatTemplatePanel(QWidget):
         self._cards_layout = QGridLayout(self._cards_host)
         self._cards_layout.setContentsMargins(0, 0, 0, 0)
         self._cards_layout.setSpacing(10)
+        self._cards_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._scroll.setWidget(self._cards_host)
-        layout.addWidget(self._scroll, 1)
+
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.addWidget(self._scroll)
+
+        self._detail_grid_host = QWidget()
+        self._detail_grid_host.setStyleSheet(f"background:{COL_BLACK};border-left:1px solid {COL_GREEN_DRK};")
+        self._detail_layout = QGridLayout(self._detail_grid_host)
+        self._detail_layout.setContentsMargins(4, 4, 4, 4)
+        self._detail_layout.setSpacing(4)
+        self._detail_canvases = []
+        for i in range(12):
+            frame = QFrame()
+            frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};}}")
+            flayout = QVBoxLayout(frame)
+            flayout.setContentsMargins(2, 2, 2, 2)
+            flayout.setSpacing(0)
+
+            info = QWidget()
+            info.setFixedHeight(16)
+            info_layout = QHBoxLayout(info)
+            info_layout.setContentsMargins(2, 0, 2, 0)
+            info_layout.setSpacing(4)
+            lbl_type = QLabel("N")
+            lbl_type.setStyleSheet(f"color:{COL_WHITE};font-weight:bold;font-size:10px;border:none;background:transparent;")
+            lbl_rr = QLabel("---ms")
+            lbl_rr.setStyleSheet(f"color:{COL_WHITE};font-size:9px;border:none;background:transparent;")
+            lbl_bpm = QLabel("---bpm")
+            lbl_bpm.setStyleSheet(f"color:{COL_WHITE};font-size:9px;border:none;background:transparent;")
+            info_layout.addWidget(lbl_type)
+            info_layout.addStretch()
+            info_layout.addWidget(lbl_rr)
+            info_layout.addWidget(lbl_bpm)
+            flayout.addWidget(info)
+
+            canvas = ECGStripCanvas(height=60, color="#FF00FF", pen_width=1.0, show_annotations=False)
+            canvas.set_paper_speed(25)
+            canvas.set_gain(1.0)
+            flayout.addWidget(canvas, 1)
+
+            self._detail_layout.addWidget(frame, i // 3, i % 3)
+            self._detail_canvases.append({"frame": frame, "canvas": canvas, "type": lbl_type, "rr": lbl_rr, "bpm": lbl_bpm})
+
+        self._splitter.addWidget(self._detail_grid_host)
+        self._splitter.setSizes([300, 700])
+        layout.addWidget(self._splitter, 1)
 
     def update_from_metrics(self, metrics_list: list, summary: dict):
         class_totals = dict(summary.get('beat_class_totals', {}) or {})
@@ -4479,6 +4526,9 @@ class HolterBeatTemplatePanel(QWidget):
             self._selected_template_key = self._selected_template_keys[0]
         else:
             self._selected_template_key = ""
+            
+        if self._selected_template_key:
+            self._update_detail_grid(self._selected_template_key)
 
     def _row_for_key(self, template_key: str):
         template_key = str(template_key or "")
@@ -4825,6 +4875,65 @@ class HolterBeatTemplatePanel(QWidget):
         row = self._row_for_key(template_key)
         if template_key and row and not ctrl_pressed and not shift_pressed:
             self.seek_requested.emit(float(row.get("first_timestamp", 0.0) or 0.0))
+            
+        self._update_detail_grid(template_key)
+
+    def _update_detail_grid(self, template_key: str):
+        if not hasattr(self, "_detail_canvases") or not self._replay_engine:
+            return
+            
+        row = self._row_for_key(template_key)
+        label = "N"
+        if row:
+            label = str(row.get("label", "N") or "N").strip() or "N"
+            
+        for item in self._detail_canvases:
+            item["canvas"].set_data([], [])
+            item["type"].setText("")
+            item["rr"].setText("---ms")
+            item["bpm"].setText("---bpm")
+            
+        events = []
+        if getattr(self._replay_engine, "_structured_events", None) is not None:
+            for ev in self._replay_engine._structured_events:
+                if ev.get("template_label") == template_key or ev.get("label") == template_key:
+                    events.append(ev)
+                    if len(events) >= 12:
+                        break
+                    
+        for i, ev in enumerate(events):
+            if i >= 12: break
+            ts = float(ev.get("timestamp", 0.0))
+            item = self._detail_canvases[i]
+            
+            item["type"].setText(label)
+            
+            pre = 2.5
+            post = 2.5
+            try:
+                data = self._replay_engine._reader.read_range(max(0.0, ts - pre), min(float(self._replay_engine.duration_sec), ts + post))
+                if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[0] > 1:
+                    lead = np.asarray(data[1], dtype=float)
+                    baseline = float(np.median(lead))
+                    centered = lead - baseline
+                    # Add 2048 because ECGStripCanvas might clip/expect raw-like ADC values
+                    # based on _resolve_template_waveform which scales 420.0 and adds 2048.0
+                    peak = max(float(np.max(np.abs(centered))), 1.0)
+                    scaled = np.clip(centered / peak * 420.0, -650.0, 650.0)
+                    waveform = 2048.0 + scaled
+                    
+                    x = np.linspace(0, pre+post, len(waveform))
+                    item["canvas"].set_data(x, waveform)
+            except Exception as e:
+                print(f"Error fetching detail wave: {e}")
+                
+            prev_events = [e for e in self._replay_engine._structured_events if float(e.get("timestamp", 0.0)) < ts]
+            if prev_events:
+                prev_ts = float(prev_events[-1].get("timestamp", 0.0))
+                rr_ms = (ts - prev_ts) * 1000.0
+                if 200 < rr_ms < 3000:
+                    item["rr"].setText(f"{int(rr_ms)}ms")
+                    item["bpm"].setText(f"{int(60000 / rr_ms)}bpm")
 
     def _render_cards(self):
         try:
@@ -4846,7 +4955,6 @@ class HolterBeatTemplatePanel(QWidget):
             
             self._card_widgets = []
             filtered = self._filtered_rows()
-            columns = 3 if len(filtered) <= 6 else 4
             filtered_keys = [self._row_key(row) for row in filtered]
             selected_visible = [key for key in filtered_keys if key in set(self._selected_template_keys)]
             if filtered and not selected_visible:
@@ -4885,13 +4993,11 @@ class HolterBeatTemplatePanel(QWidget):
                     "waveform": waveform,
                 })
                 card.set_selected(template_key in set(self._selected_template_keys))
-                row_idx, col_idx = divmod(len(self._card_widgets), columns)
+                row_idx = idx % 3
+                col_idx = idx // 3
                 self._cards_layout.addWidget(card, row_idx, col_idx)
                 self._card_widgets.append(card)
-            if self._card_widgets:
-                self._cards_layout.setRowStretch(max(0, (len(self._card_widgets) + columns - 1) // columns), 1)
-            for c in range(columns, 6):
-                self._cards_layout.setColumnStretch(c, 1)
+            
             self._sync_card_selection()
         except Exception as e:
             import traceback
@@ -4953,9 +5059,7 @@ class HolterBeatTemplatePanel(QWidget):
             self.seek_requested.emit(float(self._template_rows[row].get("first_timestamp", 0.0)))
 
 
-# ?????????????????????????????????????????????????????????????????????????????
-# 9. HOLTER INSIGHT PANEL  (report preview)
-# ?????????????????????????????????????????????????????????????????????????????
+# -----------------------------------------------------------------------------
 # 9. HOLTER INSIGHT PANEL  (report preview)
 # -----------------------------------------------------------------------------
 
