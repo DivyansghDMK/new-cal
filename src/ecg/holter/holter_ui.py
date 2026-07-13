@@ -1194,19 +1194,7 @@ class HolterReplayPanel(QWidget):
         lw_l.addLayout(lorenz_filter_row)
         self._set_lorenz_class_filter("all")
 
-        thumbs = QFrame()
-        thumbs.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
-        th_l = QGridLayout(thumbs)
-        th_l.setContentsMargins(4, 4, 4, 4)
-        th_l.setSpacing(4)
         self._template_thumbs = []
-        for idx in range(4):
-            # Thumbnails in replay: disable annotations
-            s = ECGStripCanvas(height=70, color="#22E36E", pen_width=0.8, show_annotations=False)
-            s.set_gain(1.0)
-            self._template_thumbs.append(s)
-            th_l.addWidget(s, idx // 2, idx % 2)
-        lw_l.addWidget(thumbs, 2)
         top_splitter.addWidget(left_wrap)
 
         ecg_right = QFrame()
@@ -1291,7 +1279,7 @@ class HolterReplayPanel(QWidget):
         self._overview_table.setStyleSheet(_table_style())
         ov_layout.addWidget(self._overview_table, 1)
         top_splitter.addWidget(ov_frame)
-        top_splitter.setSizes([300, 1050, 260])
+        top_splitter.setSizes([450, 900, 260])
         layout.addWidget(top_splitter, 2)
 
         # Scrub slider row
@@ -2155,103 +2143,548 @@ class HolterReplayPanel(QWidget):
 # â”€â”€ Helper canvas widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class LorenzCanvas(QWidget):
-    """Simple RR scatter / Poincaré plot."""
+    """Full-featured RR scatter / Poincaré plot with lasso selection, zoom,
+    time-sharing view, ΔRR mode, and right-click context menu."""
+
+    beats_selected      = pyqtSignal(list)   # list of selected data indices
+    beats_reclassified  = pyqtSignal(list, str)  # (indices, new_class)
+    beats_deleted       = pyqtSignal(list)   # indices to remove
+
+    # ------------------------------------------------------------------ init
     def __init__(self, parent=None):
         super().__init__(parent)
+        # data
         self._x = []
         self._y = []
         self._beat_classes = []
+        self._all_rr_points = []   # (t, rr, beat_class) for timesharing
         self._x_range = None
         self._y_range = None
+
+        # display state
+        self._view_mode    = "lorenz"     # "lorenz" | "delta_rr"
+        self._display_mode = "complete"   # "complete" | "timesharing"
+        self._zoom_level   = 1.0
+        self._pixel_size   = 3            # dot radius in px
+        self._rr_range     = (200, 2000)  # (min_ms, max_ms)
+
+        # selection state
+        self._selected_indices = set()
+        self._is_dragging      = False
+        self._drag_start       = None
+        self._drag_current     = None
+
         self.setMinimumSize(200, 180)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
+        self.setMouseTracking(True)
+        self.setContextMenuPolicy(Qt.DefaultContextMenu)
 
-    def set_data(self, x, y, x_range=None, y_range=None, beat_classes=None):
+    # ---------------------------------------------------------------- data
+    def set_data(self, x, y, x_range=None, y_range=None, beat_classes=None, rr_points=None):
         self._x = list(x)
         self._y = list(y)
         self._beat_classes = list(beat_classes) if beat_classes is not None else []
         self._x_range = x_range
         self._y_range = y_range
+        if rr_points is not None:
+            self._all_rr_points = list(rr_points)
+        self._selected_indices.clear()
         self.update()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(COL_BLACK))
+    # ------------------------------------------------------- mouse events
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging  = True
+            self._drag_start   = event.pos()
+            self._drag_current = event.pos()
+            self._selected_indices.clear()
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging:
+            self._drag_current = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._is_dragging:
+            self._is_dragging = False
+            self._finalize_lasso_selection()
+            self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._selected_indices = set(range(len(self._x)))
+            self.beats_selected.emit(list(self._selected_indices))
+            self.update()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self._zoom_level = max(0.2, self._zoom_level * 0.85)
+        else:
+            self._zoom_level = min(5.0, self._zoom_level * 1.15)
+        self.update()
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{ background: {COL_DARK}; color: white; border: 1px solid {COL_GREEN_DRK}; }}
+            QMenu::item:selected {{ background: {COL_GREEN_DRK}; }}
+            QMenu::separator {{ height: 1px; background: {COL_GREEN_DRK}; }}
+        """)
+
+        # ── View submenu ──
+        view_menu = menu.addMenu("📊  View")
+        act_lorenz   = view_menu.addAction("RR Interval Scatter (Lorenz)")
+        act_delta_rr = view_menu.addAction("ΔRR Difference Scatter")
+        act_lorenz.setCheckable(True);   act_lorenz.setChecked(self._view_mode == "lorenz")
+        act_delta_rr.setCheckable(True); act_delta_rr.setChecked(self._view_mode == "delta_rr")
+        act_lorenz.triggered.connect(lambda: self._set_view("lorenz"))
+        act_delta_rr.triggered.connect(lambda: self._set_view("delta_rr"))
+
+        # ── Display submenu ──
+        disp_menu = menu.addMenu("🗖  Display")
+        act_complete = disp_menu.addAction("Complete Scatter")
+        act_timeshare = disp_menu.addAction("Time-sharing Scatter (16 panels)")
+        act_complete.setCheckable(True);   act_complete.setChecked(self._display_mode == "complete")
+        act_timeshare.setCheckable(True);  act_timeshare.setChecked(self._display_mode == "timesharing")
+        act_complete.triggered.connect(lambda: self._set_display("complete"))
+        act_timeshare.triggered.connect(lambda: self._set_display("timesharing"))
+
+        menu.addSeparator()
+
+        # ── Zoom ──
+        zoom_menu = menu.addMenu("🔍  Zoom")
+        zoom_menu.addAction("Zoom In  (+)").triggered.connect(lambda: self._do_zoom(True))
+        zoom_menu.addAction("Zoom Out (-)").triggered.connect(lambda: self._do_zoom(False))
+        zoom_menu.addAction("Reset Zoom").triggered.connect(lambda: self._reset_zoom())
+
+        # ── Pixel size ──
+        pix_menu = menu.addMenu("●  Pixel Size")
+        pix_menu.addAction("Small  (2 px)").triggered.connect(lambda: self._set_pixel(2))
+        pix_menu.addAction("Medium (3 px)").triggered.connect(lambda: self._set_pixel(3))
+        pix_menu.addAction("Large  (5 px)").triggered.connect(lambda: self._set_pixel(5))
+
+        # ── RR Display Range ──
+        rng_menu = menu.addMenu("↔  RR Display Range")
+        rng_menu.addAction("Auto (200–2000 ms)").triggered.connect(lambda: self._set_rr_range(200, 2000))
+        rng_menu.addAction("Normal (400–1200 ms)").triggered.connect(lambda: self._set_rr_range(400, 1200))
+        rng_menu.addAction("Wide (100–3000 ms)").triggered.connect(lambda: self._set_rr_range(100, 3000))
+        rng_menu.addAction("Custom…").triggered.connect(self._custom_rr_range_dialog)
+
+        menu.addSeparator()
+
+        # ── Beat Attribute ──
+        has_sel = len(self._selected_indices) > 0
+        attr_menu = menu.addMenu("🏷  Beat Attribute")
+        attr_menu.setEnabled(has_sel)
+        for cls_label, cls_code in [("Normal (N)", "N"), ("Supraventricular (S)", "S"),
+                                    ("Ventricular (V)", "V"), ("Paced (P)", "P"),
+                                    ("AF / AFl", "AF"), ("Other", "Other"), ("Artifact (X)", "X")]:
+            a = attr_menu.addAction(cls_label)
+            a.triggered.connect(lambda checked=False, c=cls_code: self._reclassify(c))
+
+        # ── Delete ──
+        del_act = menu.addAction("🗑  Delete Selected")
+        del_act.setEnabled(has_sel)
+        del_act.triggered.connect(self._delete_selected)
+
+        menu.exec_(event.globalPos())
+
+    # -------------------------------------------------------- private actions
+    def _set_view(self, mode):
+        self._view_mode = mode
+        self._selected_indices.clear()
+        self.update()
+
+    def _set_display(self, mode):
+        self._display_mode = mode
+        self._selected_indices.clear()
+        self.update()
+
+    def _do_zoom(self, zoom_in):
+        if zoom_in:
+            self._zoom_level = max(0.2, self._zoom_level * 0.85)
+        else:
+            self._zoom_level = min(5.0, self._zoom_level * 1.15)
+        self.update()
+
+    def _reset_zoom(self):
+        self._zoom_level = 1.0
+        self.update()
+
+    def _set_pixel(self, size):
+        self._pixel_size = size
+        self.update()
+
+    def _set_rr_range(self, lo, hi):
+        self._rr_range = (lo, hi)
+        self._zoom_level = 1.0
+        self.update()
+
+    def _custom_rr_range_dialog(self):
+        from PyQt5.QtWidgets import QDialog, QFormLayout, QSpinBox, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Custom RR Display Range")
+        dlg.setStyleSheet(f"background:{COL_DARK}; color:white;")
+        form = QFormLayout(dlg)
+        lo_spin = QSpinBox(); lo_spin.setRange(50, 3000); lo_spin.setValue(self._rr_range[0])
+        hi_spin = QSpinBox(); hi_spin.setRange(100, 5000); hi_spin.setValue(self._rr_range[1])
+        form.addRow("Min (ms):", lo_spin)
+        form.addRow("Max (ms):", hi_spin)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec_() == QDialog.Accepted:
+            self._set_rr_range(lo_spin.value(), hi_spin.value())
+
+    def _reclassify(self, new_class):
+        indices = list(self._selected_indices)
+        for idx in indices:
+            if idx < len(self._beat_classes):
+                self._beat_classes[idx] = new_class
+        self.beats_reclassified.emit(indices, new_class)
+        self.update()
+
+    def _delete_selected(self):
+        indices = sorted(self._selected_indices, reverse=True)
+        for idx in indices:
+            if idx < len(self._x):
+                self._x.pop(idx)
+                self._y.pop(idx)
+            if idx < len(self._beat_classes):
+                self._beat_classes.pop(idx)
+        self.beats_deleted.emit(list(self._selected_indices))
+        self._selected_indices.clear()
+        self.update()
+
+    def _finalize_lasso_selection(self):
+        if self._drag_start is None or self._drag_current is None:
+            return
+        # Lasso = ellipse defined by drag rect
+        x0, y0 = self._drag_start.x(), self._drag_start.y()
+        x1, y1 = self._drag_current.x(), self._drag_current.y()
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        rx = max(5, abs(x1 - x0) / 2.0)
+        ry = max(5, abs(y1 - y0) / 2.0)
+        new_sel = set()
+        plot_coords = self._compute_plot_coords()
+        for idx, (px, py) in enumerate(plot_coords):
+            # Inside ellipse?
+            if ((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2 <= 1.0:
+                new_sel.add(idx)
+        self._selected_indices = new_sel
+        self.beats_selected.emit(list(new_sel))
+
+    def _compute_plot_coords(self):
+        """Return list of (px, py) pixel positions for current data points."""
         w, h = self.width(), self.height()
-        left, top, right, bottom = 32, 16, 16, 28
+        left, top, right, bottom = 40, 16, 16, 28
         plot_w = max(1, w - left - right)
         plot_h = max(1, h - top - bottom)
+        x_min, x_max, y_min, y_max = self._get_axis_range()
+        rng_x = max(x_max - x_min, 1.0)
+        rng_y = max(y_max - y_min, 1.0)
+        xs, ys = self._get_plot_xy()
+        coords = []
+        for xv, yv in zip(xs, ys):
+            px = int(left + (xv - x_min) / rng_x * plot_w)
+            py = int(top + plot_h - (yv - y_min) / rng_y * plot_h)
+            coords.append((px, py))
+        return coords
+
+    def _get_plot_xy(self):
+        """Return (xs, ys) depending on view mode and rr_range filter."""
+        rr_lo, rr_hi = self._rr_range
+        if self._view_mode == "delta_rr":
+            xs, ys, classes = [], [], []
+            raw = self._x  # rr_n values
+            for i in range(len(raw) - 1):
+                rr_n   = raw[i]
+                rr_np1 = raw[i+1]
+                dv = rr_n - rr_np1
+                xs.append(rr_n)
+                ys.append(dv)
+            return xs, ys
+        else:
+            filtered_x = [v for v in self._x if rr_lo <= v <= rr_hi]
+            filtered_y = [v for v in self._y if rr_lo <= v <= rr_hi]
+            n = min(len(filtered_x), len(filtered_y))
+            return filtered_x[:n], filtered_y[:n]
+
+    def _get_axis_range(self):
+        """Return (x_min, x_max, y_min, y_max) with zoom applied."""
+        rr_lo, rr_hi = self._rr_range
+        if self._view_mode == "delta_rr":
+            xs, ys = self._get_plot_xy()
+            if not xs:
+                return 200, 1500, -500, 500
+            all_x = xs; all_y = ys
+            x_center = float(np.median(all_x)) if all_x else 800
+            y_center = float(np.median(all_y)) if all_y else 0
+            x_half = max(500, float(np.percentile(np.abs(all_x), 95))) * self._zoom_level
+            y_half = max(200, float(np.percentile(np.abs(all_y), 95))) * self._zoom_level
+            return x_center - x_half, x_center + x_half, y_center - y_half, y_center + y_half
+
+        # Standard Lorenz
+        if self._x_range is not None:
+            base_lo, base_hi = self._x_range
+        else:
+            all_vals = [v for v in self._x + self._y if rr_lo <= v <= rr_hi]
+            if not all_vals:
+                return rr_lo, rr_hi, rr_lo, rr_hi
+            lo = float(np.percentile(all_vals, 5))
+            hi = float(np.percentile(all_vals, 95))
+            if hi - lo < 250:
+                c = float(np.median(all_vals))
+                lo, hi = c - 500.0, c + 500.0
+            base_lo = max(0.0, lo - 50.0)
+            base_hi = hi + 50.0
+
+        center = (base_lo + base_hi) / 2.0
+        half   = (base_hi - base_lo) / 2.0 * self._zoom_level
+        lo = max(0.0, center - half)
+        hi = center + half
+        return lo, hi, lo, hi
+
+    # ------------------------------------------------------------ paint
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor(COL_BLACK))
 
         if not self._x or not self._y:
             painter.setPen(QPen(QColor(COL_GREEN_DRK)))
             painter.drawText(self.rect(), Qt.AlignCenter, "No RR data")
             return
 
-        all_vals = self._x + self._y
-        if self._x_range is not None and self._y_range is not None:
-            x_min, x_max = self._x_range
-            y_min, y_max = self._y_range
+        if self._display_mode == "timesharing":
+            self._paint_timesharing(painter)
         else:
-            lo = float(np.percentile(all_vals, 5))
-            hi = float(np.percentile(all_vals, 95))
-            if hi - lo < 250:
-                center = float(np.median(all_vals))
-                lo = center - 500.0
-                hi = center + 500.0
-            x_min = y_min = max(0.0, lo - 50.0)
-            x_max = y_max = hi + 50.0
-            if x_max - x_min < 500.0:
-                mid = (x_min + x_max) / 2.0
-                x_min = y_min = max(0.0, mid - 250.0)
-                x_max = y_max = mid + 250.0
+            self._paint_complete(painter)
 
+        # Draw lasso drag rubber-band
+        if self._is_dragging and self._drag_start and self._drag_current:
+            x0, y0 = self._drag_start.x(), self._drag_start.y()
+            x1, y1 = self._drag_current.x(), self._drag_current.y()
+            pen = QPen(QColor(0, 220, 255, 200), 1, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(QColor(0, 180, 255, 30)))
+            lx, ly = min(x0, x1), min(y0, y1)
+            lw, lh = abs(x1-x0), abs(y1-y0)
+            painter.drawEllipse(lx, ly, max(4, lw), max(4, lh))
+
+    def _paint_complete(self, painter):
+        w, h = self.width(), self.height()
+        left, top, right, bottom = 44, 16, 16, 28
+        plot_w = max(1, w - left - right)
+        plot_h = max(1, h - top - bottom)
+        x_min, x_max, y_min, y_max = self._get_axis_range()
         rng_x = max(x_max - x_min, 1.0)
         rng_y = max(y_max - y_min, 1.0)
 
-        def to_px(val_x, val_y):
-            px = int(left + (val_x - x_min) / rng_x * plot_w)
-            py = int(top + plot_h - (val_y - y_min) / rng_y * plot_h)
+        def to_px(vx, vy):
+            px = int(left + (vx - x_min) / rng_x * plot_w)
+            py = int(top + plot_h - (vy - y_min) / rng_y * plot_h)
             return px, py
 
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor("#1C2C43"), 1))
+        # Border
+        painter.setPen(QPen(QColor("#2C3E50"), 1))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(left, top, plot_w, plot_h)
-        # Draw only horizontal grid lines (vertical lines removed per user request)
-        for frac in (0.25, 0.5, 0.75):
-            y = int(top + frac * plot_h)
-            painter.drawLine(left, y, left + plot_w, y)
 
+        # Identity diagonal
+        painter.setPen(QPen(QColor("#4A5D6E"), 1, Qt.SolidLine))
         if x_max > x_min:
-            pen = QPen(QColor("#006B2D"))
-            pen.setWidth(1)
-            pen.setStyle(Qt.DashLine)
-            painter.setPen(pen)
-            start = to_px(x_min, x_min)
-            end = to_px(x_max, x_max)
-            painter.drawLine(start[0], start[1], end[0], end[1])
+            s = to_px(x_min, x_min); e = to_px(x_max, x_max)
+            painter.drawLine(s[0], s[1], e[0], e[1])
 
-        # Color map for beat classes
+        # Perpendicular grid lines
+        range_span = x_max - x_min
+        step = 1000.0 if range_span > 2000 else (500.0 if range_span > 600 else 250.0)
+        grid_pen = QPen(QColor("#2C3E50"), 1, Qt.SolidLine)
+        painter.setPen(grid_pen)
+        min_sum = x_min + y_min; max_sum = x_max + y_max
+        sum_val = int(np.floor(min_sum / step) * step)
+        while sum_val <= max_sum:
+            if sum_val > 0:
+                pts = []
+                yl = sum_val - x_min
+                if y_min <= yl <= y_max: pts.append((x_min, yl))
+                yr = sum_val - x_max
+                if y_min <= yr <= y_max: pts.append((x_max, yr))
+                xb = sum_val - y_min
+                if x_min <= xb <= x_max: pts.append((xb, y_min))
+                xt = sum_val - y_max
+                if x_min <= xt <= x_max: pts.append((xt, y_max))
+                uniq = []
+                for p in pts:
+                    if not any(np.allclose(p, up) for up in uniq): uniq.append(p)
+                if len(uniq) == 2:
+                    p1 = to_px(uniq[0][0], uniq[0][1]); p2 = to_px(uniq[1][0], uniq[1][1])
+                    painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+            sum_val += step
+
+        # Beat colour map
         color_map = {
-            "N": QColor(57, 211, 83, 180),    # Green for Normal
-            "S": QColor(255, 51, 51, 180),     # Red for Supraventricular
-            "V": QColor(255, 153, 0, 180),     # Orange for Ventricular
-            "P": QColor(0, 229, 255, 180),     # Cyan for Paced
-            "AF": QColor(255, 215, 0, 180),     # Gold for AF
-            "X": QColor(136, 136, 136, 180),  # Gray for Artifact
-            "Other": QColor(57, 211, 83, 180)     # Default green
+            "N":     QColor(0, 210, 21, 255),
+            "S":     QColor(255, 51, 51, 255),
+            "V":     QColor(255, 153, 0, 255),
+            "P":     QColor(0, 229, 255, 255),
+            "AF":    QColor(255, 215, 0, 255),
+            "X":     QColor(136, 136, 136, 255),
+            "Other": QColor(0, 210, 21, 255),
         }
-        for i, (x, y) in enumerate(zip(self._x, self._y)):
+        xs, ys = self._get_plot_xy()
+        r = self._pixel_size
+        for i, (xv, yv) in enumerate(zip(xs, ys)):
             beat_class = self._beat_classes[i] if i < len(self._beat_classes) else "Other"
             color = color_map.get(beat_class, color_map["Other"])
-            painter.setPen(QPen(color))
-            painter.setBrush(QBrush(color))
-            px, py = to_px(x, y)
-            painter.drawEllipse(px - 2, py - 2, 4, 4)
+            px, py = to_px(xv, yv)
+            if i in self._selected_indices:
+                painter.setPen(QPen(QColor(255, 255, 0, 220), 1))
+                painter.setBrush(QBrush(color.lighter(160)))
+                painter.drawEllipse(px - r - 2, py - r - 2, (r + 2) * 2, (r + 2) * 2)
+            else:
+                painter.setPen(QPen(color))
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(px - r, py - r, r * 2, r * 2)
 
+        # Axis ticks + labels
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-        painter.drawText(left, h - 8, "RR(n) ms")
-        painter.drawText(w - 88, 14, "RR(n+1)")
-        painter.drawText(w // 2 - 34, h - 2, f"{int(x_min)}-{int(x_max)}ms")
+        painter.setFont(QFont("Arial", 8))
+        start_tick = int(np.floor(x_min / step) * step)
+        end_tick   = int(np.ceil(x_max / step) * step)
+        tick = start_tick
+        while tick <= end_tick:
+            if x_min <= tick <= x_max:
+                px = int(left + (tick - x_min) / rng_x * plot_w)
+                painter.drawLine(px, top + plot_h, px, top + plot_h + 4)
+                painter.drawText(QRect(px - 22, top + plot_h + 5, 44, 14), Qt.AlignCenter, str(int(tick)))
+            if y_min <= tick <= y_max:
+                py = int(top + plot_h - (tick - y_min) / rng_y * plot_h)
+                painter.drawLine(left - 4, py, left, py)
+                painter.drawText(QRect(left - 42, py - 7, 38, 14), Qt.AlignRight | Qt.AlignVCenter, str(int(tick)))
+            tick += step
+
+        # Axis titles
+        painter.setFont(QFont("Arial", 8, QFont.Bold))
+        if self._view_mode == "delta_rr":
+            painter.drawText(left + 4, h - 8, "RR(n) ms")
+            painter.drawText(w - 60, 14, "ΔRR(n+1)")
+        else:
+            painter.drawText(left + 4, h - 8, "RR(n) ms")
+            painter.drawText(w - 62, 14, "RR(n+1)")
+
+        # Mode badge
+        badge = "ΔRR" if self._view_mode == "delta_rr" else "Lorenz"
+        painter.setFont(QFont("Arial", 7))
+        painter.setPen(QPen(QColor(COL_GREEN_DRK)))
+        painter.drawText(left + 4, top + 12, badge)
+
+    def _paint_timesharing(self, painter):
+        """Draw 16 mini scatter plots in a 4×4 grid."""
+        w, h = self.width(), self.height()
+        n_cols, n_rows = 4, 4
+        cell_w = w // n_cols
+        cell_h = h // n_rows
+
+        # Build 16 time segments from _all_rr_points if available, else use _x/_y
+        if self._all_rr_points:
+            pts = self._all_rr_points
+        else:
+            pts = [(0, xv, cls) for xv, cls in zip(self._x,
+                   self._beat_classes if self._beat_classes else ["N"] * len(self._x))]
+
+        if not pts:
+            painter.setPen(QPen(QColor(COL_GREEN_DRK)))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No RR data")
+            return
+
+        n_segs = 16
+        seg_size = max(1, len(pts) // n_segs)
+        segments = [pts[i * seg_size:(i + 1) * seg_size] for i in range(n_segs)]
+        # remaining beats go to last segment
+        if len(pts) > n_segs * seg_size:
+            segments[-1] = segments[-1] + pts[n_segs * seg_size:]
+
+        # Global range from all data
+        all_rr = [p[1] for p in pts if self._rr_range[0] <= p[1] <= self._rr_range[1]]
+        if not all_rr:
+            return
+        g_lo = max(0.0, float(np.percentile(all_rr, 5)) - 50.0)
+        g_hi = float(np.percentile(all_rr, 95)) + 50.0
+        if g_hi - g_lo < 250:
+            c = float(np.median(all_rr))
+            g_lo, g_hi = max(0, c - 400), c + 400
+        g_rng = max(g_hi - g_lo, 1.0)
+
+        color_map = {
+            "N": QColor(0, 210, 21, 220), "S": QColor(255, 51, 51, 220),
+            "V": QColor(255, 153, 0, 220), "P": QColor(0, 229, 255, 220),
+            "AF": QColor(255, 215, 0, 220), "X": QColor(136, 136, 136, 220),
+            "Other": QColor(0, 210, 21, 220),
+        }
+
+        for seg_idx, seg in enumerate(segments):
+            col = seg_idx % n_cols
+            row = seg_idx // n_cols
+            ox = col * cell_w
+            oy = row * cell_h
+            pad = 4
+
+            # Cell background + border
+            painter.setPen(QPen(QColor("#2C3E50"), 1))
+            painter.setBrush(QBrush(QColor("#080C12")))
+            painter.drawRect(ox, oy, cell_w, cell_h)
+
+            # Segment number
+            painter.setFont(QFont("Arial", 7))
+            painter.setPen(QPen(QColor("#4A5D6E")))
+            painter.drawText(ox + 3, oy + 10, str(seg_idx + 1))
+
+            # Build local pairs
+            local_rr = [p[1] for p in seg if self._rr_range[0] <= p[1] <= self._rr_range[1]]
+            local_cls = [p[2] if len(p) > 2 else "N" for p in seg
+                         if self._rr_range[0] <= p[1] <= self._rr_range[1]]
+            if len(local_rr) < 2:
+                continue
+
+            pw = cell_w - 2 * pad
+            ph = cell_h - 2 * pad - 4
+
+            def to_mini(vx, vy):
+                mx = int(ox + pad + (vx - g_lo) / g_rng * pw)
+                my = int(oy + pad + ph - (vy - g_lo) / g_rng * ph)
+                return mx, my
+
+            # Identity diagonal
+            painter.setPen(QPen(QColor("#2C3E50"), 1))
+            s = to_mini(g_lo, g_lo); e = to_mini(g_hi, g_hi)
+            painter.drawLine(s[0], s[1], e[0], e[1])
+
+            # Dots
+            for i in range(len(local_rr) - 1):
+                xv, yv = local_rr[i], local_rr[i+1]
+                cls = local_cls[i] if i < len(local_cls) else "N"
+                color = color_map.get(cls, color_map["Other"])
+                px, py = to_mini(xv, yv)
+                painter.setPen(QPen(color))
+                painter.setBrush(QBrush(color))
+                painter.drawEllipse(px - 1, py - 1, 2, 2)
+
+        # Mode badge
+        painter.setFont(QFont("Arial", 8, QFont.Bold))
+        painter.setPen(QPen(QColor(COL_GREEN_DRK)))
+        painter.drawText(2, h - 4, "Time-sharing  (16 panels)")
+
+
+
+
+
+
+
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
@@ -2837,24 +3270,23 @@ class ECGStripCanvas(QWidget):
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
             
-        # --- Draw Clinical Beat Annotations (R-peaks as N labels) ONLY on Lead I ---
+        # --- Draw Clinical Beat Annotations ---
         lead_name = getattr(self, 'lead_name', '')
         show_vertical_lines = getattr(self, '_show_vertical_lines', True)
         
+        detected_peaks = []
+        annotated_beats = {}  # Map timestamp to beat annotation dictionary
+        end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
+        
+        # First, get annotated beats from annotations if available
+        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+            for beat in self._beat_annotations:
+                ts = beat['timestamp']
+                if self._start_sec <= ts <= end_sec:
+                    annotated_beats[ts] = beat
+        
         if lead_name == 'I' and show_vertical_lines:
             # Detect R-peaks in real-time from the ECG signal
-            detected_peaks = []
-            annotated_beats = {}  # Map timestamp to beat annotation dictionary
-            
-            # First, get annotated beats from annotations if available
-            if hasattr(self, '_beat_annotations') and self._beat_annotations:
-                end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
-                for beat in self._beat_annotations:
-                    ts = beat['timestamp']
-                    if self._start_sec <= ts <= end_sec:
-                        annotated_beats[ts] = beat
-            
-            # Detect R-peaks from the signal
             if len(d) > 50:
                 try:
                     from scipy.signal import find_peaks
@@ -2897,16 +3329,37 @@ class ECGStripCanvas(QWidget):
                 except Exception as e:
                     print(f"[ECGStripCanvas] R-peak detection error: {e}")
             
-            # Draw N labels for all detected peaks on Lead I (WITHOUT vertical lines)
-            if detected_peaks and self._show_annotations:  # Only show if annotations enabled
+            # Calculate and store RR intervals from detected peaks (always keep for internal use)
+            if detected_peaks:
+                self._rr_intervals = []
+                for i in range(len(detected_peaks) - 1):
+                    curr_ts = detected_peaks[i]
+                    next_ts = detected_peaks[i + 1]
+                    rr_ms = (next_ts - curr_ts) * 1000.0
+                    
+                    self._rr_intervals.append({
+                        'start_ts': curr_ts,
+                        'end_ts': next_ts,
+                        'rr_ms': rr_ms,
+                        'start_label': 'N',
+                        'end_label': 'N'
+                    })
+
+        # Draw N labels for all peaks (annotated or detected) if annotations enabled
+        if self._show_annotations:
+            peaks_to_draw = list(annotated_beats.keys())
+            if lead_name == 'I' and show_vertical_lines:
+                for dt in detected_peaks:
+                    if not any(abs(dt - at) < 0.05 for at in peaks_to_draw):
+                        peaks_to_draw.append(dt)
+                        
+            if peaks_to_draw:
                 font = painter.font()
                 font.setPixelSize(10)
                 font.setBold(True)
                 painter.setFont(font)
                 
-                end_sec = self._start_sec + (len(d) / self._fs) if len(d) > 0 else self._start_sec
-                
-                for ts in detected_peaks:
+                for ts in peaks_to_draw:
                     # Calculate x coordinate
                     pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
@@ -2940,22 +3393,6 @@ class ECGStripCanvas(QWidget):
                         
                     painter.setPen(QPen(QColor(color)))
                     painter.drawText(bx, 12, lbl)
-                
-            # Calculate and store RR intervals from detected peaks (always keep for internal use)
-            if detected_peaks:
-                self._rr_intervals = []
-                for i in range(len(detected_peaks) - 1):
-                    curr_ts = detected_peaks[i]
-                    next_ts = detected_peaks[i + 1]
-                    rr_ms = (next_ts - curr_ts) * 1000.0
-                    
-                    self._rr_intervals.append({
-                        'start_ts': curr_ts,
-                        'end_ts': next_ts,
-                        'rr_ms': rr_ms,
-                        'start_label': 'N',
-                        'end_label': 'N'
-                    })
         
         # --- Draw square boxes for selected beats (only on Lead I) ---
         # NOTE: Vertical lines are now drawn by VerticalLineOverlay to avoid gaps
@@ -3984,6 +4421,7 @@ class _TemplateMetricCard(QFrame):
 
 class TemplateCardWidget(QFrame):
     clicked = pyqtSignal(object, object)  # (card, event)
+    double_clicked = pyqtSignal(object)   # (card)
     template_id_changed = pyqtSignal(object, str)
     class_changed = pyqtSignal(object, str)
     viewed_changed = pyqtSignal(object, bool)
@@ -4148,6 +4586,11 @@ class TemplateCardWidget(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self, event)
         return super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self)
+        return super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event):
         host = self._find_template_host()
@@ -4358,7 +4801,7 @@ class HolterBeatTemplatePanel(QWidget):
         self._cards_host.setStyleSheet(f"background:{COL_BG};")
         self._cards_layout = QGridLayout(self._cards_host)
         self._cards_layout.setContentsMargins(0, 0, 0, 0)
-        self._cards_layout.setSpacing(10)
+        self._cards_layout.setSpacing(7)
         self._cards_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._scroll.setWidget(self._cards_host)
 
@@ -4371,7 +4814,9 @@ class HolterBeatTemplatePanel(QWidget):
         self._detail_layout.setContentsMargins(4, 4, 4, 4)
         self._detail_layout.setSpacing(4)
         self._detail_canvases = []
+        lead_names_12 = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
         for i in range(12):
+            lead_name = lead_names_12[i]
             frame = QFrame()
             frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};}}")
             flayout = QVBoxLayout(frame)
@@ -4383,28 +4828,22 @@ class HolterBeatTemplatePanel(QWidget):
             info_layout = QHBoxLayout(info)
             info_layout.setContentsMargins(2, 0, 2, 0)
             info_layout.setSpacing(4)
-            lbl_type = QLabel("N")
+            lbl_type = QLabel(lead_name)
             lbl_type.setStyleSheet(f"color:{COL_WHITE};font-weight:bold;font-size:10px;border:none;background:transparent;")
-            lbl_rr = QLabel("---ms")
-            lbl_rr.setStyleSheet(f"color:{COL_WHITE};font-size:9px;border:none;background:transparent;")
-            lbl_bpm = QLabel("---bpm")
-            lbl_bpm.setStyleSheet(f"color:{COL_WHITE};font-size:9px;border:none;background:transparent;")
             info_layout.addWidget(lbl_type)
             info_layout.addStretch()
-            info_layout.addWidget(lbl_rr)
-            info_layout.addWidget(lbl_bpm)
             flayout.addWidget(info)
 
-            canvas = ECGStripCanvas(height=60, color="#FF00FF", pen_width=1.0, show_annotations=False)
+            canvas = ECGStripCanvas(height=60, color=COL_GREEN, pen_width=1.0, lead_name=lead_name, show_annotations=True)
             canvas.set_paper_speed(25)
             canvas.set_gain(1.0)
             flayout.addWidget(canvas, 1)
 
             self._detail_layout.addWidget(frame, i // 3, i % 3)
-            self._detail_canvases.append({"frame": frame, "canvas": canvas, "type": lbl_type, "rr": lbl_rr, "bpm": lbl_bpm})
+            self._detail_canvases.append({"frame": frame, "canvas": canvas, "type": lbl_type, "lead_name": lead_name})
 
         self._splitter.addWidget(self._detail_grid_host)
-        self._splitter.setSizes([300, 700])
+        self._splitter.setSizes([220, 780])
         layout.addWidget(self._splitter, 1)
 
     def update_from_metrics(self, metrics_list: list, summary: dict):
@@ -4751,9 +5190,10 @@ class HolterBeatTemplatePanel(QWidget):
         base["first_timestamp"] = min(float(row.get("first_timestamp", 0.0) or 0.0) for row in rows)
         base["viewed"] = all(bool(row.get("viewed", True)) for row in rows)
         base["ambiguous"] = any(bool(row.get("ambiguous", False)) for row in rows)
-        base["inserted"] = any(bool(row.get("inserted", False)) for row in rows)
+        base["inserted"] = True  # Always show "+" badge for merged templates
         base["demix"] = any(bool(row.get("demix", False)) for row in rows)
         base["auto_update"] = any(bool(row.get("auto_update", False)) for row in rows)
+        base["_original_templates"] = [dict(row) for row in rows]  # Store original templates for unmerge
         base.setdefault("template_id", base.get("template_id") or f"T{len(self._template_rows) + 1}")
         base["template_key"] = base.get("template_id") or base.get("label") or "T"
         new_rows = []
@@ -4772,6 +5212,41 @@ class HolterBeatTemplatePanel(QWidget):
         self._selected_template_key = base["template_key"]
         self._refresh_stats()
         self._render_cards()
+
+    def _unmerge_template(self, template_key):
+        row = self._row_for_key(template_key)
+        if row is None or "_original_templates" not in row:
+            return
+        
+        original_templates = row["_original_templates"]
+        if not original_templates:
+            return
+        
+        # Replace the merged template with the original templates
+        new_rows = []
+        found = False
+        for r in self._template_rows:
+            key = self._row_key(r)
+            if key == template_key:
+                found = True
+                # Add back the original templates, removing the _original_templates field to avoid recursion
+                for orig in original_templates:
+                    orig_copy = dict(orig)
+                    orig_copy.pop("_original_templates", None)
+                    new_rows.append(orig_copy)
+            else:
+                new_rows.append(r)
+        
+        if found:
+            self._template_rows = new_rows
+            self._waveform_cache.pop(template_key, None)
+            # Select the first original template
+            if original_templates:
+                first_key = self._row_key(original_templates[0])
+                self._selected_template_keys = [first_key]
+                self._selected_template_key = first_key
+            self._refresh_stats()
+            self._render_cards()
 
     def _open_overlay_analysis(self, card):
         host = self.window()
@@ -4831,6 +5306,17 @@ class HolterBeatTemplatePanel(QWidget):
         merge_action = menu.addAction("Merge template")
         merge_action.setEnabled(True)  # Always enable - let merge function handle validation
         merge_action.triggered.connect(lambda: self._merge_selected_templates(target_keys))
+        
+        # Add Unmerge Template option
+        unmerge_action = menu.addAction("Unmerge template")
+        # Enable only if we have a single selected template that has original templates stored
+        has_original = len(target_keys) == 1
+        if has_original:
+            row = self._row_for_key(target_keys[0])
+            has_original = row is not None and "_original_templates" in row
+        unmerge_action.setEnabled(has_original)
+        unmerge_action.triggered.connect(lambda: self._unmerge_template(target_keys[0]))
+        
         ok_menu = menu.addMenu("Template OK/Cancel")
         ok_menu.addAction("Confirm").triggered.connect(lambda: self._apply_template_viewed(target_keys, True))
         ok_menu.addAction("Unconfirm").triggered.connect(lambda: self._apply_template_viewed(target_keys, False))
@@ -4878,62 +5364,100 @@ class HolterBeatTemplatePanel(QWidget):
             
         self._update_detail_grid(template_key)
 
+    def _on_card_double_clicked(self, card):
+        """On double-click, select the card and immediately load 12-lead waveforms."""
+        template_key = str(getattr(card, "_template_key", "") or "")
+        if not template_key:
+            return
+        # Select only this card
+        self._set_selected_keys([template_key])
+        # Scroll the detail grid into view if splitter is collapsed
+        if hasattr(self, "_splitter"):
+            sizes = self._splitter.sizes()
+            if sizes and len(sizes) == 2 and sizes[1] < 100:
+                total = sum(sizes)
+                self._splitter.setSizes([220, max(100, total - 220)])
+        # Load all 12 leads for this template
+        self._update_detail_grid(template_key)
+
     def _update_detail_grid(self, template_key: str):
         if not hasattr(self, "_detail_canvases") or not self._replay_engine:
             return
-            
+
         row = self._row_for_key(template_key)
         label = "N"
+        first_ts = None
+        rr_med   = 0.0
+        qrs_med  = 0.0
         if row:
-            label = str(row.get("label", "N") or "N").strip() or "N"
-            
+            label     = str(row.get("label", "N") or "N").strip() or "N"
+            first_ts  = float(row.get("first_timestamp", 0.0) or 0.0)
+            rr_list   = row.get("rr", []) or []
+            qrs_list  = row.get("qrs", []) or []
+            rr_med    = float(np.median(rr_list))  if rr_list  else 0.0
+            qrs_med   = float(np.median(qrs_list)) if qrs_list else 0.0
+
+        # Clear canvases
         for item in self._detail_canvases:
             item["canvas"].set_data([], [])
-            item["type"].setText("")
-            item["rr"].setText("---ms")
-            item["bpm"].setText("---bpm")
-            
-        events = []
-        if getattr(self._replay_engine, "_structured_events", None) is not None:
-            for ev in self._replay_engine._structured_events:
-                if ev.get("template_label") == template_key or ev.get("label") == template_key:
-                    events.append(ev)
-                    if len(events) >= 12:
-                        break
-                    
-        for i, ev in enumerate(events):
-            if i >= 12: break
-            ts = float(ev.get("timestamp", 0.0))
-            item = self._detail_canvases[i]
-            
-            item["type"].setText(label)
-            
-            pre = 2.5
-            post = 2.5
-            try:
-                data = self._replay_engine._reader.read_range(max(0.0, ts - pre), min(float(self._replay_engine.duration_sec), ts + post))
-                if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[0] > 1:
-                    lead = np.asarray(data[1], dtype=float)
-                    baseline = float(np.median(lead))
-                    centered = lead - baseline
-                    # Add 2048 because ECGStripCanvas might clip/expect raw-like ADC values
-                    # based on _resolve_template_waveform which scales 420.0 and adds 2048.0
-                    peak = max(float(np.max(np.abs(centered))), 1.0)
-                    scaled = np.clip(centered / peak * 420.0, -650.0, 650.0)
-                    waveform = 2048.0 + scaled
-                    
-                    x = np.linspace(0, pre+post, len(waveform))
-                    item["canvas"].set_data(x, waveform)
-            except Exception as e:
-                print(f"Error fetching detail wave: {e}")
-                
-            prev_events = [e for e in self._replay_engine._structured_events if float(e.get("timestamp", 0.0)) < ts]
-            if prev_events:
-                prev_ts = float(prev_events[-1].get("timestamp", 0.0))
-                rr_ms = (ts - prev_ts) * 1000.0
-                if 200 < rr_ms < 3000:
-                    item["rr"].setText(f"{int(rr_ms)}ms")
-                    item["bpm"].setText(f"{int(60000 / rr_ms)}bpm")
+            item["type"].setText(item["lead_name"])
+
+        if first_ts is None:
+            return
+
+        engine = self._replay_engine
+
+        # --- Read a single-beat window, mirroring _resolve_template_waveform exactly ---
+        pre  = 0.18
+        post = 0.34
+        t_start = max(0.0, first_ts - pre)
+        t_end   = min(float(engine.duration_sec), first_ts + post)
+        data    = None
+        n_real  = 0
+
+        try:
+            raw_data = engine._reader.read_range(t_start, t_end)
+            if (isinstance(raw_data, np.ndarray)
+                    and raw_data.ndim == 2
+                    and raw_data.shape[0] >= 1
+                    and raw_data.shape[1] > 8):
+                data   = raw_data
+                n_real = data.shape[0]
+                print(f"[12-lead] data.shape={data.shape}  first_ts={first_ts:.3f}")
+        except Exception as e:
+            print(f"[12-lead] read_range error: {e}")
+
+        beat_annotations = [{"timestamp": first_ts, "label": label, "type": "beat"}]
+        x_out = np.linspace(0.0, pre + post, 240)
+
+        for i, item in enumerate(self._detail_canvases):
+            canvas = item["canvas"]
+            waveform = None
+
+            if data is not None and i < n_real:
+                # ---- exact copy of _resolve_template_waveform normalization ----
+                lead_raw = np.asarray(data[i], dtype=float)
+                baseline = float(np.median(lead_raw))
+                centered = lead_raw - baseline
+                if np.ptp(centered) > 1.0:
+                    x_old    = np.linspace(0.0, 1.0, centered.size)
+                    x_new    = np.linspace(0.0, 1.0, 240)
+                    centered = np.interp(x_new, x_old, centered)
+                    centered = centered - float(np.median(centered))
+                    peak     = max(float(np.max(np.abs(centered))), 1.0)
+                    centered = np.clip(centered / peak * 420.0, -650.0, 650.0)
+                    waveform = 2048.0 + centered
+
+            if waveform is None:
+                # fall back to the same synthetic waveform as the card thumbnail
+                waveform = self._make_thumbnail_waveform(rr_med, qrs_med)
+
+            canvas.set_data(x_out, waveform,
+                            beat_annotations=beat_annotations,
+                            start_sec=t_start)
+            item["type"].setText(f"{item['lead_name']}  {label}")
+
+
 
     def _render_cards(self):
         try:
@@ -4976,6 +5500,7 @@ class HolterBeatTemplatePanel(QWidget):
                 waveform = self._resolve_template_waveform(row, rr_med, qrs_med)
                 template_key = self._row_key(row)
                 card.clicked.connect(self._on_card_clicked)
+                card.double_clicked.connect(self._on_card_double_clicked)
                 card.template_id_changed.connect(self._on_card_template_id_changed)
                 card.class_changed.connect(self._on_card_class_changed)
                 card.viewed_changed.connect(self._on_card_viewed_changed)
@@ -5478,6 +6003,247 @@ class HolterRecordManagementPanel(QWidget):
         
         # If we got here, all retries failed
         _show_message_box(self, QMessageBox.Warning, "Delete Session", f"Failed to delete recording:\n{str(last_error)}")
+# -----------------------------------------------------------------------------
+# 11b. LORENZ PANEL
+# -----------------------------------------------------------------------------
+
+class HolterLorenzPanel(QWidget):
+    seek_requested = pyqtSignal(float)
+
+    def __init__(self, parent=None, duration_sec: float = 86400):
+        super().__init__(parent)
+        self.duration_sec = duration_sec
+        self.setStyleSheet(f"background:{COL_BG};")
+        self._metrics_list = []
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Top Section: Two RR Trend Canvases
+        self.trend1 = HolterRRTrendCanvas(self, title="RR Trend 1")
+        self.trend1.setFixedHeight(120)
+        self.trend2 = HolterRRTrendCanvas(self, title="RR Trend 2")
+        self.trend2.setFixedHeight(120)
+        
+        layout.addWidget(self.trend1)
+        layout.addWidget(self.trend2)
+
+        # Middle Section Splitter
+        mid_splitter = QSplitter(Qt.Horizontal)
+        
+        # Left side of mid splitter: Lorenz Plot + Buttons
+        lorenz_container = QWidget()
+        l_layout = QVBoxLayout(lorenz_container)
+        l_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.lorenz_canvas = LorenzCanvas()
+        self.lorenz_canvas.beats_selected.connect(self._on_beats_selected)
+        self.lorenz_canvas.beats_reclassified.connect(self._on_beats_reclassified)
+        self.lorenz_canvas.beats_deleted.connect(self._on_beats_deleted)
+        l_layout.addWidget(self.lorenz_canvas)
+
+        # Single row of beat-filter buttons (same as before)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(3)
+        self._filter_btns = {}
+        for lbl in ["All", "Normal", "S", "V", "Paced", "AF/AFl", "Other", "X", "Not including", "Search beats", "All"]:
+            btn = QPushButton(lbl)
+            btn.setCheckable(True)
+            btn.setStyleSheet(_style_btn())
+            self._filter_btns[lbl] = btn
+            btn_row.addWidget(btn)
+        l_layout.addLayout(btn_row)
+
+        # Internal state for view/display toggle helpers (used by right-click context menu)
+        self._pixel_cycle = [2, 3, 5]
+        self._pixel_idx   = 1
+
+
+        mid_splitter.addWidget(lorenz_container)
+        
+        # Right side of mid splitter: Template Grid
+        template_container = QWidget()
+        t_layout = QVBoxLayout(template_container)
+        t_layout.setContentsMargins(0,0,0,0)
+        
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(2)
+        for i, num in enumerate([1, 2, 4, 5]):
+            frame = QFrame()
+            frame.setStyleSheet(f"border: 1px solid {UI_BORDER}; background: black;")
+            lbl = QLabel(f"#{num}")
+            lbl.setStyleSheet("color: white; border: none;")
+            lbl.setAlignment(Qt.AlignTop | Qt.AlignRight)
+            fl = QVBoxLayout(frame)
+            fl.setContentsMargins(2,2,2,2)
+            fl.addWidget(lbl)
+            grid_layout.addWidget(frame, i//2, i%2)
+        t_layout.addLayout(grid_layout)
+        
+        # Toolbar under grid (placeholders)
+        tool_layout = QHBoxLayout()
+        for i in range(8):
+            btn = QPushButton("[]")
+            btn.setFixedSize(24, 24)
+            btn.setStyleSheet(_style_btn())
+            tool_layout.addWidget(btn)
+        tool_layout.addStretch()
+        t_layout.addLayout(tool_layout)
+        
+        mid_splitter.addWidget(template_container)
+
+        lorenz_container.setMaximumWidth(700)
+        mid_splitter.setSizes([500, 1000])
+        mid_splitter.setStretchFactor(0, 0)
+        mid_splitter.setStretchFactor(1, 1)
+        
+        layout.addWidget(mid_splitter, stretch=2)
+
+        # Bottom Section: ECG Strip
+        self.ecg_canvas = ECGStripCanvas()
+        self.ecg_canvas.setFixedHeight(90)
+        layout.addWidget(self.ecg_canvas)
+
+    def update_from_metrics(self, metrics_list, duration_sec=None):
+        self._metrics_list = list(metrics_list or [])
+        if duration_sec:
+            self.duration_sec = duration_sec
+            
+        pts = []
+        rr_all = []
+        rr_classes = []
+        
+        for m in self._metrics_list:
+            t0 = float(m.get('t', 0.0) or 0.0)
+            beat_labels = list(m.get('all_beats') or [])
+            if 'rr_intervals_list' in m:
+                rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 0]
+                if rr_list:
+                    dur = float(m.get('duration', 0.0) or 0.0)
+                    step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
+                    for i, rr in enumerate(rr_list):
+                        beat_info = beat_labels[i] if i < len(beat_labels) and isinstance(beat_labels[i], dict) else {}
+                        beat_class = _normalize_beat_class(
+                            beat_info.get("label")
+                            or beat_info.get("template_label")
+                            or beat_info.get("auto_label")
+                            or m.get("label")
+                            or m.get("template_label")
+                            or m.get("arrhythmia")
+                            or (m.get("arrhythmias") or [None])[0]
+                        )
+                        t = t0 + i * step
+                        pts.append((t, rr))
+                        rr_all.append(rr)
+                        rr_classes.append(beat_class)
+                    continue
+            rr_val = float(m.get('rr_ms', 0) or 0)
+            if rr_val > 200:
+                beat_class = _normalize_beat_class(
+                    m.get("label")
+                    or m.get("template_label")
+                    or m.get("arrhythmia")
+                    or (m.get("arrhythmias") or [None])[0]
+                )
+                pts.append((t0, rr_val))
+                rr_all.append(rr_val)
+                rr_classes.append(beat_class)
+                
+        start_epoch = None
+        if self._metrics_list:
+            start_epoch = self._metrics_list[0].get('timestamp')
+            
+        self.trend1.set_points(pts, start_epoch)
+        self.trend2.set_points(pts, start_epoch)
+        
+        rr_n = [r for r, c in zip(rr_all, rr_classes) if r > 200]
+        rr_n_classes = [c for r, c in zip(rr_all, rr_classes) if r > 200]
+        if len(rr_n) >= 2:
+            rr_x = rr_n[:-1]
+            rr_y = rr_n[1:]
+            plot_beat_classes = rr_n_classes[:-1]
+            
+            lo = float(np.percentile(rr_n, 5))
+            hi = float(np.percentile(rr_n, 95))
+            if hi - lo < 250:
+                center = float(np.median(rr_n))
+                lo = center - 500.0
+                hi = center + 500.0
+            lo = max(0.0, lo - 50.0)
+            hi = hi + 50.0
+            # Build full rr_points list (t, rr, cls) for time-sharing mode
+            rr_pts_full = [(t, r, c) for (t, r), c in zip(pts, rr_classes) if r > 200]
+            self.lorenz_canvas.set_data(rr_x, rr_y, x_range=(lo, hi), y_range=(lo, hi),
+                                        beat_classes=plot_beat_classes, rr_points=rr_pts_full)
+        else:
+            self.lorenz_canvas.set_data([], [])
+
+    def set_replay_frame(self, data):
+        if data is None or data.shape[0] < 1:
+            return
+        N = data.shape[1]
+        x = np.linspace(0, N / 500.0, N) if N > 0 else []
+        if N > 0:
+            ch_idx = 1 if data.shape[0] > 1 else 0
+            self.ecg_canvas.set_data(x, data[ch_idx].copy())
+
+    # ─── View / display toggle helpers ────────────────────────────────────────
+
+    def _set_display_mode(self, mode):
+        self.lorenz_canvas._set_display(mode)
+        self._btn_complete.setChecked(mode == "complete")
+        self._btn_timeshare.setChecked(mode == "timesharing")
+        # Update button visual state
+        active = _style_active_btn() if hasattr(__builtins__, '__name__') else _style_btn()
+        try:
+            self._btn_complete.setStyleSheet(
+                _style_active_btn() if mode == "complete" else _style_btn())
+            self._btn_timeshare.setStyleSheet(
+                _style_active_btn() if mode == "timesharing" else _style_btn())
+        except Exception:
+            pass
+
+    def _set_view_mode(self, mode):
+        self.lorenz_canvas._set_view(mode)
+        self._btn_lorenz.setChecked(mode == "lorenz")
+        self._btn_delta.setChecked(mode == "delta_rr")
+        try:
+            self._btn_lorenz.setStyleSheet(
+                _style_active_btn() if mode == "lorenz" else _style_btn())
+            self._btn_delta.setStyleSheet(
+                _style_active_btn() if mode == "delta_rr" else _style_btn())
+        except Exception:
+            pass
+
+    def _cycle_pixel_size(self):
+        self._pixel_idx = (self._pixel_idx + 1) % len(self._pixel_cycle)
+        sz = self._pixel_cycle[self._pixel_idx]
+        self.lorenz_canvas._set_pixel(sz)
+
+    # ─── Signal handlers from LorenzCanvas ────────────────────────────────────
+
+    def _on_beats_selected(self, indices):
+        """Highlight selected beats on ECG strip (seek to median time)."""
+        if not indices or not self.lorenz_canvas._all_rr_points:
+            return
+        pts = self.lorenz_canvas._all_rr_points
+        times = [pts[i][0] for i in indices if i < len(pts)]
+        if times:
+            target_t = float(np.median(times))
+            self.seek_requested.emit(target_t)
+
+    def _on_beats_reclassified(self, indices, new_class):
+        """Reclassification is already applied directly in LorenzCanvas._beat_classes;
+        just trigger a replot to refresh colors."""
+        self.lorenz_canvas.update()
+
+    def _on_beats_deleted(self, indices):
+        """Beats were removed from the canvas data; nothing to persist back to metrics
+        in this lightweight implementation — just refresh the display."""
+        self.lorenz_canvas.update()
 
 
 # -----------------------------------------------------------------------------
@@ -8870,6 +9636,12 @@ class HolterMainWindow(QDialog):
         self._hist_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
+        # Lorenz
+        self._lorenz_tab_panel = HolterLorenzPanel()
+        self._lorenz_tab_panel.update_from_metrics(self._metrics_list)
+        self._lorenz_tab_panel.seek_requested.connect(self._on_seek_requested)
+        self._tabs.addTab(self._lorenz_tab_panel, "LORENZ")
+
 
         # AF Analysis
         self._af_panel = HolterAFPanel()
@@ -9024,7 +9796,8 @@ class HolterMainWindow(QDialog):
         for panel in [getattr(self, p, None) for p in [
             '_replay_panel', '_lorenz_panel', '_hist_panel', '_af_panel',
             '_st_panel', '_edit_event_panel', '_edit_strips_panel', '_events_panel',
-            '_expert_panel', '_template_panel', '_report_tendency_panel', '_hrv_panel'
+            '_expert_panel', '_template_panel', '_report_tendency_panel', '_hrv_panel',
+            '_lorenz_tab_panel'
         ]]:
             if panel and hasattr(panel, 'set_replay_frame'):
                 try:
@@ -9141,6 +9914,8 @@ class HolterMainWindow(QDialog):
                     pass
         if hasattr(self, '_hist_panel'):
             self._hist_panel.update_from_metrics(self._metrics_list)
+        if hasattr(self, '_lorenz_tab_panel'):
+            self._lorenz_tab_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_af_panel'):
             self._af_panel.update_from_metrics(self._metrics_list, self._summary.get('duration_sec', 0))
         if hasattr(self, '_st_panel'):
