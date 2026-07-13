@@ -333,7 +333,7 @@ class HolterFullDisclosureDialog(QDialog):
             )
             lbl.setFixedWidth(44)
 
-            canvas = ECGStripCanvas(canvas_frame, height=60, color=COL_GREEN, lead_name=lead)
+            canvas = ECGStripCanvas(canvas_frame, height=60, color=COL_GREEN, lead_name=lead, show_annotations=(lead == "I"))
             canvas.set_paper_speed(25)
             canvas.set_gain(self._gain)
             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
