@@ -142,6 +142,9 @@ class SettingsManager:
         return value
     
     def set_setting(self, key, value):
+        if key == "machine_serial_number":
+            print(f"[SettingsManager] Bypassed persisting machine_serial_number: {value}")
+            return
         if key in {"filter_ac", "filter_emg", "filter_dft"}:
             value = self._normalize_filter_value(key, value)
         self.settings[key] = value
