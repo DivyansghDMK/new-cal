@@ -113,8 +113,7 @@ class HolterAnalysisWorker(threading.Thread):
             self._find_peaks = find_peaks
         except Exception:
             self._find_peaks = None
-
-    # ── Main thread loop ───────────────────────────────────────────────────────
+    # -- Main thread loop -------------------------------------------------------
 
     def run(self):
         print("[HolterWorker] Analysis thread started")
@@ -126,7 +125,7 @@ class HolterAnalysisWorker(threading.Thread):
                 continue
 
             try:
-                if item is None:    # sentinel → stop
+                if item is None:    # sentinel -> stop
                     break
                 self._process_chunk(item)
             except Exception as e:
@@ -145,7 +144,7 @@ class HolterAnalysisWorker(threading.Thread):
         if wait and threading.current_thread() is not self:
             self.join(timeout=timeout)
 
-    # ── Chunk processing ───────────────────────────────────────────────────────
+    # -- Chunk processing -------------------------------------------------------
 
     def _process_chunk(self, item: dict):
         """
@@ -579,23 +578,46 @@ class HolterAnalysisWorker(threading.Thread):
         template_rows = []
         if beat_records and self._template_cluster is not None:
             try:
-                clusters = self._template_cluster.cluster(beat_records)
+                # Separate beats by class for clustering
+                beats_by_class = {}
+                for beat in beat_records:
+                    label = beat.get('label', 'N')
+                    if label not in beats_by_class:
+                        beats_by_class[label] = []
+                    beats_by_class[label].append(beat)
+                
+                # Cluster beats within each class separately to ensure S-class beats create templates
+                all_clusters = []
+                for class_label, class_beats in sorted(beats_by_class.items()):
+                    try:
+                        print(f"[HolterWorker] Clustering {len(class_beats)} beats of class '{class_label}'")
+                        class_clusters = self._template_cluster.cluster(class_beats)
+                        print(f"[HolterWorker] Class '{class_label}' produced {len(class_clusters)} template cluster(s)")
+                        all_clusters.extend(class_clusters)
+                    except Exception as e:
+                        print(f"[HolterWorker] Error clustering {class_label} beats: {e}")
+                
+                clusters = sorted(all_clusters, key=lambda item: item.get('count', 0), reverse=True)
             except Exception as e:
                 print(f"[HolterWorker] Template clustering error: {e}")
                 clusters = []
-            for i, cluster in enumerate(sorted(clusters, key=lambda item: item.get('count', 0), reverse=True), start=1):
+            
+            for i, cluster in enumerate(clusters, start=1):
                 beats = list(cluster.get('beats', []) or [])
                 if not beats:
                     continue
-                template_rows.append({
+                cluster_label = str(beats[0].get('label', 'N'))
+                template_row = {
                     'template_id': f'T{i}',
                     'template_key': f'C{i:02d}',
-                    'label': str(beats[0].get('label', 'N')),
+                    'label': cluster_label,
                     'count': int(cluster.get('count', len(beats))),
                     'avg_rr_ms': round(float(np.mean([b.get('rr_ms', 0.0) for b in beats])) if beats else 0.0, 1),
                     'avg_qrs_ms': round(float(np.mean([b.get('qrs_ms', 0.0) for b in beats])) if beats else 0.0, 1),
                     'first_timestamp': round(float(min(b.get('timestamp', 0.0) for b in beats)), 3),
-                })
+                }
+                template_rows.append(template_row)
+                print(f"[HolterWorker] Created template T{i} (key=C{i:02d}): class={cluster_label}, count={template_row['count']}, first_ts={template_row['first_timestamp']:.2f}s")
 
         all_beats = [{'timestamp': b['timestamp'], 'label': b['label']} for b in beat_records]
         return class_counts, template_rows, classified_events, all_beats
@@ -621,9 +643,13 @@ class HolterAnalysisWorker(threading.Thread):
             return 'Brady'
         if hr_prev > 130:
             return 'Tachy'
+        # Classify as V (Ventricular) if wide QRS and premature
         if qrs_width_ms >= 120 and rr_prev_ms <= rr_median_ms * 0.95:
             return 'V'
-        if rr_prev_ms < rr_median_ms * 0.85 and qrs_width_ms < 120:
+        # Classify as S (Supraventricular/PAC) if narrow QRS and significantly premature
+        # Relaxed threshold from 0.85 to 0.90 to catch more S beats
+        if rr_prev_ms < rr_median_ms * 0.90 and qrs_width_ms < 120:
+            print(f"[HolterWorker] S beat detected: RR={rr_prev_ms:.0f}ms (median={rr_median_ms:.0f}ms), QRS={qrs_width_ms:.0f}ms")
             return 'S'
         return 'N'
 

@@ -84,7 +84,7 @@ def tool_specs(include_annotate: bool = True):
 
 
 def ruler_label(dt_ms: float, dv_mv: float, bpm: float = None) -> str:
-    label = f"Δt={dt_ms:.1f}ms  Δ={dv_mv:.2f}mV"
+    label = f"Deltat={dt_ms:.1f}ms  Delta={dv_mv:.2f}mV"
     if bpm is not None and bpm > 0:
         label += f"  {bpm:.0f} BPM"
     return label

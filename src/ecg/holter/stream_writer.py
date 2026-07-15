@@ -37,7 +37,7 @@ DISPLAY_BUFFER_SECONDS = 120   # how much raw data to keep in RAM for display
 class HolterStreamWriter:
     """
     Sits between the serial reader and the rest of the Holter system.
-    Must be fast — called 500× per second from the Qt main thread.
+    Must be fast -- called 500x per second from the Qt main thread.
     """
 
     def __init__(self, output_dir: str, patient_info: dict,
@@ -122,7 +122,7 @@ class HolterStreamWriter:
         # Flush timer for disk writes
         self._flush_thread: Optional[threading.Thread] = None
 
-    # ── Start / Stop ──────────────────────────────────────────────────────────
+    #    Start / Stop                                                           
 
     def start(self) -> str:
         """Creates session directory + .ecgh file. Returns session directory path."""
@@ -192,7 +192,7 @@ class HolterStreamWriter:
                 'template_count': 0,
             }
 
-        print(f"[Holter] Recording started → {self._session_dir}")
+        print(f"[Holter] Recording started -> {self._session_dir}")
         return self._session_dir
 
     def stop(self) -> dict:
@@ -267,11 +267,11 @@ class HolterStreamWriter:
             return self.stop()
         return self.stop()
 
-    # ── Main push method (called 500× per second) ──────────────────────────────
+    #    Main push method (called 500x per second)                               
 
     def push(self, packet: dict):
         """
-        Fast path — must return in <0.1ms.
+        Fast path -- must return in <0.1ms.
         Called from Qt main thread on every serial packet.
         """
         if not self._running or self._writer is None:
@@ -293,7 +293,7 @@ class HolterStreamWriter:
         self._chunk_ptr += 1
         self._total_frames += 1
 
-        # 4. Chunk full → enqueue for analysis
+        # 4. Chunk full -> enqueue for analysis
         if self._chunk_ptr >= self._chunk_size:
             chunk_data = self._chunk_buf.copy()
             chunk_start = (self._total_frames - self._chunk_size) / self.fs
@@ -309,7 +309,7 @@ class HolterStreamWriter:
                 pass   # analysis worker is slow, drop chunk (data still on disk)
             self._chunk_ptr = 0
 
-    # ── Live display data ──────────────────────────────────────────────────────
+    #    Live display data                                                       
 
     def get_display_data(self, lead_idx: int, n_samples: int) -> np.ndarray:
         """
@@ -327,7 +327,7 @@ class HolterStreamWriter:
                 self._display_buf[lead_idx, :end]
             ])
 
-    # ── Live stats (updated by analysis worker) ────────────────────────────────
+    #    Live stats (updated by analysis worker)                                 
 
     def update_live_stats(self, bpm: float, arrhythmias: List[str]):
         with self._lock:
@@ -456,7 +456,7 @@ class HolterStreamWriter:
                 'summary': dict(self._summary_cache),
             }
 
-    # ── Properties ────────────────────────────────────────────────────────────
+    #    Properties                                                             
 
     @property
     def elapsed_seconds(self) -> float:
