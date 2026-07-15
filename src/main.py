@@ -1002,6 +1002,13 @@ class LoginRegisterDialog(QDialog):
         # Set window properties for better responsiveness
         self.setWindowTitle("CardioX by Deckmount - Sign In / Sign Up")
         self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        try:
+            from PyQt5.QtGui import QIcon
+            icon_path = resource_path("assets/cardiox_logo.ico")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+        except Exception:
+            pass
         
         # Initialize sign-in logic
         SignIn, _ = get_auth_modules()
@@ -2490,9 +2497,27 @@ def main():
             except Exception:
                 pass
 
+        # Set AppUserModelID so Windows taskbar displays the custom window icon when run from Python
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                myappid = "deckmount.cardiox.ecgmonitor.2.1"
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except Exception as e:
+                print(f"[MainApp] Failed to set AppUserModelID: {e}")
+
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")
         app.setApplicationVersion(APP_VERSION)
+
+        # Set application icon
+        try:
+            from PyQt5.QtGui import QIcon
+            icon_path = resource_path("assets/cardiox_logo.ico")
+            if os.path.exists(icon_path):
+                app.setWindowIcon(QIcon(icon_path))
+        except Exception as e:
+            logger.warning(f"Failed to set application window icon: {e}")
 
         # ── Pre-warm heavy imports + WMI in background ──────────────
         # Skip on low-spec machines to avoid an early CPU/RAM spike.

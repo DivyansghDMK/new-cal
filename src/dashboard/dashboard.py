@@ -401,6 +401,15 @@ class Dashboard(QWidget):
         print("🔒 Stable RR tracking initialized")
         
         self.setWindowTitle("CardioX Dashboard")
+        try:
+            import os
+            from config.settings import resource_path
+            from PyQt5.QtGui import QIcon
+            icon_path = resource_path("assets/cardiox_logo.ico")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+        except Exception:
+            pass
         self.setGeometry(100, 100, 1300, 900)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         self.setWindowState(Qt.WindowMaximized)

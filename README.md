@@ -1,32 +1,29 @@
-# 🫀 RhythmPro - Comprehensive ECG & Holter Analysis Platform
+# 🫀 CardioX - Professional ECG & Cardiac Analysis Platform
 
-A clinical-grade, cross-platform desktop application for real-time ECG monitoring and advanced Holter analysis. Designed to process, classify, and report cardiac data with professional medical-grade accuracy.
+CardioX is a clinical-grade, hardware-integrated desktop application designed for real-time ECG monitoring and advanced cardiac analysis. The platform processes, classifies, and tracks cardiac metrics with professional medical-grade precision.
 
 ---
 
 ## 🌟 Key Features
 
-### 1. Advanced Holter Analysis Engine
-- **Clinical-Grade Reporting:** Fully automated generation of comprehensive multi-page PDF reports mirroring professional medical standards.
-- **Dynamic Full Disclosure (CH1):** Compact, multi-line raster rendering of long-term ECG recordings (up to 30 minutes of continuous waveform per page).
-- **Asynchronous Processing:** Background PDF compilation using robust `QThread` architecture ensures the UI remains buttery smooth and responsive during heavy data processing.
-- **Smart Auto-Scaling:** Intelligently scales report templates to accommodate short diagnostic tests without leaving blank pages.
+### 1. Rebranded Premium Medical Identity (CardioX)
+- **Harmonious Theme:** Tailored UI utilizing orange, tech blue, and medical teal colors.
+- **Custom Visual Assets:** High-resolution transparent logo (`assets/cardiox_logo.png`) and fully compliant multi-resolution Windows icon (`assets/cardiox_logo.ico`).
+- **Windows Taskbar Integration:** Declares an explicit Windows `AppUserModelID` (`CardioX.ECGMonitor.1.1.0`) so the OS correctly clusters the custom CardioX taskbar icon instead of fallback Python interpreter icons.
+- **Clean Dashboard Layout:** Hides the "Comprehensive ECG" button (`self.holter_btn`) to keep the dashboard focused entirely on core workflows.
 
-### 2. Professional Medical Dashboard (3-Pane Layout)
-- **High-Fidelity ECG Trace Viewer:** Sub-pixel waveform rendering using PyQtGraph with strict grid snapping and dynamic overlay pins.
-- **Morphology Thumbnail Grid:** Side-by-side clustering of abnormal beats (VE, SVE) for rapid physician review.
-- **Real-time Event List:** Absolute-time synchronization mapping annotations directly to the patient's physical recording timeline.
-- **Dark Mode Clinical Aesthetics:** High-contrast, fatigue-reducing dark UI tailored for extensive clinical review sessions.
+### 2. Dedicated Hardware Lock (Device Authorization)
+- **Secure Signup Association:** During license signup/registration, the serial number of the user's specific RhythmUltra hardware is bound and stored inside the license token (`cardiox.lic`).
+- **Acquisition Lockdown:** Real-time data acquisition in the three core modules (**12-Lead ECG**, **HRV**, and **Hyperkalemia**) is restricted. The software strictly validates the connected physical USB device against the signup token serial number, preventing unauthorized hardware usage.
 
-### 3. Medical-Grade Signal Processing
-- **Pan-Tompkins R-Peak Detection:** Robust QRS complex detection and real-time beat annotation (N, V, S, AF).
-- **Adaptive Filtering Pipeline:** 8-stage filtering system featuring Wiener filters, Gaussian smoothing, and adaptive median noise removal.
-- **HRV Analytics:** Computes Time Domain parameters (SDNN, rMSSD, pNN50) and comprehensive interval statistics (PR, QRS, QT, QTc).
+### 3. Professional Medical Dashboard & Diagnostics
+- **High-Fidelity Trace Viewer:** Sub-pixel waveform rendering using PyQtGraph with strict grid snapping and dynamic overlay pins.
+- **Beat Morphology Classification:** Real-time event tagging (N, V, S, AF) and clustering of abnormal beats (VE, SVE) for rapid medical review.
+- **HRV Analytics:** Real-time calculations of Time Domain metrics (SDNN, rMSSD, pNN50) and interval stats (PR, QRS, QT, QTc).
 
-### 4. Robust Data Management & Cloud Integration
-- **Zero-Collision Architecture:** Timestamp-appended filenames entirely prevent OS-level `PermissionError` conflicts during workflow multitasking.
-- **Global Background Uploads:** Automatic cloud synchronization to AWS S3 every 15 seconds without interrupting the medical workflow.
-- **Offline Queueing:** Robust caching system safely queues data offline and automatically uploads missing records the moment an internet connection is restored.
+### 4. Zero-Collision Cloud Synchronization
+- **Asynchronous S3 Offloading:** Automatic background thread offloading of ECG data to AWS S3 every 15 seconds.
+- **Local Cache Queueing:** Zero data loss offline-first architecture; queued files auto-sync the moment internet access is restored.
 
 ---
 
@@ -35,7 +32,7 @@ A clinical-grade, cross-platform desktop application for real-time ECG monitorin
 - **User Interface:** PyQt5, PyQtGraph (Hardware-accelerated rendering)
 - **Signal Analysis:** NumPy, SciPy (FFT, digital filtering)
 - **Report Generation:** ReportLab, Matplotlib (Agg background renderer)
-- **Cloud Infrastructure:** Boto3 (AWS S3)
+- **Packaging & Setup:** PyInstaller, Inno Setup 6
 
 ---
 
@@ -46,7 +43,7 @@ A clinical-grade, cross-platform desktop application for real-time ECG monitorin
 .\.venv\Scripts\Activate.ps1
 
 # 2. Install dependencies
-pip install -r src\requirements.txt
+pip install -r requirements.txt
 
 # 3. Launch the application
 python src\main.py
@@ -54,26 +51,29 @@ python src\main.py
 
 ---
 
-## 📦 Building the Executable
+## 📦 Release Compilation & Installer Packaging
 
-Use the provided build tools to create a standalone Windows application:
+CardioX uses a unified release pipeline script to compile the application and generate a single-file Windows setup installer:
 
 ```powershell
-# Build standard directory
-python build_exe.py --name RhythmPro
-
-# Build with debug console
-python build_exe.py --name RhythmPro --console
+# Run the release script to compile and build the installer
+.\build_release.ps1 -Name CARDIOX -Version 1.1.0
 ```
-This generates `dist\RhythmPro\RhythmPro.exe`. For deployment, zip and share the entire `RhythmPro` folder to ensure all `_internal` dependencies are included.
+
+### Build Details:
+1. **PyInstaller Compilation:** Packages python scripts into a standalone executable. Uses `--icon=assets/cardiox_logo.ico` to embed the square padded multi-resolution logo directly into the output binary (`dist\CARDIOX\CARDIOX.exe`).
+2. **Inno Setup Integration:** Invokes Inno Setup compiler (`ISCC.exe`) using [ECGMonitor.iss](file:///c:/Users/DELL/Documents/QW/qww/installer/ECGMonitor.iss) to package the setup program, apply shortcut icon mappings (Desktop, Start Menu, Uninstaller), and create the final installer.
+3. **Installer Output:** Generates the ready-to-run installation executable at `dist\installers\Setup_CARDIOX_1.1.0.exe`.
+
+---
 
 ## 📝 Admin & Demo Configuration
 
-**Admin Panel Access**
-Access the internal cloud dashboard using credentials: `admin` / `adminsd`
+**Admin Dashboard Credentials:**
+- **User:** `admin` / **Password:** `adminsd`
 
-**Demo Mode**
-The application supports a hardware-free simulation mode. A static `recording.ecgh` dataset can be replayed to test UI responses and PDF generation without needing an active device connection.
+**Demo Mode:**
+A simulated hardware mode is supported. If no device is connected, static `.ecgh` datasets can be replayed to demonstrate trace rendering, clinical algorithms, and PDF report generation.
 
 ---
-**Status:** 🟢 Production Ready | **Last Updated:** May 2026
+**Status:** 🟢 Production Ready | **Last Updated:** July 2026

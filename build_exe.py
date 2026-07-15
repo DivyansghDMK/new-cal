@@ -175,6 +175,7 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--clean",
         "--windowed" if not console else "--console",
         "--onedir" if not onefile else "--onefile",
+        f"--icon={project_root / 'assets' / 'cardiox_logo.ico'}",
         # FIX: src/ on path so PyInstaller finds organization.py and all src modules
         f"--paths={project_root / 'src'}",
         # FIX: write spec to build/ so stale local spec is never used on CI

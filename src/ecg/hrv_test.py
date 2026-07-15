@@ -634,12 +634,12 @@ class HRVTestWindow(QWidget):
             self.serial_reader.start()
 
             # Centralized authorization check
-            # from utils.license_manager import is_ecg_acquisition_allowed
-            # if not is_ecg_acquisition_allowed(self):
-            #     self.stop_capture()
-            #     self.status_label.setText("Status: Unauthorized Device")
-            #     self.status_label.setStyleSheet("color: #EF5350; padding: 5px;")
-            #     return
+            from utils.license_manager import is_ecg_acquisition_allowed
+            if not is_ecg_acquisition_allowed(self):
+                self.stop_capture()
+                self.status_label.setText("Status: Unauthorized Device")
+                self.status_label.setStyleSheet("color: #EF5350; padding: 5px;")
+                return
             
             # Reset data
             HISTORY_LENGTH = 10000
