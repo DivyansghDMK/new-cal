@@ -69,7 +69,7 @@ def generate_holter_report(session_dir: str,
                                       output_path.replace('.pdf', '.txt'))
 
 
-# ── PDF Report ─────────────────────────────────────────────────────────────────
+#    PDF Report                                                                  
 
 def _generate_pdf_report(session_dir, patient_info, summary, output_path, settings_manager):
     from reportlab.lib.pagesizes import A4
@@ -116,7 +116,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
 
     story = []
 
-    # ── PAGE 1: FINAL SUMMARY ──────────────────────────────────────────────────
+    #    PAGE 1: FINAL SUMMARY                                                   
     story.append(Paragraph("COMPREHENSIVE ECG ANALYSIS REPORT", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
 
@@ -126,12 +126,12 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     pname = patient_info.get('name', patient_info.get('patient_name', 'Unknown'))
     pinfo_data = [
         ['Patient Name', pname,              'Recording Duration', f"{dur_h}h {dur_m}m"],
-        ['Age / Gender', f"{patient_info.get('age','—')} / {patient_info.get('gender','—')}",
+        ['Age / Gender', f"{patient_info.get('age','--')} / {patient_info.get('gender','--')}",
          'Report Date', datetime.now().strftime('%Y-%m-%d %H:%M')],
-        ['Doctor',       patient_info.get('doctor', '—'),
-         'Organisation', patient_info.get('Org.', patient_info.get('org', '—'))],
-        ['Email',        patient_info.get('email', '—'),
-         'Phone',        patient_info.get('phone', patient_info.get('doctor_mobile', '—'))],
+        ['Doctor',       patient_info.get('doctor', '--'),
+         'Organisation', patient_info.get('Org.', patient_info.get('org', '--'))],
+        ['Email',        patient_info.get('email', '--'),
+         'Phone',        patient_info.get('phone', patient_info.get('doctor_mobile', '--'))],
     ]
 
     pinfo_table = Table(pinfo_data, colWidths=[35*mm, 55*mm, 45*mm, 45*mm])
@@ -212,7 +212,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(sig_table)
     
-    # ── NUMERICAL SUMMARY TABLE ────────────────────────────────────────
+    #    NUMERICAL SUMMARY TABLE                                         
     story.append(Spacer(1, 15*mm))
     story.append(Paragraph("NUMERICAL SUMMARY TABLE", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
@@ -265,7 +265,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         ]))
         story.append(timeline_table)
 
-    # ── HOURLY ANALYSIS ────────────────────────────────────────────────
+    #    HOURLY ANALYSIS                                                 
     story.append(Spacer(1, 15*mm))
     story.append(Paragraph("HOURLY ANALYSIS", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
@@ -279,7 +279,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     else:
         story.append(Paragraph("Hourly HR chart not available.", small_style))
 
-    # ── HRV ANALYSIS ───────────────────────────────────────────────────
+    #    HRV ANALYSIS                                                    
     story.append(Spacer(1, 15*mm))
     story.append(Paragraph("HEART RATE VARIABILITY (HRV)", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
@@ -308,11 +308,11 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         ['SDNN',   f"{sdnn:.1f} ms",  '>100 ms',  hrv_label],
         ['rMSSD',  f"{rmssd:.1f} ms", '>42 ms',   'Normal' if rmssd > 42 else 'Low'],
         ['pNN50',  f"{pnn50:.2f}%",   '>20%',     'Normal' if pnn50 > 20 else 'Low'],
-        ['TriIdx', f"{triidx:.2f}",   'Higher is better', '—'],
-        ['VLF',    f"{vlf:.3f}",      '0.0033-0.04 Hz',   '—'],
-        ['LF',     f"{lf:.3f}",       '0.04-0.15 Hz',     '—'],
-        ['HF',     f"{hf:.3f}",       '0.15-0.40 Hz',     '—'],
-        ['LF/HF',  f"{lf_hf:.3f}",    'Balance marker',   '—'],
+        ['TriIdx', f"{triidx:.2f}",   'Higher is better', '--'],
+        ['VLF',    f"{vlf:.3f}",      '0.0033-0.04 Hz',   '--'],
+        ['LF',     f"{lf:.3f}",       '0.04-0.15 Hz',     '--'],
+        ['HF',     f"{hf:.3f}",       '0.15-0.40 Hz',     '--'],
+        ['LF/HF',  f"{lf_hf:.3f}",    'Balance marker',   '--'],
     ]
     hrv_table = Table(hrv_data, colWidths=[40*mm, 35*mm, 35*mm, 30*mm])
     hrv_table.setStyle(TableStyle([
@@ -328,7 +328,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(hrv_table)
     
-    # ── QT / QTC ANALYSIS ──────────────────────────────────────────────
+    #    QT / QTC ANALYSIS                                               
     story.append(Spacer(1, 15*mm))
     story.append(Paragraph("QT / QTc ANALYSIS", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
@@ -341,9 +341,9 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
 
     int_data = [['Interval', 'Mean', 'Std Dev', 'Min', 'Max', 'Normal Range']]
     for label, key, ref in [
-        ('PR Interval',  'pr_ms',  '120–200 ms'),
-        ('QRS Duration', 'qrs_ms', '60–120 ms'),
-        ('QT Interval',  'qt_ms',  '350–450 ms'),
+        ('PR Interval',  'pr_ms',  '120--200 ms'),
+        ('QRS Duration', 'qrs_ms', '60--120 ms'),
+        ('QT Interval',  'qt_ms',  '350--450 ms'),
         ('QTc Interval', 'qtc_ms', '<440 ms'),
     ]:
         vals = interval_stats.get(key, [])
@@ -355,7 +355,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                              f"{np.max(vals):.0f} ms",
                              ref])
         else:
-            int_data.append([label, '—', '—', '—', '—', ref])
+            int_data.append([label, '--', '--', '--', '--', ref])
 
     int_table = Table(int_data, colWidths=[35*mm, 22*mm, 22*mm, 22*mm, 22*mm, 32*mm])
     int_table.setStyle(TableStyle([
@@ -370,7 +370,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(int_table)
 
-    # ── FULL DISCLOSURE ECG STRIPS ─────────────────────────────────────────────
+    #    FULL DISCLOSURE ECG STRIPS                                              
     # User requested: "all waves should be attached to the report for how many time it has run all 12 lead data should go with time stamp"
     ecgh_path = os.path.join(session_dir, 'recording.ecgh')
     if os.path.exists(ecgh_path):
@@ -459,7 +459,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     return output_path
 
 
-# ── Helper functions ────────────────────────────────────────────────────────────
+#    Helper functions                                                             
 
 def _generate_hourly_hr_chart(session_dir: str, hourly_hr: dict) -> str:
     """Generate bar chart of hourly mean HR, save as PNG."""
@@ -539,7 +539,7 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
         "COMPREHENSIVE ECG ANALYSIS REPORT",
         "=" * 60,
         f"Patient: {patient_info.get('name', 'Unknown')}",
-        f"Doctor: {patient_info.get('doctor', '—')}",
+        f"Doctor: {patient_info.get('doctor', '--')}",
         f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
         "SUMMARY",

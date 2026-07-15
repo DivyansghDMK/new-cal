@@ -2,7 +2,7 @@
 ecg/holter/replay_engine.py
 ============================
 Loads a saved .ecgh recording and feeds it to the existing
-expanded_lead_view.py display pipeline — no new display code needed.
+expanded_lead_view.py display pipeline -- no new display code needed.
 
 Features:
   - Fast seek to any second via the index file
@@ -60,7 +60,7 @@ class HolterReplayEngine:
         self._on_arrhythmia_event: Optional[callable] = None  # (event)
         self._last_event_emit_sec: float = -1.0
 
-    # ── Metrics loading ───────────────────────────────────────────────────────
+    #    Metrics loading                                                        
 
     def _load_metrics(self, ecgh_path: str):
         jsonl_path = os.path.join(os.path.dirname(ecgh_path), 'metrics.jsonl')
@@ -139,7 +139,7 @@ class HolterReplayEngine:
         except Exception as e:
             print(f"[Replay] Could not load session metadata: {e}")
 
-    # ── Callbacks ─────────────────────────────────────────────────────────────
+    #    Callbacks                                                              
 
     def set_data_callback(self, callback):
         """callback(lead_data_array_12xN) called every display frame."""
@@ -173,7 +173,7 @@ class HolterReplayEngine:
         end = min(self.duration_sec, start + window_sec)
         return start, end
 
-    # ── Seek & navigation ──────────────────────────────────────────────────────
+    #    Seek & navigation                                                       
     def seek(self, target_sec: float):
         """Jump to any timestamp in the recording."""
         self._current_sec = max(0.0, min(target_sec, self.duration_sec))
@@ -229,7 +229,7 @@ class HolterReplayEngine:
             })
         return result
 
-    # ── Data retrieval ─────────────────────────────────────────────────────────
+    #    Data retrieval                                                          
 
     def get_lead_data(self, lead_idx: int, window_sec: float = 10.0) -> np.ndarray:
         """
@@ -293,7 +293,7 @@ class HolterReplayEngine:
                     self._on_arrhythmia_event(t, label)
             self._last_event_emit_sec = self._current_sec
 
-    # ── Playback loop ─────────────────────────────────────────────────────────
+    #    Playback loop                                                          
 
     def play(self):
         """Start replay loop."""
@@ -332,7 +332,7 @@ class HolterReplayEngine:
             self._emit_frame()
             time.sleep(dt_wall)
 
-    # ── Summary statistics ─────────────────────────────────────────────────────
+    #    Summary statistics                                                      
 
     def get_summary(self) -> dict:
         """Compute overall recording summary from all JSONL chunks."""
@@ -430,7 +430,7 @@ class HolterReplayEngine:
             'template_count': max(template_counts) if template_counts else 0,
         }
 
-    # ── Helpers ────────────────────────────────────────────────────────────────
+    #    Helpers                                                                 
 
     @staticmethod
     def _sec_to_hms(seconds: float) -> str:

@@ -1021,6 +1021,16 @@ class HolterFullDisclosureDialog(QDialog):
         
         # Get beat annotations for this window
         beat_annotations = []
+        # Define color mapping for beat types
+        label_colors = {
+            "N": "#00FF00",      # Normal - Green
+            "S": "#00FFFF",      # Atrial Premature - Cyan
+            "V": "#FF3333",      # Ventricular Premature - Red
+            "P": "#FF00FF",      # Paced - Magenta
+            "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+            "X": "#0000FF",      # Artifact - Blue
+            "Other": "#FFFF00"   # Other - Yellow
+        }
         try:
             for m in self._engine._metrics:
                 all_beats = m.get('all_beats', [])
@@ -1029,9 +1039,11 @@ class HolterFullDisclosureDialog(QDialog):
                 for beat in all_beats:
                     ts = float(beat.get('timestamp', 0.0))
                     if start_sec <= ts <= end_sec:
+                        lbl = str(beat.get('label', 'N'))
                         beat_annotations.append({
                             'timestamp': ts,
-                            'label': str(beat.get('label', 'N'))
+                            'label': lbl,
+                            'color': label_colors.get(lbl, "#00FF00")  # Default to green
                         })
             beat_annotations.sort(key=lambda b: b['timestamp'])
         except Exception as e:
@@ -1063,7 +1075,7 @@ class HolterFullDisclosureDialog(QDialog):
         """Activate a tool (ruler/caliper/magnify) on all canvases, or deactivate if already active."""
         tool_btns = [self.btn_ruler, self.btn_caliper, self.btn_magnify]
         if self._active_tool == tool_id:
-            # Toggle off — return to select mode
+            # Toggle off -- return to select mode
             self._active_tool = TOOL_SELECT
             self._active_tool_btn = None
             for b in tool_btns:

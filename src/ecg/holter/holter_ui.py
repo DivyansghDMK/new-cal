@@ -12,7 +12,7 @@ Screens:
   5. HolterHRVPanel           - HRV table per hour + bottom stats strip
   6. HolterReplayPanel        - RR scatter/Lorenz + scrub slider + ECG strip
   7. HolterEventsPanel        - Arrhythmia events list with strip nav
-  8. HolterWaveGridPanel      - 12-lead live/replay grid (3 rows Ã— 4 cols)
+  8. HolterWaveGridPanel      - 12-lead live/replay grid (3 rows  -- 4 cols)
   9. HolterInsightPanel       - Comprehensive report preview narrative
  10. HolterRecordManagementPanel - searchable session browser
  11. HolterHistogramPanel     - RR-interval histogram
@@ -1110,7 +1110,7 @@ class HolterReplayPanel(QWidget):
         self._rr_mode = "RR"
         self._time_scope = "whole"
 
-        # â”€â”€ 48-hour session summary bar (replaces the two RR trend canvases) â”€â”€
+        #  "  "  48-hour session summary bar (replaces the two RR trend canvases)  "  " 
         summary_frame = QFrame()
         summary_frame.setStyleSheet(f"QFrame{{background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:6px;}}")
         summary_frame.setFixedHeight(72)
@@ -1132,7 +1132,7 @@ class HolterReplayPanel(QWidget):
         summary_layout.addStretch()
         layout.addWidget(summary_frame)
 
-        # ── HR trend mini-chart (40h-48h of data at a glance) ──
+        #    HR trend mini-chart (40h-48h of data at a glance)   
         self._hr_trend_canvas = HolterRRTrendCanvas(title="Heart Rate Trend (full recording)")
         self._hr_trend_canvas.setFixedHeight(120)
         layout.addWidget(self._hr_trend_canvas)
@@ -1203,7 +1203,7 @@ class HolterReplayPanel(QWidget):
         ecg_right_layout.setContentsMargins(4, 4, 4, 4)
         ecg_right_layout.setSpacing(2)
 
-        # â”€â”€ 12-lead scrollable grid (1 column, 12 rows) â”€â”€
+        #  "  "  12-lead scrollable grid (1 column, 12 rows)  "  " 
         leads_scroll = QScrollArea()
         leads_scroll.setWidgetResizable(True)
         leads_scroll.setFrameShape(QFrame.NoFrame)
@@ -1981,7 +1981,7 @@ class HolterReplayPanel(QWidget):
             trend_points = [(t, rr) for t, rr, _cls in filtered_points] if len(filtered_points) >= 2 else [(t, rr) for t, rr, _cls in rr_points]
             self._rr_trend_full.set_points(trend_points)
             # Only update zoom canvas separately if it's a different widget (OVERVIEW panel has two separate canvases;
-            # the REPLAY panel aliases both to the same _hr_trend_canvas — calling set_points on it twice would
+            # the REPLAY panel aliases both to the same _hr_trend_canvas -- calling set_points on it twice would
             # overwrite the full data with the recent subset)
             if hasattr(self, "_rr_trend_zoom") and self._rr_trend_zoom is not self._rr_trend_full:
                 recent = trend_points[-1200:] if len(trend_points) > 1200 else trend_points
@@ -2140,11 +2140,11 @@ class HolterReplayPanel(QWidget):
         ]
 
 
-# â”€â”€ Helper canvas widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  "  "  Helper canvas widgets  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
 
 class LorenzCanvas(QWidget):
-    """Full-featured RR scatter / Poincaré plot with lasso selection, zoom,
-    time-sharing view, ΔRR mode, and right-click context menu."""
+    """Full-featured RR scatter / Poincar  plot with lasso selection, zoom,
+    time-sharing view, DeltaRR mode, and right-click context menu."""
 
     beats_selected      = pyqtSignal(list)   # list of selected data indices
     beats_reclassified  = pyqtSignal(list, str)  # (indices, new_class)
@@ -2233,17 +2233,17 @@ class LorenzCanvas(QWidget):
             QMenu::separator {{ height: 1px; background: {COL_GREEN_DRK}; }}
         """)
 
-        # ── View submenu ──
-        view_menu = menu.addMenu("📊  View")
+        #    View submenu   
+        view_menu = menu.addMenu("   View")
         act_lorenz   = view_menu.addAction("RR Interval Scatter (Lorenz)")
-        act_delta_rr = view_menu.addAction("ΔRR Difference Scatter")
+        act_delta_rr = view_menu.addAction("DeltaRR Difference Scatter")
         act_lorenz.setCheckable(True);   act_lorenz.setChecked(self._view_mode == "lorenz")
         act_delta_rr.setCheckable(True); act_delta_rr.setChecked(self._view_mode == "delta_rr")
         act_lorenz.triggered.connect(lambda: self._set_view("lorenz"))
         act_delta_rr.triggered.connect(lambda: self._set_view("delta_rr"))
 
-        # ── Display submenu ──
-        disp_menu = menu.addMenu("🗖  Display")
+        #    Display submenu   
+        disp_menu = menu.addMenu("   Display")
         act_complete = disp_menu.addAction("Complete Scatter")
         act_timeshare = disp_menu.addAction("Time-sharing Scatter (16 panels)")
         act_complete.setCheckable(True);   act_complete.setChecked(self._display_mode == "complete")
@@ -2253,30 +2253,30 @@ class LorenzCanvas(QWidget):
 
         menu.addSeparator()
 
-        # ── Zoom ──
-        zoom_menu = menu.addMenu("🔍  Zoom")
+        #    Zoom   
+        zoom_menu = menu.addMenu("   Zoom")
         zoom_menu.addAction("Zoom In  (+)").triggered.connect(lambda: self._do_zoom(True))
         zoom_menu.addAction("Zoom Out (-)").triggered.connect(lambda: self._do_zoom(False))
         zoom_menu.addAction("Reset Zoom").triggered.connect(lambda: self._reset_zoom())
 
-        # ── Pixel size ──
-        pix_menu = menu.addMenu("●  Pixel Size")
+        #    Pixel size   
+        pix_menu = menu.addMenu("   Pixel Size")
         pix_menu.addAction("Small  (2 px)").triggered.connect(lambda: self._set_pixel(2))
         pix_menu.addAction("Medium (3 px)").triggered.connect(lambda: self._set_pixel(3))
         pix_menu.addAction("Large  (5 px)").triggered.connect(lambda: self._set_pixel(5))
 
-        # ── RR Display Range ──
-        rng_menu = menu.addMenu("↔  RR Display Range")
-        rng_menu.addAction("Auto (200–2000 ms)").triggered.connect(lambda: self._set_rr_range(200, 2000))
-        rng_menu.addAction("Normal (400–1200 ms)").triggered.connect(lambda: self._set_rr_range(400, 1200))
-        rng_menu.addAction("Wide (100–3000 ms)").triggered.connect(lambda: self._set_rr_range(100, 3000))
-        rng_menu.addAction("Custom…").triggered.connect(self._custom_rr_range_dialog)
+        #    RR Display Range   
+        rng_menu = menu.addMenu("   RR Display Range")
+        rng_menu.addAction("Auto (200--2000 ms)").triggered.connect(lambda: self._set_rr_range(200, 2000))
+        rng_menu.addAction("Normal (400--1200 ms)").triggered.connect(lambda: self._set_rr_range(400, 1200))
+        rng_menu.addAction("Wide (100--3000 ms)").triggered.connect(lambda: self._set_rr_range(100, 3000))
+        rng_menu.addAction("Custom...").triggered.connect(self._custom_rr_range_dialog)
 
         menu.addSeparator()
 
-        # ── Beat Attribute ──
+        #    Beat Attribute   
         has_sel = len(self._selected_indices) > 0
-        attr_menu = menu.addMenu("🏷  Beat Attribute")
+        attr_menu = menu.addMenu("   Beat Attribute")
         attr_menu.setEnabled(has_sel)
         for cls_label, cls_code in [("Normal (N)", "N"), ("Supraventricular (S)", "S"),
                                     ("Ventricular (V)", "V"), ("Paced (P)", "P"),
@@ -2284,8 +2284,8 @@ class LorenzCanvas(QWidget):
             a = attr_menu.addAction(cls_label)
             a.triggered.connect(lambda checked=False, c=cls_code: self._reclassify(c))
 
-        # ── Delete ──
-        del_act = menu.addAction("🗑  Delete Selected")
+        #    Delete   
+        del_act = menu.addAction("   Delete Selected")
         del_act.setEnabled(has_sel)
         del_act.triggered.connect(self._delete_selected)
 
@@ -2572,19 +2572,19 @@ class LorenzCanvas(QWidget):
         painter.setFont(QFont("Arial", 8, QFont.Bold))
         if self._view_mode == "delta_rr":
             painter.drawText(left + 4, h - 8, "RR(n) ms")
-            painter.drawText(w - 60, 14, "ΔRR(n+1)")
+            painter.drawText(w - 60, 14, "DeltaRR(n+1)")
         else:
             painter.drawText(left + 4, h - 8, "RR(n) ms")
             painter.drawText(w - 62, 14, "RR(n+1)")
 
         # Mode badge
-        badge = "ΔRR" if self._view_mode == "delta_rr" else "Lorenz"
+        badge = "DeltaRR" if self._view_mode == "delta_rr" else "Lorenz"
         painter.setFont(QFont("Arial", 7))
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
         painter.drawText(left + 4, top + 12, badge)
 
     def _paint_timesharing(self, painter):
-        """Draw 16 mini scatter plots in a 4×4 grid."""
+        """Draw 16 mini scatter plots in a 4x4 grid."""
         w, h = self.width(), self.height()
         n_cols, n_rows = 4, 4
         cell_w = w // n_cols
@@ -3057,7 +3057,7 @@ class ECGStripCanvas(QWidget):
         click_sample_idx = int((click_x / float(w)) * len(self._data))
         click_sample_idx = max(0, min(click_sample_idx, len(self._data) - 1))
         
-        # Look in a small neighborhood (±20ms) around the click
+        # Look in a small neighborhood (+/-20ms) around the click
         neighborhood_size = max(5, int(0.02 * self._fs))  # 20ms window
         start_check = max(0, click_sample_idx - neighborhood_size)
         end_check = min(len(self._data), click_sample_idx + neighborhood_size)
@@ -3879,7 +3879,7 @@ class HolterRRTrendCanvas(QWidget):
         def to_x(t):
             return inner.left() + int(((t - t_min) / t_rng) * iw)
 
-        # â”€â”€ Vertical grid every ~2 hours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  "  "  Vertical grid every ~2 hours  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
         # Vertical grid removed per user request
         # grid_interval = 7200.0  # 2 hours in seconds
         # t_grid = (int(t_min / grid_interval) + 1) * grid_interval
@@ -3889,7 +3889,7 @@ class HolterRRTrendCanvas(QWidget):
         #     painter.drawLine(xp, inner.top(), xp, inner.bottom())
         #     t_grid += grid_interval
 
-        # â”€â”€ Scatter dots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  "  "  Scatter dots  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor("#00ff66")))
 
@@ -3907,7 +3907,7 @@ class HolterRRTrendCanvas(QWidget):
             py = to_y(val)
             painter.drawEllipse(px - 2, py - 2, 4, 4)
 
-        # â”€â”€ Cyan selection box â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  "  "  Cyan selection box  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
         if self._selection_range is not None:
             rs, re_t = self._selection_range
             sx = max(inner.left(), min(inner.right(), to_x(rs)))
@@ -3916,7 +3916,7 @@ class HolterRRTrendCanvas(QWidget):
             painter.setBrush(QBrush(QColor(0, 204, 204, 30)))
             painter.drawRect(sx, inner.top(), max(2, ex - sx), ih)
 
-        # â”€â”€ X-axis time labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  "  "  X-axis time labels  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
         painter.setPen(QPen(QColor("#7ecfff"), 1))
         painter.setFont(QFont("Arial", 9, QFont.Bold))
         import datetime as _dt
@@ -3937,7 +3937,7 @@ class HolterRRTrendCanvas(QWidget):
                 label = f"{hrs:02d}:{mins:02d}"
             painter.drawText(xp - 14, inner.bottom() + BM - 2, label)
 
-        # â”€â”€ Border â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  "  "  Border  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  "  " 
         painter.setPen(QPen(QColor("#1e3350"), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(inner)
@@ -3994,7 +3994,7 @@ class HolterExpertReviewPanel(QWidget):
         left_l.addWidget(self._template_table, 1)
         body.addWidget(left)
 
-        # â”€â”€ Center: scrollable 12-lead ECG grid â”€â”€
+        #  "  "  Center: scrollable 12-lead ECG grid  "  " 
         center = QFrame()
         center.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {UI_BORDER};border-radius:8px;}}")
         center_l = QVBoxLayout(center)
@@ -4028,8 +4028,7 @@ class HolterExpertReviewPanel(QWidget):
             lbl.setFixedWidth(34)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-            # Disable vertical lines for 12-Lead ECG Overview
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False)
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False, show_annotations=False)
             strip.set_gain(1.0)
             self._expert_lead_strips[lead] = strip
             row_h.addWidget(lbl)
@@ -4046,7 +4045,7 @@ class HolterExpertReviewPanel(QWidget):
         rlbl.setFixedWidth(34)
         rlbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rlbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False)
+        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False, show_annotations=False)
         rhythm_row.addWidget(rlbl)
         rhythm_row.addWidget(self._mini, 1)
         center_l.addLayout(rhythm_row)
@@ -6051,14 +6050,14 @@ class HolterLorenzPanel(QWidget):
 
         mid_splitter.addWidget(lorenz_container)
         
-        # Right side of mid splitter: 12-Lead ECG Grid (3 columns × 4 rows)
+        # Right side of mid splitter: 12-Lead ECG Grid (3 columns x 4 rows)
         leads_container = QWidget()
         leads_container.setStyleSheet(f"background:{COL_BLACK};border:1px solid {UI_BORDER};border-radius:6px;")
         leads_layout = QVBoxLayout(leads_container)
         leads_layout.setContentsMargins(4, 4, 4, 4)
         leads_layout.setSpacing(2)
         
-        # Create 12-lead grid: 4 rows × 3 columns
+        # Create 12-lead grid: 4 rows x 3 columns
         grid_layout = QGridLayout()
         grid_layout.setSpacing(10)
         grid_layout.setContentsMargins(6, 6, 6, 6)
@@ -6298,7 +6297,7 @@ class HolterLorenzPanel(QWidget):
             traceback.print_exc()
             return []
 
-    # ─── View / display toggle helpers ────────────────────────────────────────
+    #     View / display toggle helpers                                         
 
     def _set_display_mode(self, mode):
         self.lorenz_canvas._set_display(mode)
@@ -6331,7 +6330,7 @@ class HolterLorenzPanel(QWidget):
         sz = self._pixel_cycle[self._pixel_idx]
         self.lorenz_canvas._set_pixel(sz)
 
-    # ─── Signal handlers from LorenzCanvas ────────────────────────────────────
+    #     Signal handlers from LorenzCanvas                                     
 
     def _on_beats_selected(self, indices):
         """Display 12-lead ECG for selected beats or clear if no beats selected."""
@@ -6398,7 +6397,7 @@ class HolterLorenzPanel(QWidget):
 
     def _on_beats_deleted(self, indices):
         """Beats were removed from the canvas data; nothing to persist back to metrics
-        in this lightweight implementation — just refresh the display."""
+        in this lightweight implementation -- just refresh the display."""
         self.lorenz_canvas.update()
 
 
@@ -9509,7 +9508,7 @@ class HolterMainWindow(QDialog):
 
         # Header row
         hdr_row = QHBoxLayout()
-        dot = QLabel("●")
+        dot = QLabel(" ")
         dot.setStyleSheet("color:#00FF00; font-size:14px; border:none;")
         hdr_row.addWidget(dot)
         title_lbl = QLabel("ECG Reanalysis")
@@ -9542,7 +9541,7 @@ class HolterMainWindow(QDialog):
         dlg_layout.addWidget(progress)
 
         # Status label
-        status_lbl = QLabel("Initialising…")
+        status_lbl = QLabel("Initialising...")
         status_lbl.setStyleSheet("color:#888888; font-size:11px; border:none;")
         dlg_layout.addWidget(status_lbl)
 
@@ -9565,10 +9564,10 @@ class HolterMainWindow(QDialog):
                 self._fn = fn
 
             def run(self):
-                self.progress_changed.emit(10, "Loading session metadata…")
+                self.progress_changed.emit(10, "Loading session metadata...")
                 try:
                     self._fn()
-                    self.progress_changed.emit(90, "Finalising…")
+                    self.progress_changed.emit(90, "Finalising...")
                 except Exception as e:
                     print(f"[Reanalysis] Error: {e}")
                 self.progress_changed.emit(100, "Done!")
@@ -9583,7 +9582,7 @@ class HolterMainWindow(QDialog):
         def _on_done():
             progress.setValue(100)
             pct_lbl.setText("100%")
-            status_lbl.setText("Complete — loading replay…")
+            status_lbl.setText("Complete -- loading replay...")
             QApplication.processEvents()
             QTimer.singleShot(450, lambda: (dlg.accept(), _navigate_replay()))
 
@@ -9605,10 +9604,10 @@ class HolterMainWindow(QDialog):
             if _tick_val[0] < 88:
                 _tick_val[0] += 1
                 progress.setValue(_tick_val[0])
-                msg = ("Loading recorded data…" if _tick_val[0] < 30 else
-                       "Running beat classification…" if _tick_val[0] < 55 else
-                       "Computing HRV metrics…" if _tick_val[0] < 75 else
-                       "Building summary…")
+                msg = ("Loading recorded data..." if _tick_val[0] < 30 else
+                       "Running beat classification..." if _tick_val[0] < 55 else
+                       "Computing HRV metrics..." if _tick_val[0] < 75 else
+                       "Building summary...")
                 status_lbl.setText(msg)
                 pct_lbl.setText(f"{_tick_val[0]}%")
         _anim_timer.timeout.connect(_tick)
@@ -9669,7 +9668,7 @@ class HolterMainWindow(QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # â”€â”€ Top title bar â”€â”€
+        #  "  "  Top title bar  "  " 
         title_bar = QFrame()
         title_bar.setStyleSheet(f"QFrame{{background:{UI_PANEL};border-bottom:1px solid {UI_BORDER};}}")
         title_bar.setFixedHeight(52)
@@ -9850,7 +9849,7 @@ class HolterMainWindow(QDialog):
             }}
         """)
 
-        # â”€â”€ OVERVIEW tab (12-lead scrollable expert view) â”€â”€
+        #  "  "  OVERVIEW tab (12-lead scrollable expert view)  "  " 
         self._expert_panel = HolterExpertReviewPanel()
         self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
         self._expert_panel.seek_requested.connect(self._on_seek_requested)
@@ -9936,7 +9935,7 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._report_table_panel, "REPORT TABLE")
 
         # Expert Review (OVERVIEW tab) already added as first tab above
-        # kept here as comment for clarity â€“ see OVERVIEW tab creation at top of tabs section
+        # kept here as comment for clarity   " see OVERVIEW tab creation at top of tabs section
 
         # HRV Analysis
         self._hrv_panel = HolterHRVPanel()

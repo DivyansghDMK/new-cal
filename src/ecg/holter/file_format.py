@@ -5,9 +5,9 @@ Binary .ecgh file format for 24-48 hour comphrensive recordings.
 
 Format:
   Header: 256 bytes (magic, version, leads, fs, timestamps, patient info)
-  Frames: 26 bytes each (12 × int16 + 2-byte frame index)
+  Frames: 26 bytes each (12 x int16 + 2-byte frame index)
 
-At 500 Hz: 12 KB/second → ~1 GB per 24 hours (uncompressed).
+At 500 Hz: 12 KB/second -> ~1 GB per 24 hours (uncompressed).
 """
 
 import struct
@@ -18,11 +18,11 @@ import numpy as np
 from typing import Optional, Dict, List, Tuple
 
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+#    Constants                                                                  
 MAGIC = b'ECGH'
 FORMAT_VERSION = 1
 HEADER_SIZE = 256
-FRAME_SIZE = 26          # 12 leads × 2 bytes + 2 byte index
+FRAME_SIZE = 26          # 12 leads x 2 bytes + 2 byte index
 LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
 FLUSH_EVERY_N_FRAMES = 2500   # flush every 5 seconds at 500 Hz
 
@@ -50,7 +50,7 @@ class ECGHFileWriter:
         self._f = open(path, 'wb')
         self._write_header()
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    #    Header                                                                 
 
     def _write_header(self):
         hdr = bytearray(HEADER_SIZE)
@@ -59,7 +59,7 @@ class ECGHFileWriter:
         struct.pack_into('>4sHHI', hdr, 0, MAGIC, FORMAT_VERSION, self.n_leads, self.fs)
         struct.pack_into('>d', hdr, 12, self.start_time)
 
-        # Lead names: 12 × 5 bytes
+        # Lead names: 12 x 5 bytes
         for idx, name in enumerate(LEAD_NAMES[:self.n_leads]):
             encoded = name.encode('ascii')[:5].ljust(5, b'\x00')
             hdr[20 + idx * 5: 20 + idx * 5 + 5] = encoded
@@ -76,10 +76,10 @@ class ECGHFileWriter:
         self._f.write(bytes(hdr))
         self._f.flush()
 
-    # ── Write packets ─────────────────────────────────────────────────────────
+    #    Write packets                                                          
 
     def write_packet(self, packet: dict):
-        """Called 500× per second from HolterStreamWriter."""
+        """Called 500x per second from HolterStreamWriter."""
         if self._closed:
             return
 

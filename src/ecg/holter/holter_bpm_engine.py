@@ -4,44 +4,44 @@ ecg/holter/holter_bpm_engine.py
 ALL Holter BPM logic in ONE file.
 
 This file consolidates every piece of the Holter BPM pipeline:
-  1.  HolterBPMCalculator  — calculates BPM from a data chunk (stateless)
-  2.  HolterBPMStore       — thread-safe store for the current live BPM
-  3.  HolterBPMWorker      — background thread: accumulates chunks, calculates, stores
-  4.  HolterBPMDisplay     — Qt widget that SHOWS the BPM (green label + REC bar)
-  5.  HolterBPMController  — wires everything together; call from any test window
+  1.  HolterBPMCalculator  -- calculates BPM from a data chunk (stateless)
+  2.  HolterBPMStore       -- thread-safe store for the current live BPM
+  3.  HolterBPMWorker      -- background thread: accumulates chunks, calculates, stores
+  4.  HolterBPMDisplay     -- Qt widget that SHOWS the BPM (green label + REC bar)
+  5.  HolterBPMController  -- wires everything together; call from any test window
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                                
 HOW BPM FLOWS (end-to-end):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                                
 
-  [Hardware Packet] ──push()──► [HolterBPMWorker queue]
-                                        │
-                         every CHUNK_SECONDS ───▼
+  [Hardware Packet]   push()    [HolterBPMWorker queue]
+                                         
+                         every CHUNK_SECONDS     
                               [HolterBPMCalculator]
-                              • bandpass Lead II (5–20 Hz)
-                              • square + moving-average envelope
-                              • find_peaks → R-peaks
-                              • rr_intervals → median RR → BPM
-                                        │
-                               stores ─▼
+                                bandpass Lead II (5--20 Hz)
+                                square + moving-average envelope
+                                find_peaks -> R-peaks
+                                rr_intervals -> median RR -> BPM
+                                         
+                               stores   
                               [HolterBPMStore._live_bpm]   (thread-safe)
-                                        │
-                        Qt timer (3 s) ─▼
+                                         
+                        Qt timer (3 s)   
                               [HolterBPMDisplay.refresh()]
-                              • reads _live_bpm from store
-                              • calls label.setText(f"{bpm:.0f}")
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                reads _live_bpm from store
+                                calls label.setText(f"{bpm:.0f}")
+                                                                
 
 USAGE in twelve_lead_test.py / hrv_test.py / hyperkalemia_test.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                                
     from ecg.holter.holter_bpm_engine import HolterBPMController
 
     # On test Start:
     self._bpm_ctrl = HolterBPMController(parent_widget=self, fs=500)
-    self._bpm_ctrl.start(target_hours=0)  # target_hours=0 → compact mode
+    self._bpm_ctrl.start(target_hours=0)  # target_hours=0 -> compact mode
     layout.addWidget(self._bpm_ctrl.display_bar)
 
-    # In packet loop (called 500× per second):
+    # In packet loop (called 500x per second):
     self._bpm_ctrl.push(packet)  # dict: {"I": val, "II": val, ...}
 
     # On test Stop:
@@ -62,13 +62,13 @@ import traceback
 import numpy as np
 from typing import Optional, List
 
-# ── PyQt5 ──────────────────────────────────────────────────────────────────────
+#    PyQt5                                                                       
 from PyQt5.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QProgressBar, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 
-# ── Lead order (must match the hardware packet dict keys) ──────────────────────
+#    Lead order (must match the hardware packet dict keys)                       
 LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF",
               "V1", "V2", "V3", "V4", "V5", "V6"]
 LEAD_II_IDX = 1          # Lead II is always index 1
@@ -88,21 +88,21 @@ COL_BG        = "#000000"
 COL_TEXT      = "#00FF00"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 # 1.  HolterBPMCalculator
 #     Pure function: given a Lead-II numpy array + fs, returns BPM (float).
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 class HolterBPMCalculator:
     """
-    Stateless helper. Call calculate(lead_ii, fs) → BPM.
+    Stateless helper. Call calculate(lead_ii, fs) -> BPM.
 
     Algorithm:
-      1. Bandpass 5–20 Hz
+      1. Bandpass 5--20 Hz
       2. Square the signal
       3. Moving-average smoothing (150 ms window)
-      4. find_peaks on the envelope → R-peaks
-      5. RR intervals → filter physiological range (200–2000 ms = 30–300 BPM)
-      6. median(RR) → BPM
+      4. find_peaks on the envelope -> R-peaks
+      5. RR intervals -> filter physiological range (200--2000 ms = 30--300 BPM)
+      6. median(RR) -> BPM
     """
 
     def __init__(self, fs: int = FS_DEFAULT):
@@ -117,7 +117,7 @@ class HolterBPMCalculator:
         try:
             from scipy.signal import butter, filtfilt, find_peaks
 
-            # Step 1 – bandpass 5–20 Hz
+            # Step 1 -- bandpass 5--20 Hz
             low  = max(0.01, min(5  / (fs / 2), 0.99))
             high = max(0.01, min(20 / (fs / 2), 0.99))
             if low >= high:
@@ -125,15 +125,15 @@ class HolterBPMCalculator:
             b, a = butter(2, [low, high], btype='band')
             filtered = filtfilt(b, a, lead_ii.astype(float))
 
-            # Step 2 – square
+            # Step 2 -- square
             squared = filtered ** 2
 
-            # Step 3 – moving-average envelope (150 ms window)
+            # Step 3 -- moving-average envelope (150 ms window)
             window   = max(1, int(0.15 * fs))
             kernel   = np.ones(window) / window
             envelope = np.convolve(squared, kernel, mode='same')
 
-            # Step 4 – find R-peaks (min_dist = 120 ms)
+            # Step 4 -- find R-peaks (min_dist = 120 ms)
             min_dist  = max(1, int(0.12 * fs))
             threshold = np.mean(envelope) * 0.4
             r_peaks, _ = find_peaks(envelope, height=threshold, distance=min_dist)
@@ -141,14 +141,14 @@ class HolterBPMCalculator:
             if len(r_peaks) < 2:
                 return 0.0
 
-            # Step 5 – RR intervals, filter 200–2000 ms
+            # Step 5 -- RR intervals, filter 200--2000 ms
             rr_ms = np.diff(r_peaks) / fs * 1000.0
             valid = rr_ms[(rr_ms >= 200) & (rr_ms <= 2000)]
 
             if len(valid) == 0:
                 return 0.0
 
-            # Step 6 – median BPM (last 12 intervals for recency)
+            # Step 6 -- median BPM (last 12 intervals for recency)
             recent = valid[-12:] if len(valid) > 12 else valid
             bpm    = 60000.0 / np.median(recent)
             return float(np.clip(round(bpm, 1), 30, 300))
@@ -158,10 +158,10 @@ class HolterBPMCalculator:
             return 0.0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 # 2.  HolterBPMStore
 #     Thread-safe container for the most recent BPM value + arrhythmia list.
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 class HolterBPMStore:
     """Shared state between the worker thread and the Qt display timer."""
 
@@ -171,7 +171,7 @@ class HolterBPMStore:
         self._arrhythmias: List[str] = []
         self._last_update: float = 0.0
 
-    # ── Writer (background thread) ────────────────────────────────────────
+    #    Writer (background thread)                                         
     def set_bpm(self, bpm: float, arrhythmias: List[str] = None):
         with self._lock:
             if bpm > 0:
@@ -183,7 +183,7 @@ class HolterBPMStore:
                 self._arrhythmias = self._arrhythmias[:10]
             self._last_update = time.time()
 
-    # ── Reader (main thread) ──────────────────────────────────────────────
+    #    Reader (main thread)                                               
     def get_bpm(self) -> float:
         with self._lock:
             return self._bpm
@@ -207,19 +207,19 @@ class HolterBPMStore:
             self._last_update = 0.0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 # 3.  HolterBPMWorker
 #     SLIDING-WINDOW design:
-#     • keeps a ring-buffer of the last WINDOW_SECONDS of Lead II data
-#     • every CALC_INTERVAL seconds, runs HolterBPMCalculator on those samples
-#     • result is stored in HolterBPMStore → display reads it every 2 s
-#     Benefit: latency to a real HR change ≈ CALC_INTERVAL (≈2 s) instead of
+#       keeps a ring-buffer of the last WINDOW_SECONDS of Lead II data
+#       every CALC_INTERVAL seconds, runs HolterBPMCalculator on those samples
+#       result is stored in HolterBPMStore -> display reads it every 2 s
+#     Benefit: latency to a real HR change   CALC_INTERVAL ( 2 s) instead of
 #              waiting for a full chunk to accumulate (was 10 s).
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 class HolterBPMWorker(threading.Thread):
     """
     Sits between the serial reader and the UI.
-    push() is called 500×/s — it ONLY writes into a ring buffer (O(1)).
+    push() is called 500x/s -- it ONLY writes into a ring buffer (O(1)).
     A separate ticker inside the thread tasks the calculator every CALC_INTERVAL.
     """
 
@@ -236,7 +236,7 @@ class HolterBPMWorker(threading.Thread):
         self.jsonl_path    = jsonl_path
         self.on_arrhythmia = on_arrhythmia
 
-        # ── Ring buffers for II, V1, V6 to support robust arrhythmia detection ──
+        #    Ring buffers for II, V1, V6 to support robust arrhythmia detection   
         self._ring_ii      = np.zeros(self.window_size, dtype=np.float32)
         self._ring_v1      = np.zeros(self.window_size, dtype=np.float32)
         self._ring_v6      = np.zeros(self.window_size, dtype=np.float32)
@@ -256,11 +256,11 @@ class HolterBPMWorker(threading.Thread):
         except Exception:
             pass
 
-    # ── Called 500× per second from the Qt main thread ────────────────────
+    #    Called 500x per second from the Qt main thread                     
     def push(self, packet: dict):
         """
         Extracts Lead II and writes into the ring buffer.
-        This is the hot path — must stay O(1) with no allocation.
+        This is the hot path -- must stay O(1) with no allocation.
         """
         val_ii = float(packet.get("II", packet.get(LEAD_NAMES[LEAD_II_IDX], 2048)))
         val_v1 = float(packet.get("V1", packet.get(LEAD_NAMES[6], 2048)))
@@ -274,7 +274,7 @@ class HolterBPMWorker(threading.Thread):
                 self._ring_count += 1
         self._total_frames += 1
 
-    # ── Thread main loop — ticker every CALC_INTERVAL seconds ─────────────
+    #    Thread main loop -- ticker every CALC_INTERVAL seconds              
     def run(self):
         print("[HolterBPMWorker] Started (sliding-window mode)")
         last_calc = 0.0
@@ -288,20 +288,20 @@ class HolterBPMWorker(threading.Thread):
                 continue
             last_calc = now
 
-            # ── Snapshot the ring buffer ───────────────────────────────────
+            #    Snapshot the ring buffer                                    
             with self._ring_lock:
                 count = self._ring_count
                 if count < min_samples:
                     continue        # not enough data yet
                 # Build a chronological slice of the ring buffer
                 if count >= self.window_size:
-                    # Buffer is full — rearrange so oldest sample is first
+                    # Buffer is full -- rearrange so oldest sample is first
                     ptr = self._ring_ptr
                     lead_ii = np.concatenate([self._ring_ii[ptr:], self._ring_ii[:ptr]]).copy()
                     lead_v1 = np.concatenate([self._ring_v1[ptr:], self._ring_v1[:ptr]]).copy()
                     lead_v6 = np.concatenate([self._ring_v6[ptr:], self._ring_v6[:ptr]]).copy()
                 else:
-                    # Buffer not yet full — just take first `count` samples
+                    # Buffer not yet full -- just take first `count` samples
                     lead_ii = self._ring_ii[:count].copy()
                     lead_v1 = self._ring_v1[:count].copy()
                     lead_v6 = self._ring_v6[:count].copy()
@@ -313,14 +313,14 @@ class HolterBPMWorker(threading.Thread):
     def stop(self):
         self._stop_evt.set()
 
-    # ── Core processing (runs in background thread) ───────────────────────
+    #    Core processing (runs in background thread)                        
     def _process(self, lead_ii: np.ndarray, lead_v1: np.ndarray = None, lead_v6: np.ndarray = None):
         start_sec = self._total_frames / self.fs
 
-        # ── Calculate BPM ─────────────────────────────────────────────────
+        #    Calculate BPM                                                  
         bpm = self._calculator.calculate(lead_ii, fs=self.fs)
 
-        # ── Detect arrhythmias ────────────────────────────────────────────
+        #    Detect arrhythmias                                             
         arrhythmias = []
         if self._arrhy_detector is not None and bpm > 0:
             try:
@@ -354,17 +354,17 @@ class HolterBPMWorker(threading.Thread):
             except Exception:
                 pass
 
-        # ── Push to store ─────────────────────────────────────────────────
+        #    Push to store                                                  
         self.store.set_bpm(bpm, arrhythmias)
 
-        # ── Optional arrhythmia callback ──────────────────────────────────
+        #    Optional arrhythmia callback                                   
         if arrhythmias and self.on_arrhythmia:
             try:
                 self.on_arrhythmia(arrhythmias, start_sec)
             except Exception:
                 pass
 
-        # ── Optional JSONL logging ─────────────────────────────────────────
+        #    Optional JSONL logging                                          
         if self.jsonl_path:
             try:
                 with open(self.jsonl_path, 'a') as f:
@@ -380,17 +380,17 @@ class HolterBPMWorker(threading.Thread):
             print(f"[HolterBPMWorker] t={start_sec:.0f}s | BPM={bpm:.0f} | Arrhy={arrhythmias}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 # 4.  HolterBPMDisplay
-#     Qt widget: a compact status bar that shows  ● REC | HH:MM:SS | ♥ BPM
+#     Qt widget: a compact status bar that shows    REC | HH:MM:SS |   BPM
 #     Reads from HolterBPMStore every 3 seconds via a QTimer.
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 class HolterBPMDisplay(QFrame):
     """
     Drop-in status bar widget.
 
     Shows:
-        ● REC  |  HH:MM:SS  |  ♥ BPM: 72  |  Events: …  [Stop]
+          REC  |  HH:MM:SS  |    BPM: 72  |  Events: ...  [Stop]
 
     BPM is refreshed every 3 seconds from HolterBPMStore (no UI jitter).
     """
@@ -416,7 +416,7 @@ class HolterBPMDisplay(QFrame):
         self._build_ui()
         self._start_timers()
 
-    # ── Build the bar ──────────────────────────────────────────────────────
+    #    Build the bar                                                       
     def _build_ui(self):
         self.setFixedHeight(48)
         self.setStyleSheet(f"background: {COL_BLACK}; border-bottom: 2px solid {COL_GREEN};")
@@ -426,7 +426,7 @@ class HolterBPMDisplay(QFrame):
         layout.setSpacing(12)
 
         # REC indicator
-        self._rec_lbl = QLabel("● REC")
+        self._rec_lbl = QLabel("  REC")
         self._rec_lbl.setStyleSheet(f"color: {COL_GREEN}; font-size: 15px; font-weight: bold;")
         layout.addWidget(self._rec_lbl)
 
@@ -447,7 +447,7 @@ class HolterBPMDisplay(QFrame):
         lbl = QLabel("BPM:")
         lbl.setStyleSheet(f"color: {COL_GREEN}; font-size: 13px; font-weight: bold;")
         layout.addWidget(lbl)
-        self._bpm_lbl = QLabel("—")
+        self._bpm_lbl = QLabel("--")
         self._bpm_lbl.setStyleSheet(f"color: {COL_GREEN}; font-size: 20px; font-weight: bold; font-family: monospace;")
         self._bpm_lbl.setMinimumWidth(55)
         layout.addWidget(self._bpm_lbl)
@@ -484,7 +484,7 @@ class HolterBPMDisplay(QFrame):
             self._progress = None
 
         # Stop button
-        stop_btn = QPushButton("■ Stop")
+        stop_btn = QPushButton("  Stop")
         stop_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {COL_GREEN_DRK};
@@ -509,7 +509,7 @@ class HolterBPMDisplay(QFrame):
         s.setStyleSheet(f"color: {COL_GREEN_DRK}; font-size: 14px;")
         return s
 
-    # ── Timers ─────────────────────────────────────────────────────────────
+    #    Timers                                                              
     def _start_timers(self):
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._blink)
@@ -519,14 +519,14 @@ class HolterBPMDisplay(QFrame):
         self._clock_timer.timeout.connect(self._update_clock)
         self._clock_timer.start(1000)
 
-        # ★ BPM refresh — reads from store every 2 s (Qt main thread only)
+        #   BPM refresh -- reads from store every 2 s (Qt main thread only)
         self._bpm_timer = QTimer(self)
         self._bpm_timer.timeout.connect(self._refresh_bpm)
         self._bpm_timer.start(2000)
 
-    # ── ★ BPM refresh ─────────────────────────────────────────────────────
+    #      BPM refresh                                                      
     def _refresh_bpm(self):
-        """Called every 3 s. Reads from HolterBPMStore — zero blocking."""
+        """Called every 3 s. Reads from HolterBPMStore -- zero blocking."""
         snap = self._store.get_snapshot()
 
         bpm = snap['bpm']
@@ -554,7 +554,7 @@ class HolterBPMDisplay(QFrame):
         if self._progress:
             self._progress.setValue(elapsed)
 
-    # ── Cleanup ────────────────────────────────────────────────────────────
+    #    Cleanup                                                             
     def cleanup(self):
         for t in (self._blink_timer, self._clock_timer, self._bpm_timer):
             try:
@@ -562,26 +562,26 @@ class HolterBPMDisplay(QFrame):
             except Exception:
                 pass
 
-    # ── Read latest BPM without touching Qt directly ────────────────────────
+    #    Read latest BPM without touching Qt directly                         
     def current_bpm(self) -> float:
         return self._store.get_bpm()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 # 5.  HolterBPMController
 #     ONE class to import everywhere. Wires store + worker + display.
-# ══════════════════════════════════════════════════════════════════════════════
+#                                                                               
 class HolterBPMController:
     """
     Single entry-point for all Holter BPM logic.
 
     Works for:
-      • twelve_lead_test.py  (continuous, many packets/sec)
-      • hrv_test.py          (5-minute short window)
-      • hyperkalemia_test.py (30-second short window)
+        twelve_lead_test.py  (continuous, many packets/sec)
+        hrv_test.py          (5-minute short window)
+        hyperkalemia_test.py (30-second short window)
 
     Usage:
-    ──────
+          
         from ecg.holter.holter_bpm_engine import HolterBPMController
 
         # On Start:
@@ -617,7 +617,7 @@ class HolterBPMController:
         self._worker: Optional[HolterBPMWorker]  = None
         self.display_bar: Optional[HolterBPMDisplay] = None
 
-    # ── Lifecycle ──────────────────────────────────────────────────────────
+    #    Lifecycle                                                           
     def start(self,
               target_hours: int = 0,
               jsonl_path: str = ""):
@@ -654,7 +654,7 @@ class HolterBPMController:
 
         print("[HolterBPMController] Stopped")
 
-    # ── Data input (called 500×/s from Qt main thread) ─────────────────────
+    #    Data input (called 500x/s from Qt main thread)                      
     def push(self, packet: dict):
         """
         Forward a hardware packet to the worker's accumulation buffer.
@@ -663,7 +663,7 @@ class HolterBPMController:
         if self._worker is not None and self._worker.is_alive():
             self._worker.push(packet)
 
-    # ── Read current BPM ──────────────────────────────────────────────────
+    #    Read current BPM                                                   
     def current_bpm(self) -> float:
         """Returns the most recently calculated BPM (thread-safe)."""
         return self.store.get_bpm()

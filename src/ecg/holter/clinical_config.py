@@ -229,7 +229,7 @@ class ClinicalConfig:
 def _load_yaml_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
         _logger.warning(
-            "[ClinicalConfig] clinical_config.yaml NOT FOUND at %s — "
+            "[ClinicalConfig] clinical_config.yaml NOT FOUND at %s -- "
             "using Python hardcoded defaults. Arrhythmia detection thresholds "
             "may differ from expected clinical values.",
             path,
@@ -239,12 +239,12 @@ def _load_yaml_config(path: Path) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
         if not isinstance(data, dict):
-            _logger.warning("[ClinicalConfig] clinical_config.yaml is not a valid mapping — using defaults.")
+            _logger.warning("[ClinicalConfig] clinical_config.yaml is not a valid mapping -- using defaults.")
             return {}
         _logger.info("[ClinicalConfig] Loaded clinical_config.yaml from %s", path)
         return data
     except Exception as exc:
-        _logger.error("[ClinicalConfig] Failed to load clinical_config.yaml: %s — using defaults.", exc)
+        _logger.error("[ClinicalConfig] Failed to load clinical_config.yaml: %s -- using defaults.", exc)
         return {}
 
 

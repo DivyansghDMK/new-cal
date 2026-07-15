@@ -252,7 +252,7 @@ class AddEventDialog(QDialog):
         self.chest_from_combo.addItems(self.LEADS)
         self.chest_from_combo.setCurrentText("I")
         
-        swap_btn = QPushButton("⇄")
+        swap_btn = QPushButton(" ")
         swap_btn.setFixedSize(30, 26)
         
         self.chest_to_combo = QComboBox()
@@ -452,7 +452,7 @@ class AddEventDialog(QDialog):
                 border-color: #28E37B;
             }}
             QCheckBox::indicator:checked::after {{
-                content: "✓";
+                content: " ";
                 color: #0C1320;
                 font-weight: bold;
             }}
