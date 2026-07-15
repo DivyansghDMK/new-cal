@@ -1,4 +1,4 @@
-"""
+﻿"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -3264,7 +3264,7 @@ class ECGStripCanvas(QWidget):
                 start_idx, end_idx, color = colored_intervals[current_interval_idx]
                 if start_idx <= i <= end_idx:
                     active_pen = QPen(QColor(color))
-                    active_pen.setWidthF(self._pen_width * 1.5)
+                    active_pen.setWidthF(self._pen_width * 3.0)
             
             painter.setPen(active_pen)
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
@@ -3968,10 +3968,8 @@ class HolterExpertReviewPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        self._rr_trend_full = HolterRRTrendCanvas(title="RR Interval Trend (Full)")
-        self._rr_trend_zoom = HolterRRTrendCanvas(title="RR Interval Trend (Recent)")
+        self._rr_trend_full = HolterRRTrendCanvas(title="RR Interval Trend (Full Recording)")
         layout.addWidget(self._rr_trend_full)
-        layout.addWidget(self._rr_trend_zoom)
 
         body = QSplitter(Qt.Horizontal)
         body.setChildrenCollapsible(False)
@@ -4093,22 +4091,9 @@ class HolterExpertReviewPanel(QWidget):
         start_epoch = summary.get("start_time_epoch", None)
         self._rr_trend_full.set_points(rr_points, start_epoch)
         
-        # Recent is the last 4 hours (14400 seconds)
-        if rr_points:
-            t_max = rr_points[-1][0]
-            recent = [p for p in rr_points if p[0] >= t_max - 14400]
-            if not recent:
-                recent = rr_points[-4000:]
-        else:
-            recent = []
-            
-        self._rr_trend_zoom.set_points(recent, start_epoch)
-        
-        if recent and rr_points:
-            self._rr_trend_full.set_selection(recent[0][0], recent[-1][0])
-            
-        x = [p[1] for p in recent[:-1]] if len(recent) > 1 else []
-        y = [p[1] for p in recent[1:]] if len(recent) > 1 else []
+        # Update Lorenz plot with all RR intervals from the full recording
+        x = [p[1] for p in rr_points[:-1]] if len(rr_points) > 1 else []
+        y = [p[1] for p in rr_points[1:]] if len(rr_points) > 1 else []
         self._lorenz.set_data(x, y)
 
         tm = {}
@@ -4332,7 +4317,7 @@ class HolterEventsPanel(QWidget):
             t_str = _sec_to_hms(ev['timestamp'])
             source = ev.get("source", "analysis")
             conf = ev.get("confidence", 0.0)
-            for j, val in enumerate([ev['label'], t_str, "3", "7s", source, f"{float(conf or 0.0):.2f}"]):
+            for j, val in enumerate([ev['label'], t_str, "12", "7s", source, f"{float(conf or 0.0):.2f}"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
@@ -5825,7 +5810,7 @@ class HolterRecordManagementPanel(QWidget):
             except Exception:
                 pass
 
-            row_values = [p_name, age, gender, rec_time, dur_str, "3", rec_time, "Completed", "System", "-"]
+            row_values = [p_name, age, gender, rec_time, dur_str, "12", rec_time, "Completed", "System", "-"]
             if query and not any(query in str(v).lower() for v in row_values): continue
             rows.append((row_values, session_dir))
 
@@ -6010,11 +5995,16 @@ class HolterRecordManagementPanel(QWidget):
 class HolterLorenzPanel(QWidget):
     seek_requested = pyqtSignal(float)
 
-    def __init__(self, parent=None, duration_sec: float = 86400):
+    def __init__(self, parent=None, duration_sec: float = 86400, replay_engine=None):
         super().__init__(parent)
         self.duration_sec = duration_sec
+        self.replay_engine = replay_engine
         self.setStyleSheet(f"background:{COL_BG};")
         self._metrics_list = []
+        self._all_beat_data = []  # Store (time, rr, beat_class, metric_ref) for beat selection
+        self._current_replay_data = None  # Store current 12-lead frame for beat selection display
+        self._current_replay_start_sec = 0.0
+        self._current_replay_beat_annotations = None
         self._build_ui()
 
     def _build_ui(self):
@@ -6022,14 +6012,11 @@ class HolterLorenzPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        # Top Section: Two RR Trend Canvases
-        self.trend1 = HolterRRTrendCanvas(self, title="RR Trend 1")
-        self.trend1.setFixedHeight(120)
-        self.trend2 = HolterRRTrendCanvas(self, title="RR Trend 2")
-        self.trend2.setFixedHeight(120)
+        # Top Section: Single RR Trend Canvas for Full Recording
+        self.rr_trend_canvas = HolterRRTrendCanvas(self, title="RR Trend (Full Recording)")
+        self.rr_trend_canvas.setFixedHeight(120)
         
-        layout.addWidget(self.trend1)
-        layout.addWidget(self.trend2)
+        layout.addWidget(self.rr_trend_canvas)
 
         # Middle Section Splitter
         mid_splitter = QSplitter(Qt.Horizontal)
@@ -6043,6 +6030,7 @@ class HolterLorenzPanel(QWidget):
         self.lorenz_canvas.beats_selected.connect(self._on_beats_selected)
         self.lorenz_canvas.beats_reclassified.connect(self._on_beats_reclassified)
         self.lorenz_canvas.beats_deleted.connect(self._on_beats_deleted)
+        self.lorenz_canvas.setFixedHeight(350)
         l_layout.addWidget(self.lorenz_canvas)
 
         # Single row of beat-filter buttons (same as before)
@@ -6061,42 +6049,53 @@ class HolterLorenzPanel(QWidget):
         self._pixel_cycle = [2, 3, 5]
         self._pixel_idx   = 1
 
-
         mid_splitter.addWidget(lorenz_container)
         
-        # Right side of mid splitter: Template Grid
-        template_container = QWidget()
-        t_layout = QVBoxLayout(template_container)
-        t_layout.setContentsMargins(0,0,0,0)
+        # Right side of mid splitter: 12-Lead ECG Grid (3 columns × 4 rows)
+        leads_container = QWidget()
+        leads_container.setStyleSheet(f"background:{COL_BLACK};border:1px solid {UI_BORDER};border-radius:6px;")
+        leads_layout = QVBoxLayout(leads_container)
+        leads_layout.setContentsMargins(4, 4, 4, 4)
+        leads_layout.setSpacing(2)
         
+        # Create 12-lead grid: 4 rows × 3 columns
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(2)
-        for i, num in enumerate([1, 2, 4, 5]):
-            frame = QFrame()
-            frame.setStyleSheet(f"border: 1px solid {UI_BORDER}; background: black;")
-            lbl = QLabel(f"#{num}")
-            lbl.setStyleSheet("color: white; border: none;")
-            lbl.setAlignment(Qt.AlignTop | Qt.AlignRight)
-            fl = QVBoxLayout(frame)
-            fl.setContentsMargins(2,2,2,2)
-            fl.addWidget(lbl)
-            grid_layout.addWidget(frame, i//2, i%2)
-        t_layout.addLayout(grid_layout)
+        grid_layout.setSpacing(10)
+        grid_layout.setContentsMargins(6, 6, 6, 6)
         
-        # Toolbar under grid (placeholders)
-        tool_layout = QHBoxLayout()
-        for i in range(8):
-            btn = QPushButton("[]")
-            btn.setFixedSize(24, 24)
-            btn.setStyleSheet(_style_btn())
-            tool_layout.addWidget(btn)
-        tool_layout.addStretch()
-        t_layout.addLayout(tool_layout)
+        self._lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        self._lead_strips = {}  # Dictionary to store ECG strip canvases by lead name
         
-        mid_splitter.addWidget(template_container)
+        for idx, lead_name in enumerate(self._lead_names):
+            row = idx // 3  # 0-3 (4 rows)
+            col = idx % 3   # 0-2 (3 columns)
+            
+            # Create a frame for each lead
+            lead_frame = QFrame()
+            lead_frame.setStyleSheet(f"background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:4px;")
+            lead_frame_layout = QVBoxLayout(lead_frame)
+            lead_frame_layout.setContentsMargins(2, 2, 2, 2)
+            lead_frame_layout.setSpacing(1)
+            
+            # Lead label
+            lead_label = QLabel(lead_name)
+            lead_label.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
+            lead_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            lead_frame_layout.addWidget(lead_label)
+            
+            # ECG strip canvas for this lead - with show_annotations=False to hide N labels and numbers
+            strip = ECGStripCanvas(height=60, color=COL_GREEN, pen_width=0.8, lead_name=lead_name, show_vertical_lines=False, show_annotations=False)
+            strip.set_gain(1.0)
+            self._lead_strips[lead_name] = strip
+            lead_frame_layout.addWidget(strip)
+            
+            grid_layout.addWidget(lead_frame, row, col)
+        
+        leads_layout.addLayout(grid_layout)
+        mid_splitter.addWidget(leads_container)
 
-        lorenz_container.setMaximumWidth(700)
-        mid_splitter.setSizes([500, 1000])
+        lorenz_container.setMaximumWidth(450)
+        mid_splitter.setSizes([400, 1200])
         mid_splitter.setStretchFactor(0, 0)
         mid_splitter.setStretchFactor(1, 1)
         
@@ -6156,8 +6155,7 @@ class HolterLorenzPanel(QWidget):
         if self._metrics_list:
             start_epoch = self._metrics_list[0].get('timestamp')
             
-        self.trend1.set_points(pts, start_epoch)
-        self.trend2.set_points(pts, start_epoch)
+        self.rr_trend_canvas.set_points(pts, start_epoch)
         
         rr_n = [r for r, c in zip(rr_all, rr_classes) if r > 200]
         rr_n_classes = [c for r, c in zip(rr_all, rr_classes) if r > 200]
@@ -6181,14 +6179,124 @@ class HolterLorenzPanel(QWidget):
         else:
             self.lorenz_canvas.set_data([], [])
 
-    def set_replay_frame(self, data):
+    def set_replay_frame(self, data, beat_annotations=None, start_sec=0.0):
+        """Store the current 12-lead frame data and display if beats are selected."""
         if data is None or data.shape[0] < 1:
             return
+        
+        # Store the current 12-lead data and timing info
+        self._current_replay_data = data.copy() if hasattr(data, 'copy') else data
+        self._current_replay_start_sec = start_sec
+        self._current_replay_beat_annotations = beat_annotations
+        
+        # If beats were just selected, update the 12-lead strips with this data
+        if getattr(self, '_beats_selected_for_display', False):
+            self._beats_selected_for_display = False
+            
+            selected_beat_class = getattr(self, '_selected_beat_class', 'N')
+            
+            # Color mapping for arrhythmia types
+            color_map = {
+                "N":     "#00d215",  # Green
+                "S":     "#ff3333",  # Red
+                "V":     "#ff9900",  # Orange
+                "P":     "#00e5ff",  # Cyan
+                "AF":    "#ffd700",  # Gold
+                "X":     "#888888",  # Gray
+                "Other": "#00d215",  # Green
+            }
+            qrs_color = color_map.get(selected_beat_class, color_map["N"])
+            
+            print(f"DEBUG: Displaying 12-lead data for beat class: {selected_beat_class}, QRS color: {qrs_color}")
+            
+            if data.shape[0] >= 12:
+                # Create time axis (assuming 500 Hz sampling rate)
+                fs = 500  # Hz
+                n_samples = data.shape[1]
+                time_axis = np.linspace(0, n_samples / fs, n_samples)
+                
+                # Detect R-peaks in lead II and create beat annotations for highlighting
+                r_peaks_ts = self._detect_qrs_peaks(data, fs=fs, start_sec=start_sec)
+                
+                # Create beat annotations for each detected R-peak with the anomaly color
+                peak_annotations = []
+                for peak_ts in r_peaks_ts:
+                    peak_annotations.append({
+                        'timestamp': peak_ts,
+                        'label': selected_beat_class,
+                        'color': qrs_color
+                    })
+                
+                print(f"DEBUG: set_replay_frame - Found {len(peak_annotations)} R-peaks, Loading {len(self._lead_names)} leads")
+                
+                # Display data in each lead strip
+                for idx, lead_name in enumerate(self._lead_names):
+                    if idx < data.shape[0]:
+                        strip = self._lead_strips[lead_name]
+                        lead_signal = data[idx]
+                        
+                        # Set the data with beat annotations for QRS coloring
+                        strip.set_data(time_axis, lead_signal, beat_annotations=peak_annotations, start_sec=start_sec)
+                        
+                        # Keep normal green color for the base waveform (QRS peaks will be colored by annotations)
+                        strip.color = "#00d215"
+                        strip.pen_width = 0.8
+                        strip.update()
+                
+                print(f"DEBUG: set_replay_frame - Successfully updated all {len(self._lead_names)} lead strips with QRS highlighting")
+            else:
+                print(f"DEBUG: set_replay_frame - data.shape[0]={data.shape[0]} is less than 12 leads")
+        
+        # Always update the bottom ECG strip
         N = data.shape[1]
         x = np.linspace(0, N / 500.0, N) if N > 0 else []
         if N > 0:
             ch_idx = 1 if data.shape[0] > 1 else 0
             self.ecg_canvas.set_data(x, data[ch_idx].copy())
+    
+    def _detect_qrs_peaks(self, data, fs=500, start_sec=0.0):
+        """Detect QRS/R-peaks in the ECG data using lead II and return timestamps."""
+        try:
+            from scipy.signal import find_peaks
+            
+            # Use lead II (index 1) for peak detection - it typically has the most prominent R-peak
+            lead_idx = 1 if data.shape[0] > 1 else 0
+            signal = np.asarray(data[lead_idx], dtype=float)
+            
+            # Normalize signal for better peak detection
+            sig_mean = np.mean(signal)
+            sig_std = np.std(signal)
+            if sig_std > 0:
+                normalized = (signal - sig_mean) / sig_std
+            else:
+                normalized = signal - sig_mean
+            
+            # Find peaks with:
+            # - Minimum distance of 300ms (150 samples at 500Hz) between R-peaks
+            # - Height threshold above 0.5 standard deviations
+            # - Prominence to avoid false positives
+            min_distance = int(0.3 * fs)  # 300ms minimum between R-peaks
+            peaks, properties = find_peaks(
+                normalized,
+                distance=min_distance,
+                height=0.5,
+                prominence=0.3
+            )
+            
+            # Convert peak indices to timestamps
+            peak_times = []
+            for peak_idx in peaks:
+                ts = start_sec + (peak_idx / fs)
+                peak_times.append(ts)
+            
+            print(f"DEBUG: _detect_qrs_peaks - Found {len(peak_times)} peaks in lead {lead_idx}")
+            return peak_times
+            
+        except Exception as e:
+            print(f"DEBUG: Error detecting QRS peaks: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     # ─── View / display toggle helpers ────────────────────────────────────────
 
@@ -6226,14 +6334,62 @@ class HolterLorenzPanel(QWidget):
     # ─── Signal handlers from LorenzCanvas ────────────────────────────────────
 
     def _on_beats_selected(self, indices):
-        """Highlight selected beats on ECG strip (seek to median time)."""
-        if not indices or not self.lorenz_canvas._all_rr_points:
+        """Display 12-lead ECG for selected beats or clear if no beats selected."""
+        # If no beats are selected (empty click), clear the waveforms
+        if not indices:
+            print("DEBUG: Empty space clicked - clearing waveforms")
+            self._clear_12lead_displays()
             return
+        
+        if not self.lorenz_canvas._all_rr_points:
+            return
+        
         pts = self.lorenz_canvas._all_rr_points
         times = [pts[i][0] for i in indices if i < len(pts)]
-        if times:
-            target_t = float(np.median(times))
-            self.seek_requested.emit(target_t)
+        beat_classes = [pts[i][2] for i in indices if i < len(pts)]
+        
+        if not times:
+            return
+        
+        # Store which beat class is selected for use when data arrives
+        self._selected_beat_class = beat_classes[0] if beat_classes else "N"
+        self._beats_selected_for_display = True
+        
+        # Use median time to display ECG window
+        target_t = float(np.median(times))
+        
+        print(f"DEBUG: Beats selected at time {target_t}, beat class: {self._selected_beat_class}")
+        
+        # Emit seek signal to trigger data broadcast
+        self.seek_requested.emit(target_t)
+    
+    def _clear_12lead_displays(self):
+        """Clear all 12-lead waveform displays by showing flatlines instead of disappearing."""
+        fs = 500  # Hz
+        # Create a short flatline signal (5 seconds at baseline)
+        window_sec = 5.0
+        n_samples = int(fs * window_sec)
+        time_axis = np.linspace(0, window_sec, n_samples)
+        
+        # Create flatline signal (constant baseline value)
+        flatline = np.full(n_samples, 2048.0)  # Baseline value for most leads
+        
+        for lead_name in self._lead_names:
+            strip = self._lead_strips[lead_name]
+            
+            # Special case for aVR which has different baseline
+            if lead_name == "aVR":
+                signal = np.full(n_samples, -2048.0)  # Baseline for aVR
+            else:
+                signal = flatline.copy()
+            
+            # Set the flatline data
+            strip.set_data(time_axis, signal)
+            
+            # Keep normal green color
+            strip.color = "#00d215"
+            strip.pen_width = 0.8
+            strip.update()
 
     def _on_beats_reclassified(self, indices, new_class):
         """Reclassification is already applied directly in LorenzCanvas._beat_classes;
@@ -6278,9 +6434,9 @@ class HolterHistogramPanel(QWidget):
         layout.setSpacing(6)
 
         title_row = QHBoxLayout()
-        title = QLabel("Histogram - RR Interval Distribution")
-        title.setStyleSheet(f"color:{COL_GREEN};font-size:14px;font-weight:bold;border:none;")
-        title_row.addWidget(title, 1)
+        self._title_label = QLabel("Histogram - RR Interval Distribution")
+        self._title_label.setStyleSheet(f"color:{COL_GREEN};font-size:14px;font-weight:bold;border:none;")
+        title_row.addWidget(self._title_label, 1)
         self._type_combo = QComboBox()
         self._type_combo.addItems(["RR Interval", "Heart Rate", "RRI Ratio"])
         self._type_combo.setStyleSheet(f"""
@@ -6292,7 +6448,7 @@ class HolterHistogramPanel(QWidget):
                 background:{COL_DARK}; color:white; selection-background-color:{COL_GREEN_DRK};
             }}
         """)
-        self._type_combo.currentTextChanged.connect(lambda _: self._draw())
+        self._type_combo.currentTextChanged.connect(self._on_type_changed)
         title_row.addWidget(self._type_combo)
         layout.addLayout(title_row)
 
@@ -6350,6 +6506,16 @@ class HolterHistogramPanel(QWidget):
             btn.setChecked(active)
             btn.setStyleSheet(_style_active_btn() if active else _style_btn())
         self._draw()
+    
+    def _on_type_changed(self, text):
+        """Update title label when histogram type changes."""
+        if text == "RR Interval":
+            self._title_label.setText("Histogram - RR Interval Distribution")
+        elif text == "Heart Rate":
+            self._title_label.setText("Histogram - Heart Rate Distribution")
+        elif text == "RRI Ratio":
+            self._title_label.setText("Histogram - RRI Ratio Distribution")
+        self._draw()
 
     def update_from_metrics(self, metrics_list: list):
         self._metrics = list(metrics_list or [])
@@ -6396,16 +6562,61 @@ class HolterHistogramPanel(QWidget):
         rr_arr = np.array(rr_vals, dtype=float)
         median_rr = float(np.median(rr_arr)) if rr_arr.size else 0.0
         mean_rr = float(np.mean(rr_arr)) if rr_arr.size else 0.0
-        if self._rank_mode == 'time':
-            ranked = sorted(points, key=lambda x: x['t'])
-        elif self._rank_mode == 'prematurity':
-            ranked = sorted(points, key=lambda x: max(0.0, mean_rr - x['rr']), reverse=True)
-        elif self._rank_mode == 'similarity':
-            ranked = sorted(points, key=lambda x: abs(x['rr'] - median_rr))
+        
+        # Get selected histogram type from dropdown
+        hist_type = self._type_combo.currentText()
+        
+        # Transform data based on histogram type
+        if hist_type == "Heart Rate":
+            # Convert RR intervals (ms) to Heart Rate (bpm): HR = 60000 / RR_ms
+            for p in points:
+                if p['rr'] > 0:
+                    p['hr'] = 60000.0 / p['rr']
+                else:
+                    p['hr'] = 0.0
+            # Rank by heart rate instead of RR
+            if self._rank_mode == 'time':
+                ranked = sorted(points, key=lambda x: x['t'])
+            elif self._rank_mode == 'prematurity':
+                mean_hr = 60000.0 / mean_rr if mean_rr > 0 else 0.0
+                ranked = sorted(points, key=lambda x: abs(x.get('hr', 0) - mean_hr), reverse=True)
+            elif self._rank_mode == 'similarity':
+                median_hr = 60000.0 / median_rr if median_rr > 0 else 0.0
+                ranked = sorted(points, key=lambda x: abs(x.get('hr', 0) - median_hr))
+            else:
+                ranked = sorted(points, key=lambda x: x.get('hr', 0), reverse=True)
+        elif hist_type == "RRI Ratio":
+            # RRI Ratio = current RR / previous RR
+            for i, p in enumerate(points):
+                if i > 0:
+                    prev_rr = points[i-1]['rr']
+                    if prev_rr > 0:
+                        p['rri_ratio'] = p['rr'] / prev_rr
+                    else:
+                        p['rri_ratio'] = 1.0
+                else:
+                    p['rri_ratio'] = 1.0
+            # Rank by RRI ratio
+            if self._rank_mode == 'time':
+                ranked = sorted(points, key=lambda x: x['t'])
+            elif self._rank_mode == 'prematurity':
+                ranked = sorted(points, key=lambda x: abs(x.get('rri_ratio', 1.0) - 1.0), reverse=True)
+            elif self._rank_mode == 'similarity':
+                ranked = sorted(points, key=lambda x: abs(x.get('rri_ratio', 1.0) - 1.0))
+            else:
+                ranked = sorted(points, key=lambda x: x.get('rri_ratio', 1.0), reverse=True)
         else:
-            ranked = sorted(points, key=lambda x: x['rr'], reverse=True)
+            # Default: RR Interval
+            if self._rank_mode == 'time':
+                ranked = sorted(points, key=lambda x: x['t'])
+            elif self._rank_mode == 'prematurity':
+                ranked = sorted(points, key=lambda x: max(0.0, mean_rr - x['rr']), reverse=True)
+            elif self._rank_mode == 'similarity':
+                ranked = sorted(points, key=lambda x: abs(x['rr'] - median_rr))
+            else:
+                ranked = sorted(points, key=lambda x: x['rr'], reverse=True)
 
-        self._hist_canvas.set_histogram_data(ranked, mode=self._rank_mode)
+        self._hist_canvas.set_histogram_data(ranked, mode=self._rank_mode, data_type=hist_type)
 
         self._hist_stats['nns'].setText(str(len(rr_arr)))
         self._hist_stats['mean_nn'].setText(f"{rr_arr.mean():.0f} ms")
@@ -6478,20 +6689,23 @@ class HistogramCanvas(QWidget):
     def set_ranked_data(self, ranked_points, mode: str = 'rri'):
         self.set_histogram_data(ranked_points, mode=mode)
 
-    def set_histogram_data(self, items, mode: str = 'rri'):
+    def set_histogram_data(self, items, mode: str = 'rri', data_type: str = 'RR Interval'):
         self._mode = mode
+        self._data_type = data_type  # Store data type for histogram building
         normalized = []
         for item in items or []:
             if isinstance(item, dict):
                 normalized.append({
                     't': float(item.get('t', 0.0) or 0.0),
                     'rr': float(item.get('rr', 0.0) or 0.0),
+                    'hr': float(item.get('hr', 0.0) or 0.0),
+                    'rri_ratio': float(item.get('rri_ratio', 1.0) or 1.0),
                     'label': str(item.get('label', '')),
                 })
             else:
                 try:
                     t, rr = item
-                    normalized.append({'t': float(t), 'rr': float(rr), 'label': ''})
+                    normalized.append({'t': float(t), 'rr': float(rr), 'hr': 0.0, 'rri_ratio': 1.0, 'label': ''})
                 except Exception:
                     continue
         self._items = normalized
@@ -6507,13 +6721,30 @@ class HistogramCanvas(QWidget):
         return QColor('#2F80ED'), QColor('#66A3FF')
 
     def _build_histogram(self):
-        values = [float(item['rr']) for item in self._items if float(item.get('rr', 0.0) or 0.0) > 0]
+        # Extract values based on data type
+        data_type = getattr(self, '_data_type', 'RR Interval')
+        
+        if data_type == 'Heart Rate':
+            values = [float(item['hr']) for item in self._items if float(item.get('hr', 0.0) or 0.0) > 0]
+        elif data_type == 'RRI Ratio':
+            values = [float(item['rri_ratio']) for item in self._items if 0.1 < float(item.get('rri_ratio', 1.0) or 1.0) < 3.0]
+        else:
+            # Default: RR Interval
+            values = [float(item['rr']) for item in self._items if float(item.get('rr', 0.0) or 0.0) > 0]
+        
         if not values:
             self._bins = []
             self._bin_edges = []
             self._bin_payloads = []
+            self._min_value = 0.0
+            self._max_value = 0.0
             return np.array([]), np.array([])
         arr = np.asarray(values, dtype=float)
+        
+        # Store min/max for later use in paintEvent
+        self._min_value = float(np.min(arr))
+        self._max_value = float(np.max(arr))
+        
         if arr.size < 2:
             self._bins = [(arr[0], arr[0] + 1.0, 1)]
             self._bin_edges = [arr[0], arr[0] + 1.0]
@@ -6580,7 +6811,7 @@ class HistogramCanvas(QWidget):
         hist, edges = self._build_histogram()
         if hist.size == 0:
             painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-            painter.drawText(self.rect(), Qt.AlignCenter, 'No RR data')
+            painter.drawText(self.rect(), Qt.AlignCenter, 'No data')
             return
 
         counts = hist.astype(int).tolist()
@@ -6588,9 +6819,9 @@ class HistogramCanvas(QWidget):
         if max_count <= 0:
             max_count = 1
 
-        values = [float(item['rr']) for item in self._items if float(item.get('rr', 0.0) or 0.0) > 0]
-        min_rr = float(min(values))
-        max_rr = float(max(values))
+        # Use stored min/max values from _build_histogram
+        min_rr = getattr(self, '_min_value', 0.0)
+        max_rr = getattr(self, '_max_value', 0.0)
 
         painter.setPen(QPen(QColor('#22324B'), 1))
         for frac in (0.25, 0.5, 0.75):
@@ -6640,10 +6871,29 @@ class HistogramCanvas(QWidget):
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
         painter.drawText(left, 14, x_label_left)
         painter.drawText(w - 118, 14, x_label_right)
-        painter.drawText(left, h - 5, f'{min_rr:.0f} ms')
-        painter.drawText(w - 70, h - 5, f'{max_rr:.0f} ms')
-        painter.setPen(QPen(QColor(UI_MUTED)))
-        painter.drawText(left + 110, 14, f'RR Interval Range {min_rr:.0f}-{max_rr:.0f} ms')
+        
+        # Get data type and display appropriate labels
+        data_type = getattr(self, '_data_type', 'RR Interval')
+        
+        if data_type == 'Heart Rate':
+            painter.drawText(left, h - 5, f'{min_rr:.0f} bpm')
+            painter.drawText(w - 70, h - 5, f'{max_rr:.0f} bpm')
+            painter.setPen(QPen(QColor(UI_MUTED)))
+            painter.drawText(left + 110, 14, f'Heart Rate Range {min_rr:.0f}-{max_rr:.0f} bpm')
+        elif data_type == 'RRI Ratio':
+            painter.drawText(left, h - 5, f'{min_rr:.2f}')
+            painter.drawText(w - 70, h - 5, f'{max_rr:.2f}')
+            painter.setPen(QPen(QColor(UI_MUTED)))
+            painter.drawText(left + 110, 14, f'RRI Ratio Range {min_rr:.2f}-{max_rr:.2f}')
+        else:
+            # Default: RR Interval
+            painter.drawText(left, h - 5, f'{min_rr:.0f} ms')
+            painter.drawText(w - 70, h - 5, f'{max_rr:.0f} ms')
+            painter.setPen(QPen(QColor(UI_MUTED)))
+            painter.drawText(left + 110, 14, f'RR Interval Range {min_rr:.0f}-{max_rr:.0f} ms')
+
+
+# -----------------------------------------------------------------------------        
 # 12. AF ANALYSIS PANEL
 # -----------------------------------------------------------------------------
 
@@ -8325,7 +8575,7 @@ class HolterEditEventPanel(QWidget):
         for i, ev in enumerate(events):
             source = str(ev.get("source", "analysis"))
             conf = float(ev.get("confidence", 0.0) or 0.0)
-            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "3", "7s", source, f"{conf:.2f}"]):
+            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "12", "7s", source, f"{conf:.2f}"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 if j == 0:
@@ -8799,7 +9049,7 @@ class HolterEditStripsPanel(QWidget):
         self._build_focus_cards()
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
-            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "3", "7s"]):
+            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "12", "7s"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
@@ -9637,9 +9887,11 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
         # Lorenz
-        self._lorenz_tab_panel = HolterLorenzPanel()
+        self._lorenz_tab_panel = HolterLorenzPanel(replay_engine=self._replay_engine)
         self._lorenz_tab_panel.update_from_metrics(self._metrics_list)
         self._lorenz_tab_panel.seek_requested.connect(self._on_seek_requested)
+        if self._replay_engine:
+            self._lorenz_tab_panel.set_replay_engine(self._replay_engine)
         self._tabs.addTab(self._lorenz_tab_panel, "LORENZ")
 
 
