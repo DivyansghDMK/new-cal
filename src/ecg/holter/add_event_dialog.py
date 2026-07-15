@@ -65,6 +65,7 @@ class AddEventDialog(QDialog):
         self.setWindowTitle("Edit strip")
         self.setModal(True)
         self.setFixedSize(640, 600)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         
         self._start_time = start_time or datetime.now()
         self._current_sec = current_sec
@@ -310,7 +311,6 @@ class AddEventDialog(QDialog):
             QLabel {{
                 color: #E5E7EB;
                 font-size: 12px;
-                background: transparent;
             }}
             QLineEdit, QComboBox, QDateTimeEdit, QSpinBox {{
                 background: #0C1320;
@@ -342,7 +342,6 @@ class AddEventDialog(QDialog):
             QComboBox:focus {{
                 border-color: #28E37B;
                 background: #0F1825;
-                color: #FFFFFF;
             }}
             QComboBox::drop-down {{
                 border: none;
@@ -417,7 +416,6 @@ class AddEventDialog(QDialog):
                 padding: 0 8px;
                 color: #28E37B;
                 font-weight: 700;
-                background: transparent;
             }}
             QRadioButton, QCheckBox {{
                 color: #E5E7EB;
@@ -452,7 +450,6 @@ class AddEventDialog(QDialog):
             QCheckBox::indicator:checked {{
                 background: #28E37B;
                 border-color: #28E37B;
-                image: none;
             }}
             QCheckBox::indicator:checked::after {{
                 content: "✓";
@@ -463,9 +460,8 @@ class AddEventDialog(QDialog):
                 background: #0C1320;
                 color: #E5E7EB;
                 border: 1px solid #1e3a52;
-                border-radius: 4px;
+                border-radius: 3px;
                 padding: 4px 8px;
-                font-size: 12px;
             }}
             QToolButton:hover {{
                 background: #152235;
