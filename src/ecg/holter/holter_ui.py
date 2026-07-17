@@ -2753,6 +2753,7 @@ class ECGStripCanvas(QWidget):
         self._ruler_end = None    # End point (current measurement)
         self._magnify_pos = None
         self._fs = 500.0
+        self._filter_ba = None
         
         # Click-based vertical line tracking: only show line where user clicked
         self._clicked_beat_timestamp = None  # Timestamp of the clicked peak
@@ -2768,6 +2769,15 @@ class ECGStripCanvas(QWidget):
             if hasattr(parent, "set_magnifier_focus") and hasattr(parent, "clear_magnifier_focus"):
                 return parent
             parent = parent.parentWidget()
+        return None
+
+    def _get_reader_start_time(self):
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, "_engine"):
+                if hasattr(parent._engine, "_reader") and hasattr(parent._engine._reader, "start_time"):
+                    return parent._engine._reader.start_time
+            parent = parent.parent()
         return None
 
     def _magnifier_source_payload(self):
@@ -2819,7 +2829,7 @@ class ECGStripCanvas(QWidget):
         self._clicked_beat_x_pos = None
         self.update()
 
-    def set_data(self, *args, beat_annotations=None, start_sec=0.0):
+    def set_data(self, *args, beat_annotations=None, start_sec=0.0, structured_events=None):
         if len(args) == 2:
             raw_data = np.asarray(args[1], dtype=float)
         elif len(args) == 1:
@@ -2829,8 +2839,11 @@ class ECGStripCanvas(QWidget):
             
         if len(raw_data) > 15:
             try:
-                from scipy.signal import butter, filtfilt
-                b, a = butter(2, 25.0 / (self._fs / 2.0), btype='lowpass')
+                if getattr(self, '_filter_ba', None) is None:
+                    from scipy.signal import butter
+                    self._filter_ba = butter(2, 25.0 / (self._fs / 2.0), btype='lowpass')
+                from scipy.signal import filtfilt
+                b, a = self._filter_ba
                 self._data = filtfilt(b, a, raw_data)
             except Exception:
                 self._data = raw_data
@@ -2838,6 +2851,7 @@ class ECGStripCanvas(QWidget):
             self._data = raw_data
             
         self._beat_annotations = beat_annotations or []
+        self._structured_events = structured_events or []
         self._start_sec = start_sec
         self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
         self.update()
@@ -3260,10 +3274,47 @@ class ECGStripCanvas(QWidget):
         # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
         x_scale = w / max(1, len(d) - 1)
         
-        # Determine colored intervals based on annotations
+        # Determine colored intervals based on annotations and structured events
         colored_intervals = []
-        if self._show_annotations and hasattr(self, '_beat_annotations') and self._beat_annotations:
-            end_sec = self._start_sec + len(d) / self._fs
+        end_sec = self._start_sec + len(d) / self._fs
+        
+        # 1. Color full regions for arrhythmias from _structured_events
+        if hasattr(self, '_structured_events') and self._structured_events:
+            label_colors = {
+                "V": "#FF3333",      # Ventricular Premature - Red
+                "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+            }
+            # Go through events and find regions
+            for i, ev in enumerate(self._structured_events):
+                ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+                ev_lbl = str(ev.get('label', '')).lower()
+                
+                # Check if this event starts an arrhythmia
+                active_label = 'N'
+                if 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl or 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
+                    active_label = 'V'
+                elif 'atrial fibrillation' in ev_lbl or 'afib' in ev_lbl:
+                    active_label = 'AF'
+                    
+                if active_label != 'N':
+                    color = label_colors.get(active_label, "#FF3333")
+                    region_start_ts = ev_ts
+                    
+                    # Find end of region (next event)
+                    region_end_ts = end_sec + 10.0 # arbitrarily large
+                    if i + 1 < len(self._structured_events):
+                        next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
+                        region_end_ts = next_ev_ts
+                        
+                    # Calculate overlapping indices
+                    if region_end_ts >= self._start_sec and region_start_ts <= end_sec:
+                        start_idx = max(0, int((region_start_ts - self._start_sec) * self._fs))
+                        end_idx = min(len(d) - 1, int((region_end_ts - self._start_sec) * self._fs))
+                        if start_idx < end_idx:
+                            colored_intervals.append((start_idx, end_idx, color))
+        
+        # 2. Color QRS complex for explicitly annotated beats
+        if hasattr(self, '_beat_annotations') and self._beat_annotations:
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
                 lbl = beat.get('label', 'N')
@@ -3384,58 +3435,99 @@ class ECGStripCanvas(QWidget):
                         'end_label': 'N'
                     })
 
-        # Draw N/beat labels for all peaks (annotated or detected) if annotations enabled
-        # Labels should display the actual beat type (N, V, S, AF, etc.) and use the matching color
+        # Draw beat labels ONLY for:
+        #   1. Explicitly annotated beats (from _beat_annotations) with non-N labels (manual marks)
+        #   2. Detected peaks that fall inside an active arrhythmia structured event (non-N)
+        # Default auto-detected N labels are intentionally suppressed in Full Disclosure view.
         if self._show_annotations:
-            peaks_to_draw = list(annotated_beats.keys())
-            if lead_name == 'I' and show_vertical_lines:
-                for dt in detected_peaks:
-                    if not any(abs(dt - at) < 0.05 for at in peaks_to_draw):
-                        peaks_to_draw.append(dt)
-                        
+            # Build the set of peaks to draw from annotated_beats with non-N labels only
+            peaks_to_draw = []          # list of (ts, lbl, color)
+            
+            # 1. Explicitly annotated beats
+            for annot_ts, beat in annotated_beats.items():
+                lbl = beat.get('label', 'N')
+                if lbl == 'N' and not beat.get('is_manual', False):
+                    continue   # skip default N annotations — user only sees manual arrhythmia marks
+
+                color = beat.get('color', None)
+                if not color:
+                    if lbl == 'V':
+                        color = "#FF3333"
+                    elif lbl == 'S':
+                        color = "#00FFFF"
+                    elif lbl in ['AF', 'P']:
+                        color = "#FF00FF"
+                    else:
+                        color = "#FFFF00"
+                peaks_to_draw.append((annot_ts, lbl, color))
+
+            # 2. Auto-detected peaks from structured-event regions — COMMENTED OUT for now
+            # TODO: Re-enable this block when auto-arrhythmia labeling on waveforms is ready
+            # if lead_name == 'I' and show_vertical_lines and hasattr(self, '_structured_events') and self._structured_events:
+            #     for dt in detected_peaks:
+            #         # Skip if an explicit annotation already covers this peak
+            #         if any(abs(dt - at) < 0.20 for at in annotated_beats.keys()):
+            #             continue
+            #         # Determine if this peak lies in an active arrhythmia event region
+            #         active_label = 'N'
+            #         recent_ev = None
+            #         for ev in self._structured_events:
+            #             ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+            #             if ev_ts <= dt + 0.2:
+            #                 recent_ev = ev
+            #             else:
+            #                 break
+            #         if recent_ev:
+            #             ev_lbl = str(recent_ev.get('label', '')).lower()
+            #             if 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl or 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
+            #                 active_label = 'V'
+            #             elif 'atrial fibrillation' in ev_lbl or 'afib' in ev_lbl:
+            #                 active_label = 'AF'
+            #         if active_label != 'N':
+            #             if active_label == 'V':
+            #                 c = "#FF3333"
+            #             elif active_label == 'AF':
+            #                 c = "#FF00FF"
+            #             else:
+            #                 c = "#FFFF00"
+            #             peaks_to_draw.append((dt, active_label, c))
+
             if peaks_to_draw:
-                font = painter.font()
-                font.setPixelSize(10)
-                font.setBold(True)
-                painter.setFont(font)
+                # Resolve recording start time once per paint cycle
+                start_time = self._get_reader_start_time()
                 
-                for ts in peaks_to_draw:
-                    # Calculate x coordinate
+                from datetime import datetime
+                
+                for ts, lbl, color in peaks_to_draw:
                     pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
-                    
-                    # Default: Normal beat shown as 'N' in white
-                    lbl = 'N'  
-                    color = COL_WHITE
-                    
-                    # Check if this peak has an annotation
-                    annotated_beat = None
-                    for annot_ts, beat in annotated_beats.items():
-                        if abs(ts - annot_ts) < 0.05:  # Within 50ms
-                            annotated_beat = beat
-                            break
-                    
-                    # If annotated, use the label and color from annotation
-                    if annotated_beat:
-                        lbl = annotated_beat.get('label', 'N')
-                        color = annotated_beat.get('color', None)
-                        
-                    # Fallback color mapping if color not in annotation
-                    if not color:
-                        if lbl == 'N':
-                            color = COL_WHITE
-                        elif lbl == 'V':
-                            color = "#FF3333"      # Red
-                        elif lbl == 'S':
-                            color = "#00FFFF"      # Cyan
-                        elif lbl in ['AF', 'P']:
-                            color = "#FF00FF"      # Magenta
-                        else:
-                            color = "#FFFF00"      # Yellow
-                    
-                    # Draw label with its color
+
+                    # --- Draw time string above the label (white, bold) ---
+                    if start_time:
+                        beat_time_str = datetime.fromtimestamp(start_time + ts).strftime('%H:%M:%S')
+                        time_font = painter.font()
+                        time_font.setPixelSize(9)
+                        time_font.setBold(True)
+                        painter.setFont(time_font)
+                        painter.setPen(QPen(QColor("#FFFFFF")))
+                        # Center time above the label position
+                        time_width = painter.fontMetrics().horizontalAdvance(beat_time_str)
+                        painter.drawText(bx - 4 - (time_width // 2) + (painter.fontMetrics().horizontalAdvance(lbl) // 2), 8, beat_time_str)
+
+                    # --- Draw beat label (bold, larger font) below the time ---
+                    lbl_font = painter.font()
+                    lbl_font.setPixelSize(11)
+                    lbl_font.setBold(True)
+                    painter.setFont(lbl_font)
                     painter.setPen(QPen(QColor(color)))
-                    painter.drawText(bx, 12, lbl)
+                    painter.drawText(bx - 4, 18, lbl)
+                    
+                    # Restore a clean font state for subsequent peaks
+                    restore_font = painter.font()
+                    restore_font.setBold(False)
+                    restore_font.setPixelSize(10)
+                    painter.setFont(restore_font)
+
         
         # --- Draw square boxes for selected beats (only on Lead I) ---
         # NOTE: Vertical lines are now drawn by VerticalLineOverlay to avoid gaps
@@ -3464,12 +3556,8 @@ class ECGStripCanvas(QWidget):
                                     beat_label = beat.get('label', 'N')
                                     break
                         
-                        # Draw colored square box
-                        painter.setPen(QPen(QColor(beat_color), 3))
-                        label_box = QRect(bx - 4, 0, 16, 16)
-                        painter.drawRect(label_box)
-                        
-                        # Label text is already drawn by the main R-peak loop, so we only draw the box here
+                        # Box removed — label + time text is sufficient visual indicator
+                        # Label text is already drawn by the main R-peak loop
             
             # Otherwise, draw single beat selection
             elif self._clicked_beat_timestamp is not None:
@@ -3487,11 +3575,7 @@ class ECGStripCanvas(QWidget):
                                 beat_label = beat.get('label', 'N')
                                 break
                     
-                    # Draw colored square box
-                    painter.setPen(QPen(QColor(beat_color), 3))
-                    painter.setBrush(Qt.NoBrush)
-                    label_box = QRect(bx - 4, 0, 16, 16)
-                    painter.drawRect(label_box)
+                    # Box removed — label + time text is sufficient visual indicator
         
         # --- Draw N-N (R-R) Interval Labels ONLY on Lead I ---
         if lead_name == 'I' and hasattr(self, '_rr_intervals') and self._rr_intervals and self._show_annotations:  # Only show if annotations enabled

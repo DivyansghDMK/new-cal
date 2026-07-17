@@ -9,6 +9,7 @@ Classes:
 """
 
 import os
+import json
 import numpy as np
 from datetime import datetime
 
@@ -16,7 +17,7 @@ from PyQt5.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSpinBox, QScrollBar, QSizePolicy, QApplication, QTabBar,
 )
-from PyQt5.QtCore import Qt, QEvent, QRect
+from PyQt5.QtCore import Qt, QEvent, QRect, QTimer
 from PyQt5.QtGui import QPainter, QPen, QColor
 
 try:
@@ -167,7 +168,137 @@ class VerticalLineOverlay(QWidget):
                 painter.drawLine(line_x, 22, line_x, self.height())
 
 
+class SegmentOverlay(QWidget):
+    """
+    Transparent overlay that draws segment selection rectangles across all leads.
+    Used in 'Segment Selection' mode — shows a live drag preview and stores labeled segments.
+    Mouse events pass through so canvases beneath still receive them.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent;")
+
+        self._drag_start_x = None
+        self._drag_end_x   = None
+        self._segments     = []   # list of {start_x, end_x, start_sec, end_sec, label, color, start_time_str, end_time_str}
+
+    def set_drag(self, start_x, end_x):
+        self._drag_start_x = start_x
+        self._drag_end_x   = end_x
+        self.update()
+
+    def clear_drag(self):
+        self._drag_start_x = None
+        self._drag_end_x   = None
+        self.update()
+
+    def add_segment(self, start_x, end_x, start_sec, end_sec, label, color, start_time_str='', end_time_str=''):
+        self._segments.append({
+            'start_x': start_x, 'end_x': end_x,
+            'start_sec': start_sec, 'end_sec': end_sec,
+            'label': label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
+        })
+        self.update()
+
+    def update_segment_pixels(self, compute_x_fn):
+        for seg in self._segments:
+            seg['start_x'] = compute_x_fn(seg['start_sec'])
+            seg['end_x']   = compute_x_fn(seg['end_sec'])
+        self.update()
+
+    def clear_segments(self):
+        self._segments.clear()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        h = self.height()
+
+        # 1. Live drag preview — white translucent fill + dashed border
+        if self._drag_start_x is not None and self._drag_end_x is not None:
+            x1 = min(self._drag_start_x, self._drag_end_x)
+            x2 = max(self._drag_start_x, self._drag_end_x)
+            if x2 > x1:
+                painter.fillRect(x1, 0, x2 - x1, h, QColor(255, 255, 255, 35))
+                painter.setPen(QPen(QColor("#FFFFFF"), 1, Qt.DashLine))
+                painter.drawRect(x1, 0, x2 - x1, h - 1)
+
+        # 2. Finalized labeled segments
+        for seg in self._segments:
+            sx = min(seg['start_x'], seg['end_x'])
+            ex = max(seg['start_x'], seg['end_x'])
+            if ex <= sx:
+                continue
+            try:
+                c = QColor(seg['color'])
+            except Exception:
+                c = QColor("#FFFF00")
+            painter.fillRect(sx, 0, ex - sx, h, QColor(c.red(), c.green(), c.blue(), 55))
+            painter.setPen(QPen(c, 1))
+            painter.drawRect(sx, 0, ex - sx, h - 1)
+
+            mid_x = (sx + ex) // 2
+            lbl = seg.get('label', '')
+            start_sec = seg.get('start_sec', 0)
+            end_sec = seg.get('end_sec', 0)
+            start_time_str = seg.get('start_time_str', '')
+            end_time_str = seg.get('end_time_str', '')
+
+            lbl_font = painter.font()
+            lbl_font.setBold(True)
+            lbl_font.setPixelSize(11)
+            painter.setFont(lbl_font)
+            lbl_w = painter.fontMetrics().horizontalAdvance(lbl)
+
+            t_font = painter.font()
+            t_font.setPixelSize(9)
+            t_font.setBold(True)
+            painter.setFont(t_font)
+            
+            # Calculate duration in seconds and format as HH:MM:SS
+            duration_sec = end_sec - start_sec
+            h = int(duration_sec // 3600)
+            m = int((duration_sec % 3600) // 60)
+            s = int(duration_sec % 60)
+            time_str = f"{h:02d}:{m:02d}:{s:02d}"
+            
+            time_w = painter.fontMetrics().horizontalAdvance(time_str) if time_str else 0
+
+            spacer_w = 4 if time_str else 0
+            total_w = lbl_w + spacer_w + time_w
+            start_text_x = mid_x - (total_w // 2)
+
+            # Draw label (y = 20)
+            painter.setFont(lbl_font)
+            painter.setPen(QPen(c))
+            painter.drawText(start_text_x, 20, lbl)
+
+            # Draw duration string (y = 20, right of label, in white)
+            if time_str:
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor("#FFFFFF")))
+                painter.drawText(start_text_x + lbl_w + spacer_w, 20, time_str)
+
+            # Draw start time on left edge of segment (y = 20, in white)
+            if start_time_str:
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor("#FFFFFF")))
+                painter.drawText(sx + 4, 20, start_time_str)
+
+            # Draw end time on right edge of segment (y = 20, in white)
+            if end_time_str:
+                end_time_w = painter.fontMetrics().horizontalAdvance(end_time_str)
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor("#FFFFFF")))
+                painter.drawText(ex - end_time_w - 4, 20, end_time_str)
+
+
+
 class HolterFullDisclosureDialog(QDialog):
+
     """Full Disclosure view: 12-lead scrollable ECG viewer."""
 
     _GAIN_STEPS  = [(0.5, "5mm/mV"), (1.0, "10mm/mV"), (2.0, "20mm/mV")]
@@ -188,13 +319,24 @@ class HolterFullDisclosureDialog(QDialog):
         self._active_tool = TOOL_SELECT
         self._active_tool_btn = None
         
-        # Drag selection state
+        # Drag selection state (parallel mode)
         self._drag_start_x = None
         self._drag_current_x = None
         self._is_dragging = False
         self._drag_start_timestamp = None
         
+        # Selection mode: 'parallel' | 'segment'
+        self._selection_mode = 'parallel'
+        
+        # Segment selection state
+        self._seg_start_x   = None   # pixel X where segment drag started
+        self._seg_end_x     = None   # pixel X where drag currently ends
+        self._seg_dragging  = False
+        self._pending_segment = None  # {start_sec, end_sec, start_x, end_x} awaiting label
+        self._segment_annotations = []  # all labeled segments (persists across scrolls)
+        
         self._detected_r_peaks = []
+
 
         self.setWindowTitle("Full Disclosure ECG")
         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
@@ -212,7 +354,67 @@ class HolterFullDisclosureDialog(QDialog):
         self._magnifier_overlay.setGeometry(self.rect())
         self._magnifier_overlay.hide()
 
+        # Throttling state for smooth scrollbar dragging (updates limited to max ~30 FPS / 33ms)
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.timeout.connect(self._on_scroll_timer_timeout)
+        self._pending_scroll_val = None
+        self._last_scroll_time = 0
+
+        # Load manual_beats.json if it exists and merge into engine metrics on startup
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+            if os.path.exists(manual_beats_path):
+                import json
+                with open(manual_beats_path, 'r') as f:
+                    m_beats = json.load(f)
+                if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                    for mb in m_beats:
+                        ts = float(mb.get('timestamp', 0.0))
+                        lbl = str(mb.get('label', 'N'))
+                        is_man = mb.get('is_manual', False)
+                        
+                        found = False
+                        for m in self._engine._metrics:
+                            for eb in m.get('all_beats', []):
+                                if abs(float(eb.get('timestamp', 0.0)) - ts) < 0.15:
+                                    eb['label'] = lbl
+                                    eb['is_manual'] = is_man
+                                    found = True
+                                    break
+                            if found:
+                                break
+                        if not found and self._engine._metrics:
+                            self._engine._metrics[0].setdefault('all_beats', []).append({
+                                'timestamp': ts,
+                                'label': lbl,
+                                'is_manual': is_man
+                            })
+                print(f"[Full Disclosure] Loaded and merged {len(m_beats)} manual beats on startup.")
+        except Exception as e:
+            print(f"[Full Disclosure] Error merging manual beats on startup: {e}")
+
+        # Load manual_segments.json if it exists and restore segment annotations
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+            if os.path.exists(manual_segments_path):
+                with open(manual_segments_path, 'r') as f:
+                    segments_data = json.load(f)
+                self._segment_annotations = segments_data
+                print(f"[Full Disclosure] Loaded {len(segments_data)} segment annotations on startup.")
+                print(f"[Full Disclosure] Segment data: {segments_data}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error loading segment annotations on startup: {e}")
+
         self._update_canvases(0.0)
+
+    def showEvent(self, event):
+        """Override showEvent to refresh segment overlay when dialog is shown."""
+        super().showEvent(event)
+        # Refresh segment overlay to ensure loaded segments are visible
+        QTimer.singleShot(100, self._refresh_segment_overlay)
 
     def _recalc_window(self):
         idx = self.time_tabs.currentIndex() if hasattr(self, 'time_tabs') else 0
@@ -362,10 +564,17 @@ class HolterFullDisclosureDialog(QDialog):
         self._vertical_line_overlay.show()
         self._clicked_vertical_line_x = None  # Track clicked X position
         
+        # Add segment overlay for segment selection mode (sits above vertical line overlay)
+        self._segment_overlay = SegmentOverlay(canvas_frame)
+        self._segment_overlay.setGeometry(canvas_frame.rect())
+        self._segment_overlay.raise_()
+        self._segment_overlay.show()
+        
         # Install event filter BEFORE adding canvas_frame to layout
         canvas_frame.installEventFilter(self)
         self._canvas_frame = canvas_frame
         layout.addWidget(canvas_frame, 1)
+
 
         self.time_scrollbar = QScrollBar(Qt.Horizontal)
         self.time_scrollbar.setFixedHeight(12)
@@ -437,6 +646,39 @@ class HolterFullDisclosureDialog(QDialog):
         bot_layout.addWidget(self.btn_caliper)
         bot_layout.addWidget(self.btn_magnify)
 
+        # --- Beat Selection mode dropdown (Parallel / Segment) ---
+        from PyQt5.QtWidgets import QMenu
+        from PyQt5.QtCore import QPoint
+        self.btn_sel_mode = QPushButton("▲ Parallel Sel.")
+        self.btn_sel_mode.setStyleSheet(f"""
+            QPushButton {{
+                background: #0d1b2a; color: #a0c4e8;
+                border: 1px solid {COL_GREEN_DRK}; padding: 5px 14px;
+                font-size: 13px; font-weight: bold; border-radius: 4px;
+            }}
+            QPushButton:hover {{ background: #162a3a; color: {COL_GREEN}; }}
+        """)
+        def _show_sel_mode_menu():
+            menu = QMenu(self)
+            menu.setStyleSheet(f"""
+                QMenu {{
+                    background-color: {COL_DARK}; color: #a0c4e8;
+                    border: 1px solid {COL_GREEN_DRK};
+                    font-size: 13px; font-weight: bold;
+                }}
+                QMenu::item:selected {{ background-color: {COL_GREEN_DRK}; color: {COL_GREEN}; }}
+                QMenu::item {{ padding: 6px 20px; }}
+            """)
+            act_parallel = menu.addAction("✔ Parallel Selection" if self._selection_mode == 'parallel' else "  Parallel Selection")
+            act_segment  = menu.addAction("✔ Segment Selection"  if self._selection_mode == 'segment'  else "  Segment Selection")
+            act_parallel.triggered.connect(lambda: self._switch_selection_mode('parallel'))
+            act_segment.triggered.connect(lambda:  self._switch_selection_mode('segment'))
+            btn_pos = self.btn_sel_mode.mapToGlobal(QPoint(0, 0))
+            menu_h  = menu.sizeHint().height()
+            menu.exec_(QPoint(btn_pos.x(), btn_pos.y() - menu_h))
+        self.btn_sel_mode.clicked.connect(_show_sel_mode_menu)
+        bot_layout.addWidget(self.btn_sel_mode)
+
         # Arrhythmia indicator left of Recording label
         self.lbl_arrhythmia = QLabel("")
         self.lbl_arrhythmia.setStyleSheet("color: #ff6b6b; font-weight: bold; font-size: 12px;")
@@ -465,42 +707,154 @@ class HolterFullDisclosureDialog(QDialog):
             self._magnifier_overlay.clear_focus(source_widget)
 
     def eventFilter(self, obj, event):
-        # Handle resize events for canvas_frame
+        # Handle resize events for canvas_frame — keep both overlays in sync
         if obj == self._canvas_frame and event.type() == QEvent.Resize:
-            # Resize the vertical line overlay to match the canvas frame
             if hasattr(self, '_vertical_line_overlay'):
                 self._vertical_line_overlay.setGeometry(obj.rect())
+            if hasattr(self, '_segment_overlay'):
+                self._segment_overlay.setGeometry(obj.rect())
         
         # Only process mouse events from canvas_frame and canvases, NOT from other widgets
-        # This prevents scrollbar drag events from interfering with the canvas event handling
         is_canvas_event = (obj == self._canvas_frame or obj in self._canvases)
         if not is_canvas_event:
             return super().eventFilter(obj, event)
         
-        # Handle RIGHT CLICK - show context menu for beat labeling
+        # ----------------------------------------------------------------
+        # RIGHT CLICK
+        # ----------------------------------------------------------------
         if event.type() == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
-            if obj == self._canvas_frame or obj in self._canvases:
-                # Get click position
-                if obj in self._canvases:
-                    click_pos_local = event.pos()
-                    click_pos_global = obj.mapTo(self._canvas_frame, click_pos_local)
-                    click_x = click_pos_global.x()
+            if obj in self._canvases:
+                click_x = obj.mapTo(self._canvas_frame, event.pos()).x()
+            else:
+                click_x = event.pos().x()
+            
+            # Convert click_x (global pixel) to seconds to match segments
+            click_sec = 0.0
+            ref = self._canvases[0] if self._canvases else None
+            if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                from PyQt5.QtCore import QPoint
+                w = ref.width()
+                data_len = len(ref._data)
+                if w > 0 and data_len > 0:
+                    ref_end_sec = ref._start_sec + data_len / ref._fs
+                    click_x_local = ref.mapFrom(self._canvas_frame, QPoint(int(click_x), 0)).x()
+                    click_x_local = max(0, min(w, click_x_local))
+                    click_sec = ref._start_sec + (click_x_local / w) * (ref_end_sec - ref._start_sec)
+
+            # Check if clicked inside an existing segment
+            clicked_segment = None
+            if self._selection_mode == 'segment' and hasattr(self, '_segment_annotations'):
+                for seg in self._segment_annotations:
+                    s_sec = min(seg['start_sec'], seg['end_sec'])
+                    e_sec = max(seg['start_sec'], seg['end_sec'])
+                    if s_sec <= click_sec <= e_sec:
+                        clicked_segment = seg
+                        break
+
+            if self._selection_mode == 'segment':
+                if clicked_segment is not None:
+                    # Show segment deletion menu
+                    from PyQt5.QtWidgets import QMenu, QAction
+                    menu = QMenu(self)
+                    menu.setStyleSheet(f"""
+                        QMenu {{
+                            background-color: {COL_DARK};
+                            color: {COL_WHITE};
+                            border: 1px solid {COL_GRID_MAJOR};
+                            font-size: 13px; font-weight: bold;
+                        }}
+                        QMenu::item:selected {{ background-color: {COL_GRID_MAJOR}; }}
+                        QMenu::item {{ padding: 6px 20px; }}
+                    """)
+                    del_act = QAction("Delete segment", self)
+                    del_act.triggered.connect(lambda: self._delete_segment(clicked_segment))
+                    menu.addAction(del_act)
+                    menu.exec_(event.globalPos())
                 else:
-                    click_x = event.pos().x()
-                
-                # Show context menu
+                    # In segment mode: show labeling menu for pending segment
+                    self._show_segment_context_menu(event.globalPos())
+            else:
+                # In parallel mode: original beat-level context menu
                 self._show_beat_context_menu(click_x, event.globalPos())
-                return True  # Consume the event
-        
+            return True  # Consume the event
+
+
         # Let canvas handle left click/drag if a measurement tool is active
         if self._active_tool != TOOL_SELECT:
             return super().eventFilter(obj, event)
-        
-        # Handle mouse press - start drag selection
+
+        # ----------------------------------------------------------------
+        # SEGMENT SELECTION MODE — left button press / move / release
+        # ----------------------------------------------------------------
+        if self._selection_mode == 'segment':
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                if obj in self._canvases:
+                    raw_x = obj.mapTo(self._canvas_frame, event.pos()).x()
+                else:
+                    raw_x = event.pos().x()
+                self._seg_start_x  = raw_x
+                self._seg_end_x    = raw_x
+                self._seg_dragging = False
+                self._pending_segment = None
+                if hasattr(self, '_segment_overlay'):
+                    self._segment_overlay.set_drag(raw_x, raw_x)
+                return True
+
+            elif event.type() == QEvent.MouseMove:
+                if self._seg_start_x is not None:
+                    if obj in self._canvases:
+                        raw_x = obj.mapTo(self._canvas_frame, event.pos()).x()
+                    else:
+                        raw_x = event.pos().x()
+                    if not self._seg_dragging and abs(raw_x - self._seg_start_x) > 4:
+                        self._seg_dragging = True
+                    if self._seg_dragging:
+                        self._seg_end_x = raw_x
+                        if hasattr(self, '_segment_overlay'):
+                            self._segment_overlay.set_drag(self._seg_start_x, raw_x)
+                return True
+
+            elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                if self._seg_start_x is not None and self._seg_dragging:
+                    if obj in self._canvases:
+                        raw_x = obj.mapTo(self._canvas_frame, event.pos()).x()
+                    else:
+                        raw_x = event.pos().x()
+                    self._seg_end_x = raw_x
+                    
+                    # Convert pixel X → seconds using any canvas as reference
+                    ref = self._canvases[0] if self._canvases else None
+                    start_sec = end_sec = 0.0
+                    if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                        from PyQt5.QtCore import QPoint
+                        w = ref.width()
+                        data_len = len(ref._data)
+                        if w > 0 and data_len > 0:
+                            ref_end_sec = ref._start_sec + data_len / ref._fs
+                            sx_local = ref.mapFrom(self._canvas_frame, QPoint(int(min(self._seg_start_x, raw_x)), 0)).x()
+                            ex_local = ref.mapFrom(self._canvas_frame, QPoint(int(max(self._seg_start_x, raw_x)), 0)).x()
+                            sx_local = max(0, min(w, sx_local))
+                            ex_local = max(0, min(w, ex_local))
+                            span = ref_end_sec - ref._start_sec
+                            start_sec = ref._start_sec + (sx_local / w) * span
+                            end_sec   = ref._start_sec + (ex_local / w) * span
+                    
+                    self._pending_segment = {
+                        'start_sec': start_sec, 'end_sec': end_sec,
+                        'start_x': int(min(self._seg_start_x, raw_x)),
+                        'end_x':   int(max(self._seg_start_x, raw_x)),
+                    }
+                self._seg_start_x  = None
+                self._seg_dragging = False
+                return True
+
+            return super().eventFilter(obj, event)
+
+        # ----------------------------------------------------------------
+        # PARALLEL SELECTION MODE — existing beat-snap yellow-line logic
+        # ----------------------------------------------------------------
         elif event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-            # Check if the event is from a canvas or the canvas_frame
             if obj == self._canvas_frame or obj in self._canvases:
-                # Get click position relative to canvas_frame
                 if obj in self._canvases:
                     click_pos_local = event.pos()
                     click_pos_global = obj.mapTo(self._canvas_frame, click_pos_local)
@@ -508,18 +862,14 @@ class HolterFullDisclosureDialog(QDialog):
                 else:
                     click_x = event.pos().x()
                 
-                # Start drag selection
                 self._drag_start_x = click_x
                 self._drag_current_x = click_x
                 self._is_dragging = False
-                
                 self._clicked_vertical_line_x = click_x
                 
-                # Update the overlay to draw the line
                 if hasattr(self, '_vertical_line_overlay'):
                     self._vertical_line_overlay.set_line_position(click_x)
                 
-                # Convert click_x (global) to local Lead I coordinate
                 lead_i_canvas = None
                 for c in self._canvases:
                     if c.lead_name == 'I':
@@ -532,15 +882,12 @@ class HolterFullDisclosureDialog(QDialog):
                     from PyQt5.QtCore import QPoint
                     click_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(click_x, 0)).x()
                     click_x_local = max(0, min(lead_i_canvas.width(), click_x_local))
-                    
                     lead_i_canvas._check_and_store_clicked_beat(click_x_local)
                     clicked_timestamp = lead_i_canvas._clicked_beat_timestamp
                     clicked_label = lead_i_canvas._clicked_beat_label
                 
-                # Store the start beat
                 self._drag_start_timestamp = clicked_timestamp
                 
-                # Propagate to all canvases for single beat display
                 for canvas in self._canvases:
                     if clicked_timestamp is not None:
                         if lead_i_canvas and hasattr(lead_i_canvas, '_clicked_beat_x_pos'):
@@ -549,7 +896,6 @@ class HolterFullDisclosureDialog(QDialog):
                             canvas._clicked_beat_x_pos = click_x
                         canvas._clicked_beat_timestamp = clicked_timestamp
                         canvas._clicked_beat_label = clicked_label
-                        # Initialize selected beats list
                         canvas._selected_beats = [clicked_timestamp] if clicked_timestamp else []
                     else:
                         canvas._clicked_beat_x_pos = None
@@ -558,7 +904,6 @@ class HolterFullDisclosureDialog(QDialog):
                         canvas._selected_beats = []
                     canvas.update()
                 
-                # Update overlay with single line position
                 if hasattr(self, '_vertical_line_overlay'):
                     if clicked_timestamp is not None and lead_i_canvas and hasattr(lead_i_canvas, '_clicked_beat_x_pos') and lead_i_canvas._clicked_beat_x_pos is not None:
                         from PyQt5.QtCore import QPoint
@@ -567,32 +912,24 @@ class HolterFullDisclosureDialog(QDialog):
                     else:
                         self._vertical_line_overlay.set_line_position(click_x)
                 
-                return True  # Consume the event to prevent window resize
+                return True
         
-        # Handle mouse move - drag to select multiple beats
         elif event.type() == QEvent.MouseMove:
-            # Only process mouse move if we actually started a drag from canvas
             if hasattr(self, '_drag_start_x') and self._drag_start_x is not None and is_canvas_event:
-                # Get current drag position
                 if obj in self._canvases:
-                    drag_pos_local = event.pos()
-                    drag_pos_global = obj.mapTo(self._canvas_frame, drag_pos_local)
+                    drag_pos_global = obj.mapTo(self._canvas_frame, event.pos())
                     drag_x = drag_pos_global.x()
                 else:
                     drag_x = event.pos().x()
                 
-                # Check if user has moved enough to start drag (5 pixel threshold)
                 if not self._is_dragging and abs(drag_x - self._drag_start_x) > 5:
                     self._is_dragging = True
                 
                 if self._is_dragging:
                     self._drag_current_x = drag_x
-                    
-                    # Find all beats between start and current position
                     start_x = min(self._drag_start_x, drag_x)
-                    end_x = max(self._drag_start_x, drag_x)
+                    end_x   = max(self._drag_start_x, drag_x)
                     
-                    # Get all beats in range from Lead I by mapping to local coords
                     selected_beats = []
                     lead_i_canvas = None
                     for c in self._canvases:
@@ -604,42 +941,39 @@ class HolterFullDisclosureDialog(QDialog):
                         from PyQt5.QtCore import QPoint
                         w_i = lead_i_canvas.width()
                         start_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(start_x, 0)).x()
-                        end_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(end_x, 0)).x()
+                        end_x_local   = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(end_x,   0)).x()
                         start_x_local = max(0, min(w_i, start_x_local))
-                        end_x_local = max(0, min(w_i, end_x_local))
+                        end_x_local   = max(0, min(w_i, end_x_local))
                         selected_beats = lead_i_canvas._find_beats_in_range(start_x_local, end_x_local)
                     
-                    # Propagate selected beats to all canvases
                     for canvas in self._canvases:
                         canvas._selected_beats = selected_beats
                         canvas.update()
                     
-                    # Update vertical line overlay with multiple line positions
                     if hasattr(self, '_vertical_line_overlay'):
                         line_positions = []
                         if selected_beats and lead_i_canvas:
                             w = lead_i_canvas.width()
                             start_sec = lead_i_canvas._start_sec
-                            data_len = len(lead_i_canvas._data) if hasattr(lead_i_canvas, '_data') else 0
+                            data_len  = len(lead_i_canvas._data) if hasattr(lead_i_canvas, '_data') else 0
                             if w > 0 and data_len > 0:
-                                end_sec = start_sec + data_len / lead_i_canvas._fs
+                                end_sec2 = start_sec + data_len / lead_i_canvas._fs
                                 for beat_ts in selected_beats:
-                                    if start_sec <= beat_ts <= end_sec:
-                                        pct = (beat_ts - start_sec) / (end_sec - start_sec) if (end_sec - start_sec) > 0 else 0.0
+                                    if start_sec <= beat_ts <= end_sec2:
+                                        pct = (beat_ts - start_sec) / (end_sec2 - start_sec) if (end_sec2 - start_sec) > 0 else 0.0
                                         beat_x = int(pct * w)
                                         from PyQt5.QtCore import QPoint
                                         beat_x_global = lead_i_canvas.mapTo(self._canvas_frame, QPoint(beat_x, 0)).x()
                                         line_positions.append(beat_x_global)
                         self._vertical_line_overlay.set_line_positions(line_positions)
-                return True  # Consume the event to prevent window operations
+                return True
         
-        # Handle mouse release - end drag selection
         elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
             if hasattr(self, '_drag_start_x') and is_canvas_event:
-                self._drag_start_x = None
+                self._drag_start_x   = None
                 self._drag_current_x = None
-                self._is_dragging = False
-                return True  # Consume the event to prevent window operations
+                self._is_dragging    = False
+                return True
                 
         return super().eventFilter(obj, event)
 
@@ -690,6 +1024,205 @@ class HolterFullDisclosureDialog(QDialog):
         self.clear_magnifier_focus()
         # TODO: Overlay show/hide disabled for now
         # self.overlay.show()
+
+    # ------------------------------------------------------------------
+    # Selection mode switching
+    # ------------------------------------------------------------------
+    def _switch_selection_mode(self, mode: str):
+        """Switch between 'parallel' (beat-snap yellow lines) and 'segment' (rect drag) modes."""
+        self._selection_mode = mode
+        if mode == 'parallel':
+            self.btn_sel_mode.setText("▲ Parallel Sel.")
+            # Clear any pending segment drag
+            self._seg_start_x = None
+            self._seg_end_x   = None
+            self._seg_dragging = False
+            self._pending_segment = None
+            if hasattr(self, '_segment_overlay'):
+                self._segment_overlay.clear_drag()
+            # Restore vertical line overlay visibility
+            if hasattr(self, '_vertical_line_overlay'):
+                self._vertical_line_overlay.show()
+        else:
+            self.btn_sel_mode.setText("▲ Segment Sel.")
+            # Clear parallel-mode state
+            self._drag_start_x = None
+            self._drag_current_x = None
+            self._is_dragging = False
+            if hasattr(self, '_vertical_line_overlay'):
+                self._vertical_line_overlay.clear_line()
+                self._vertical_line_overlay.hide()  # Hide in segment mode
+            for c in self._canvases:
+                c._selected_beats = []
+                c._clicked_beat_timestamp = None
+                c.update()
+
+    # ------------------------------------------------------------------
+    # Segment context menu + labeling
+    # ------------------------------------------------------------------
+    def _show_segment_context_menu(self, global_pos):
+        """Show arrhythmia right-click context menu for labeling a selected segment."""
+        from PyQt5.QtWidgets import QMenu, QAction
+        if self._pending_segment is None:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COL_DARK};
+                color: {COL_WHITE};
+                border: 1px solid {COL_GRID_MAJOR};
+                font-size: 13px; font-weight: bold;
+            }}
+            QMenu::item:selected {{ background-color: {COL_GRID_MAJOR}; }}
+            QMenu::item {{ padding: 6px 20px; }}
+        """)
+
+        beat_options = [
+            ("Normal (N)",                 "N",     "#00FF00"),
+            ("Atrial Premature (S)",        "S",     "#00FFFF"),
+            ("Ventricular Premature (V)",   "V",     "#FF3333"),
+            ("Paced (P)",                   "P",     "#FF00FF"),
+            ("Atrial Fibrillation (AF)",    "AF",    "#FF00FF"),
+            ("Artifact (X)",                "X",     "#0000FF"),
+            ("Other",                       "Other", "#FFFF00"),
+        ]
+        for label_text, code, color in beat_options:
+            act = QAction(label_text, self)
+            act.triggered.connect(lambda checked, c=code, col=color: self._label_segment(c, col))
+            menu.addAction(act)
+
+        menu.exec_(global_pos)
+
+    def _label_segment(self, label: str, color: str):
+        """Assign an arrhythmia label to the pending segment and render it."""
+        if self._pending_segment is None:
+            return
+
+        seg = self._pending_segment
+        start_sec = seg['start_sec']
+        end_sec   = seg['end_sec']
+        sx        = seg['start_x']
+        ex        = seg['end_x']
+
+        # Compute real-world timestamp strings for both start and end using actual system recorded time
+        start_time_str = ''
+        end_time_str = ''
+        try:
+            reader = getattr(self._engine, '_reader', None) or getattr(self, '_reader', None)
+            if reader and hasattr(reader, 'start_time') and reader.start_time is not None:
+                start_real = datetime.fromtimestamp(reader.start_time + start_sec)
+                end_real = datetime.fromtimestamp(reader.start_time + end_sec)
+                start_time_str = start_real.strftime('%H:%M:%S')
+                end_time_str = end_real.strftime('%H:%M:%S')
+            else:
+                h = int(start_sec // 3600)
+                m = int((start_sec % 3600) // 60)
+                s = int(start_sec % 60)
+                start_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                
+                h = int(end_sec // 3600)
+                m = int((end_sec % 3600) // 60)
+                s = int(end_sec % 60)
+                end_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+        except Exception as e:
+            print(f"[Full Disclosure] Error formatting segment time: {e}")
+
+
+        # Store in persistent annotations list
+        annotation = {
+            'start_sec': start_sec, 'end_sec': end_sec,
+            'label': label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
+        }
+        self._segment_annotations.append(annotation)
+
+        # Save segment annotations to JSON file for report generation
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            segments_path = os.path.join(session_dir, 'manual_segments.json')
+            segments_data = []
+            if os.path.exists(segments_path):
+                with open(segments_path, 'r') as f:
+                    segments_data = json.load(f)
+            segments_data.append(annotation)
+            with open(segments_path, 'w') as f:
+                json.dump(segments_data, f, indent=2)
+            print(f"[Full Disclosure] Saved segment annotation to {segments_path}")
+            print(f"[Full Disclosure] Total segments in file: {len(segments_data)}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error saving segment annotations: {e}")
+
+        # Paint it on the overlay
+        if hasattr(self, '_segment_overlay'):
+            self._segment_overlay.clear_drag()
+            self._segment_overlay.add_segment(sx, ex, start_sec, end_sec, label, color, start_time_str, end_time_str)
+
+        self._pending_segment = None
+
+    def _clear_pending_segment(self):
+        """Clear the current drag selection without labeling it."""
+        self._pending_segment = None
+        self._seg_start_x = None
+        self._seg_end_x   = None
+        self._seg_dragging = False
+        if hasattr(self, '_segment_overlay'):
+            self._segment_overlay.clear_drag()
+
+    def _delete_segment(self, segment):
+        """Remove a finalized segment from annotations and the overlay."""
+        if segment in self._segment_annotations:
+            self._segment_annotations.remove(segment)
+        
+        # Remove from JSON file as well
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            segments_path = os.path.join(session_dir, 'manual_segments.json')
+            if os.path.exists(segments_path):
+                with open(segments_path, 'r') as f:
+                    segments_data = json.load(f)
+                # Remove the segment by matching start_sec, end_sec, and label
+                segments_data = [s for s in segments_data if not (
+                    abs(s.get('start_sec', 0) - segment.get('start_sec', 0)) < 0.01 and
+                    abs(s.get('end_sec', 0) - segment.get('end_sec', 0)) < 0.01 and
+                    s.get('label') == segment.get('label')
+                )]
+                with open(segments_path, 'w') as f:
+                    json.dump(segments_data, f, indent=2)
+                print(f"[Full Disclosure] Removed segment from {segments_path}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error removing segment from JSON: {e}")
+        
+        # Clear and rebuild visible segment list in segment overlay
+        if hasattr(self, '_segment_overlay'):
+            self._segment_overlay.clear_segments()
+            ref = self._canvases[0] if self._canvases else None
+            if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                from PyQt5.QtCore import QPoint
+                ref_w  = ref.width()
+                data_l = len(ref._data)
+                if ref_w > 0 and data_l > 0:
+                    ref_end = ref._start_sec + data_l / ref._fs
+                    span    = ref_end - ref._start_sec
+                    
+                    for seg in self._segment_annotations:
+                        s_sec = seg['start_sec']
+                        e_sec = seg['end_sec']
+                        # Check overlap with visible range
+                        if max(s_sec, ref._start_sec) <= min(e_sec, ref_end):
+                            if span > 0:
+                                sx_local = int(((s_sec - ref._start_sec) / span) * ref_w)
+                                ex_local = int(((e_sec - ref._start_sec) / span) * ref_w)
+                                sx_local = max(0, min(ref_w, sx_local))
+                                ex_local = max(0, min(ref_w, ex_local))
+                                sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
+                                ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
+                                
+                                self._segment_overlay.add_segment(
+                                    sx_global, ex_global, s_sec, e_sec,
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
+                                )
+            self._segment_overlay.update()
+
 
     def _show_beat_context_menu(self, click_x: int, global_pos):
         """Show right-click context menu for beat labeling."""
@@ -843,6 +1376,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 if abs(beat['timestamp'] - target_ts) < snap_tolerance_sec:
                                     beat['label'] = label
                                     beat['color'] = label_colors.get(label, "#FFFF00")
+                                    beat['is_manual'] = True
                                     print(f"[Full Disclosure] Updated beat at {target_ts:.3f}s as '{label}'")
                                     found = True
                                     break
@@ -852,7 +1386,8 @@ class HolterFullDisclosureDialog(QDialog):
                                 new_beat = {
                                     'timestamp': target_ts,
                                     'label': label,
-                                    'color': label_colors.get(label, "#FFFF00")
+                                    'color': label_colors.get(label, "#FFFF00"),
+                                    'is_manual': True
                                 }
                                 canvas._beat_annotations.append(new_beat)
                                 print(f"[Full Disclosure] Created new beat annotation at {target_ts:.3f}s as '{label}'")
@@ -865,6 +1400,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     for engine_beat in all_beats:
                                         if abs(float(engine_beat.get('timestamp', 0.0)) - target_ts) < snap_tolerance_sec:
                                             engine_beat['label'] = label
+                                            engine_beat['is_manual'] = True
                                             engine_beat_found = True
                                             break
                                     if engine_beat_found:
@@ -876,11 +1412,19 @@ class HolterFullDisclosureDialog(QDialog):
                                         m_start = float(m.get('start_sec', 0.0))
                                         m_dur = float(m.get('duration', 3600.0))
                                         if m_start <= target_ts <= m_start + m_dur:
-                                            m.setdefault('all_beats', []).append({'timestamp': target_ts, 'label': label})
+                                            m.setdefault('all_beats', []).append({
+                                                'timestamp': target_ts,
+                                                'label': label,
+                                                'is_manual': True
+                                            })
                                             added = True
                                             break
                                     if not added:
-                                        self._engine._metrics[0].setdefault('all_beats', []).append({'timestamp': target_ts, 'label': label})
+                                        self._engine._metrics[0].setdefault('all_beats', []).append({
+                                            'timestamp': target_ts,
+                                            'label': label,
+                                            'is_manual': True
+                                        })
                         
                         # Keep sorted by timestamp for consistent rendering
                         canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
@@ -899,20 +1443,26 @@ class HolterFullDisclosureDialog(QDialog):
                                         if abs(b['timestamp'] - target_ts) < snap_tolerance_sec:
                                             b['label'] = label
                                             b['color'] = label_colors.get(label, "#FFFF00")
+                                            b['is_manual'] = True
                                             beat_found_in_c = True
                                             break
                                     if not beat_found_in_c:
                                         c._beat_annotations.append({
                                             'timestamp': target_ts,
                                             'label': label,
-                                            'color': label_colors.get(label, "#FFFF00")
+                                            'color': label_colors.get(label, "#FFFF00"),
+                                            'is_manual': True
                                         })
+
                                 c._beat_annotations.sort(key=lambda b: b['timestamp'])
                             c.update()
                 break
         
         # Persist all manual beat edits to disk so the report generator can read them
         self._save_manual_beats()
+        
+        # Update the arrhythmia status label at the bottom to reflect the newly marked beats
+        self._update_time_and_arrhythmia_labels(self._current_start, self._current_start + self._window_sec)
     
     def _save_manual_beats(self):
         """Write all manually-edited beat annotations to manual_beats.json in the session dir."""
@@ -935,7 +1485,8 @@ class HolterFullDisclosureDialog(QDialog):
                     all_beats.append({
                         'timestamp': float(b.get('timestamp', 0.0)),
                         'label': str(b.get('label', 'N')),
-                        'color': str(b.get('color', '#00FF00'))
+                        'color': str(b.get('color', '#00FF00')),
+                        'is_manual': b.get('is_manual', False)
                     })
             else:
                 # Fallback: collect from engine._metrics all_beats
@@ -949,8 +1500,10 @@ class HolterFullDisclosureDialog(QDialog):
                                 all_beats.append({
                                     'timestamp': ts,
                                     'label': str(b.get('label', 'N')),
-                                    'color': '#00FF00'
+                                    'color': '#00FF00',
+                                    'is_manual': b.get('is_manual', False)
                                 })
+
             
             all_beats.sort(key=lambda b: b['timestamp'])
             with open(manual_beats_path, 'w') as f:
@@ -1011,11 +1564,55 @@ class HolterFullDisclosureDialog(QDialog):
                                         eb for eb in m['all_beats']
                                         if not any(abs(float(eb.get('timestamp', 0.0)) - t_ts) < snap_tolerance_sec for t_ts in target_timestamps)
                                     ]
-        
+                                    
+                        # --- Also allow deleting Arrythmia Regions ---
+                        if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
+                            # Find if click_ts falls inside an active arrhythmia region
+                            events = self._engine._structured_events
+                            to_remove = None
+                            for i, ev in enumerate(events):
+                                ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+                                if ev_ts <= click_ts:
+                                    next_ts = float(events[i+1].get('timestamp', 0.0) or 0.0) if i+1 < len(events) else (start_sec + 3600*24)
+                                    if click_ts < next_ts:
+                                        # This event spans the click! Check if it's an arrhythmia
+                                        ev_lbl = str(ev.get('label', '')).lower()
+                                        if any(a in ev_lbl for a in ['vfib', 'ventricular fibrillation', 'vtach', 'tachycardia', 'afib', 'fibrillation', 'flutter']):
+                                            to_remove = ev
+                                        break
+                                        
+                            if to_remove:
+                                events.remove(to_remove)
+                                print(f"[Full Disclosure] Deleted arrhythmia event: {to_remove.get('label')} at {to_remove.get('timestamp')}")
+                                
+                                # Re-update the canvases so the region coloring is removed immediately
+                                self._update_canvases(self._current_start)
+                                
         # Persist the deletion to disk
         self._save_manual_beats()
 
     def _on_scrollbar_moved(self, val):
+        self._pending_scroll_val = val
+        if not self._scroll_timer.isActive():
+            import time
+            now = time.time()
+            if now - self._last_scroll_time > 0.030:
+                self._process_scroll_update()
+            else:
+                delay = int((0.030 - (now - self._last_scroll_time)) * 1000)
+                self._scroll_timer.start(max(1, delay))
+
+    def _on_scroll_timer_timeout(self):
+        self._process_scroll_update()
+
+    def _process_scroll_update(self):
+        if self._pending_scroll_val is None:
+            return
+        val = self._pending_scroll_val
+        self._pending_scroll_val = None
+        import time
+        self._last_scroll_time = time.time()
+
         start_sec = float(val) / 100.0
         
         # Clear any selected beats and vertical lines when scrolling
@@ -1088,19 +1685,48 @@ class HolterFullDisclosureDialog(QDialog):
             self.lbl_real_time.setText(f"Real Time: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
         
         # Update arrhythmia indicator
-        arrhythmia_label = ""
+        # 1. Collect automatic events
+        auto_events = []
         if hasattr(self._engine, '_structured_events'):
-            # Find events in current time window
-            events_in_window = []
             for ev in self._engine._structured_events:
                 ts = float(ev.get('timestamp', 0.0) or 0.0)
                 if start_sec <= ts <= end_sec:
-                    events_in_window.append(ev)
-            if events_in_window:
-                # Take earliest event
-                earliest = sorted(events_in_window, key=lambda x: float(x.get('timestamp', 0.0) or 0.0))[0]
-                ts_real = datetime.fromtimestamp(self._engine._reader.start_time + float(earliest.get('timestamp', 0.0) or 0.0))
-                arrhythmia_label = f"Arrhythmia: {earliest.get('label', 'Event')} at {ts_real.strftime('%H:%M:%S')}"
+                    auto_events.append({
+                        'timestamp': ts,
+                        'label': ev.get('label', 'Event'),
+                        'source': 'Auto'
+                    })
+                    
+        # 2. Collect manually annotated beats (non-N) in the current window
+        manual_events = []
+        lead_i_canvas = None
+        if hasattr(self, '_canvases'):
+            for c in self._canvases:
+                if c.lead_name == 'I':
+                    lead_i_canvas = c
+                    break
+        
+        if lead_i_canvas and hasattr(lead_i_canvas, '_beat_annotations') and lead_i_canvas._beat_annotations:
+            for b in lead_i_canvas._beat_annotations:
+                ts = float(b.get('timestamp', 0.0))
+                lbl = b.get('label', 'N')
+                if lbl != 'N' and start_sec <= ts <= end_sec:
+                    manual_events.append({
+                        'timestamp': ts,
+                        'label': lbl,
+                        'source': 'Manual'
+                    })
+                    
+        # Combine and sort all events by timestamp
+        all_events = sorted(auto_events + manual_events, key=lambda x: x['timestamp'])
+        
+        arrhythmia_label = ""
+        if all_events:
+            earliest = all_events[0]
+            if hasattr(self._engine, '_reader') and hasattr(self._engine._reader, 'start_time'):
+                ts_real = datetime.fromtimestamp(self._engine._reader.start_time + earliest['timestamp'])
+                arrhythmia_label = f"Arrhythmia: {earliest['label']} at {ts_real.strftime('%H:%M:%S')}"
+                
         self.lbl_arrhythmia.setText(arrhythmia_label)
 
     def _update_canvases(self, start_sec: float):
@@ -1131,21 +1757,6 @@ class HolterFullDisclosureDialog(QDialog):
             "Other": "#FFFF00"   # Other - Yellow
         }
         
-        # Check if VFib is detected in this window
-        vfib_detected = False
-        try:
-            if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
-                for ev in self._engine._structured_events:
-                    ev_ts = float(ev.get('timestamp', 0.0))
-                    if start_sec <= ev_ts <= end_sec:
-                        ev_label = str(ev.get('label', ''))
-                        if 'Ventricular Fibrillation' in ev_label or 'VFib' in ev_label or 'VF' in ev_label:
-                            vfib_detected = True
-                            print(f"[Full Disclosure] VFib detected in window [{start_sec:.1f}, {end_sec:.1f}]")
-                            break
-        except Exception as e:
-            print(f"[Full Disclosure] VFib detection error: {e}")
-        
         try:
             for m in self._engine._metrics:
                 all_beats = m.get('all_beats', [])
@@ -1154,22 +1765,18 @@ class HolterFullDisclosureDialog(QDialog):
                 for beat in all_beats:
                     ts = float(beat.get('timestamp', 0.0))
                     if start_sec <= ts <= end_sec:
-                        # When VFib is detected, override all beats to 'V' with RED color
-                        if vfib_detected:
-                            lbl = 'V'
-                            color = label_colors.get('V', "#FF3333")  # RED for VFib
-                        else:
-                            lbl = str(beat.get('label', 'N'))
-                            color = label_colors.get(lbl, "#00FF00")  # Use beat's color
-                        
+                        lbl = str(beat.get('label', 'N'))
+                        color = label_colors.get(lbl, "#00FF00")
                         beat_annotations.append({
                             'timestamp': ts,
                             'label': lbl,
-                            'color': color
+                            'color': color,
+                            'is_manual': beat.get('is_manual', False)
                         })
             beat_annotations.sort(key=lambda b: b['timestamp'])
         except Exception as e:
             print(f"[Full Disclosure] Error loading beat annotations: {e}")
+
         
         # Generate time array for ECG strips
         x = np.linspace(0, self._window_sec, expected_len)
@@ -1189,9 +1796,77 @@ class HolterFullDisclosureDialog(QDialog):
                         padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
                         d_i = padded
                 # Convert to float32 for faster rendering and pass beat annotations
-                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec)
+                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=getattr(self._engine, '_structured_events', []))
             else:
-                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec)
+                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=getattr(self._engine, '_structured_events', []))
+
+        # Clear and repopulate segment overlay with only visible segments
+        if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+            self._segment_overlay.clear_segments()
+            ref = self._canvases[0] if self._canvases else None
+            if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                from PyQt5.QtCore import QPoint
+                ref_w  = ref.width()
+                data_l = len(ref._data)
+                if ref_w > 0 and data_l > 0:
+                    ref_end = ref._start_sec + data_l / ref._fs
+                    span    = ref_end - ref._start_sec
+                    
+                    for seg in self._segment_annotations:
+                        s_sec = seg['start_sec']
+                        e_sec = seg['end_sec']
+                        # Check overlap with visible range
+                        if max(s_sec, ref._start_sec) <= min(e_sec, ref_end):
+                            if span > 0:
+                                sx_local = int(((s_sec - ref._start_sec) / span) * ref_w)
+                                ex_local = int(((e_sec - ref._start_sec) / span) * ref_w)
+                                sx_local = max(0, min(ref_w, sx_local))
+                                ex_local = max(0, min(ref_w, ex_local))
+                                sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
+                                ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
+                                
+                                self._segment_overlay.add_segment(
+                                    sx_global, ex_global, s_sec, e_sec,
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
+                                )
+
+    def _refresh_segment_overlay(self):
+        """Force refresh of segment overlay to ensure loaded segments are visible."""
+        if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+            # Update overlay geometry to match current canvas frame size
+            if hasattr(self, '_canvas_frame'):
+                self._segment_overlay.setGeometry(self._canvas_frame.rect())
+            
+            self._segment_overlay.clear_segments()
+            ref = self._canvases[0] if self._canvases else None
+            if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                from PyQt5.QtCore import QPoint
+                ref_w  = ref.width()
+                data_l = len(ref._data)
+                if ref_w > 0 and data_l > 0:
+                    ref_end = ref._start_sec + data_l / ref._fs
+                    span    = ref_end - ref._start_sec
+                    
+                    for seg in self._segment_annotations:
+                        s_sec = seg['start_sec']
+                        e_sec = seg['end_sec']
+                        # Check overlap with visible range
+                        if max(s_sec, ref._start_sec) <= min(e_sec, ref_end):
+                            if span > 0:
+                                sx_local = int(((s_sec - ref._start_sec) / span) * ref_w)
+                                ex_local = int(((e_sec - ref._start_sec) / span) * ref_w)
+                                sx_local = max(0, min(ref_w, sx_local))
+                                ex_local = max(0, min(ref_w, ex_local))
+                                sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
+                                ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
+                                
+                                self._segment_overlay.add_segment(
+                                    sx_global, ex_global, s_sec, e_sec,
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
+                                )
+            self._segment_overlay.update()
+
+
 
     def _set_tool_mode(self, tool_id: str, btn: "QPushButton"):
         """Activate a tool (ruler/caliper/magnify) on all canvases, or deactivate if already active."""

@@ -247,6 +247,51 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
 
     timeline_events = load_events(session_dir)
+    
+    # Load manual beats and append non-normal ones to timeline (parallel manual marking)
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            for mb in manual_beats:
+                lbl = mb.get('label', 'N')
+                if lbl != 'N':
+                    timeline_events.append({
+                        'timestamp': float(mb.get('timestamp', 0.0)),
+                        'label': f"Parallel manual marked ({lbl})",
+                        'event_type': lbl,
+                        'source': 'Manual'
+                    })
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for timeline: {_mb_e}")
+    
+    # Load manual segments and append to timeline (segment manual marking)
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            for seg in manual_segments:
+                lbl = seg.get('label', 'Unknown')
+                start_sec = seg.get('start_sec', 0.0)
+                end_sec = seg.get('end_sec', 0.0)
+                start_time_str = seg.get('start_time_str', '')
+                end_time_str = seg.get('end_time_str', '')
+                # Show start and end time with label
+                time_range = f"{start_time_str} - {end_time_str}" if start_time_str and end_time_str else f"{_sec_to_hms(start_sec)} - {_sec_to_hms(end_sec)}"
+                timeline_events.append({
+                    'timestamp': float(start_sec),
+                    'label': f"Segment manual marked ({lbl})",
+                    'event_type': lbl,
+                    'source': 'Manual'
+                })
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for timeline: {_ms_e}")
+            
+    # Sort all events chronologically by timestamp
+    timeline_events = sorted(timeline_events, key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
+
     if timeline_events:
         story.append(Spacer(1, 6*mm))
         story.append(Paragraph("2B. EVENT TIMELINE", h2_style))
@@ -474,11 +519,20 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                                 ax.axvline(x=ts, color=marker_color, linewidth=0.8,
                                            alpha=0.85, ymin=0.85, ymax=1.0)
                                 
-                                # Draw the beat label above the tick
-                                ax.text(ts, text_y, lbl,
-                                        color=marker_color, fontsize=4,
+                                # Draw the beat label and its actual system time above the tick
+                                beat_time_str = _format_system_time(session_dir, ts)
+                                label_text = f"{lbl}\n{beat_time_str}"
+                                ax.text(ts, text_y, label_text,
+                                        color=marker_color, fontsize=3.5,
                                         ha='center', va='bottom',
                                         fontweight='bold', clip_on=True)
+
+                                # Highlight the QRS peak segment on the waveform itself
+                                qrs_start_t = ts - 0.06
+                                qrs_end_t = ts + 0.06
+                                mask = (x_time >= qrs_start_t) & (x_time <= qrs_end_t)
+                                if np.sum(mask) >= 2:
+                                    ax.plot(x_time[mask], ch2_data[mask], color=marker_color, linewidth=1.0)
                     
                     # Format timestamp
                     time_str = _format_system_time(session_dir, start_t)
