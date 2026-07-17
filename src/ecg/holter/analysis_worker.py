@@ -313,7 +313,7 @@ class HolterAnalysisWorker(threading.Thread):
                     has_received_serial_data=True,
                     min_serial_data_packets=50
                 )
-                arrhythmias = [a for a in arrhythmias if "Insufficient" not in a and "No " not in a]
+                arrhythmias = [a for a in arrhythmias if "Insufficient" not in a]
             if not arrhythmias and self._rule_arrhythmia_detector is not None and len(r_peaks) >= 3:
                 arrhythmias = self._rule_arrhythmia_detector.detect(
                     rr_intervals,
@@ -336,6 +336,7 @@ class HolterAnalysisWorker(threading.Thread):
                 rr_intervals=rr_intervals,
                 fs=fs,
                 chunk_start_sec=float(start_sec),
+                arrhythmias=arrhythmias,  # Pass detected arrhythmias to suppress beats when VFib
             )
         except Exception as e:
             print(f"[HolterWorker] Beat classification error: {e}")
@@ -516,13 +517,27 @@ class HolterAnalysisWorker(threading.Thread):
         rr_intervals: np.ndarray,
         fs: int,
         chunk_start_sec: float,
+        arrhythmias: list = None,
     ):
         """
         Classify beats and build lightweight template clusters for review UI.
         Returns class_counts, template_summary, classified_events.
+        
+        When VFib (Ventricular Fibrillation) is detected, mark all beats as 'V' 
+        to automatically color QRS peaks RED and display 'V' labels throughout,
+        providing clear visual indication of the VFib arrhythmia across all leads.
         """
         if len(r_peaks) == 0:
             return {}, [], []
+
+        # Check if VFib is detected - if so, suppress other arrhythmia classifications
+        vfib_detected = False
+        if arrhythmias:
+            for arrhythmia in arrhythmias:
+                if "Ventricular Fibrillation" in str(arrhythmia) or "VFib" in str(arrhythmia) or "VF" in str(arrhythmia):
+                    vfib_detected = True
+                    print(f"[HolterWorker] VFib detected - suppressing individual beat classifications")
+                    break
 
         pre = int(0.16 * fs)
         post = int(0.24 * fs)
@@ -554,7 +569,12 @@ class HolterAnalysisWorker(threading.Thread):
             }):
                 continue
 
-            label = self._label_beat(rr_prev, rr_median, qrs_width_ms)
+            # When VFib is detected, mark all beats as 'V' (Ventricular/VFib)
+            # This colors QRS peaks RED and displays 'V' labels throughout
+            if vfib_detected:
+                label = 'V'  # Mark all beats as V during VFib
+            else:
+                label = self._label_beat(rr_prev, rr_median, qrs_width_ms)
             class_counts[label] = class_counts.get(label, 0) + 1
 
             t_sec = float(chunk_start_sec + (float(r) / float(fs)))

@@ -8,6 +8,7 @@ Classes:
   - HolterFullDisclosureDialog    : 12-lead scrollable Full Disclosure ECG viewer dialog
 """
 
+import os
 import numpy as np
 from datetime import datetime
 
@@ -281,9 +282,9 @@ class HolterFullDisclosureDialog(QDialog):
         self.time_tabs.addTab("30 Sec")
         self.time_tabs.addTab("1 Min")
         self.time_tabs.addTab("2 Min")
-        self.time_tabs.addTab("5 Min")
-        self.time_tabs.addTab("10 Min")
-        self.time_tabs.addTab("15 Min")
+        # self.time_tabs.addTab("5 Min")
+        # self.time_tabs.addTab("10 Min")
+        # self.time_tabs.addTab("15 Min")
         self.time_tabs.setStyleSheet(f"""
             QTabBar::tab {{
                 background: #0d1b2a; color: #a0c4e8;
@@ -470,6 +471,12 @@ class HolterFullDisclosureDialog(QDialog):
             if hasattr(self, '_vertical_line_overlay'):
                 self._vertical_line_overlay.setGeometry(obj.rect())
         
+        # Only process mouse events from canvas_frame and canvases, NOT from other widgets
+        # This prevents scrollbar drag events from interfering with the canvas event handling
+        is_canvas_event = (obj == self._canvas_frame or obj in self._canvases)
+        if not is_canvas_event:
+            return super().eventFilter(obj, event)
+        
         # Handle RIGHT CLICK - show context menu for beat labeling
         if event.type() == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
             if obj == self._canvas_frame or obj in self._canvases:
@@ -485,8 +492,12 @@ class HolterFullDisclosureDialog(QDialog):
                 self._show_beat_context_menu(click_x, event.globalPos())
                 return True  # Consume the event
         
+        # Let canvas handle left click/drag if a measurement tool is active
+        if self._active_tool != TOOL_SELECT:
+            return super().eventFilter(obj, event)
+        
         # Handle mouse press - start drag selection
-        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+        elif event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
             # Check if the event is from a canvas or the canvas_frame
             if obj == self._canvas_frame or obj in self._canvases:
                 # Get click position relative to canvas_frame
@@ -555,10 +566,13 @@ class HolterFullDisclosureDialog(QDialog):
                         self._vertical_line_overlay.set_line_position(beat_x_global)
                     else:
                         self._vertical_line_overlay.set_line_position(click_x)
+                
+                return True  # Consume the event to prevent window resize
         
         # Handle mouse move - drag to select multiple beats
         elif event.type() == QEvent.MouseMove:
-            if hasattr(self, '_drag_start_x') and self._drag_start_x is not None:
+            # Only process mouse move if we actually started a drag from canvas
+            if hasattr(self, '_drag_start_x') and self._drag_start_x is not None and is_canvas_event:
                 # Get current drag position
                 if obj in self._canvases:
                     drag_pos_local = event.pos()
@@ -617,13 +631,15 @@ class HolterFullDisclosureDialog(QDialog):
                                         beat_x_global = lead_i_canvas.mapTo(self._canvas_frame, QPoint(beat_x, 0)).x()
                                         line_positions.append(beat_x_global)
                         self._vertical_line_overlay.set_line_positions(line_positions)
+                return True  # Consume the event to prevent window operations
         
         # Handle mouse release - end drag selection
         elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-            if hasattr(self, '_drag_start_x'):
+            if hasattr(self, '_drag_start_x') and is_canvas_event:
                 self._drag_start_x = None
                 self._drag_current_x = None
                 self._is_dragging = False
+                return True  # Consume the event to prevent window operations
                 
         return super().eventFilter(obj, event)
 
@@ -840,6 +856,31 @@ class HolterFullDisclosureDialog(QDialog):
                                 }
                                 canvas._beat_annotations.append(new_beat)
                                 print(f"[Full Disclosure] Created new beat annotation at {target_ts:.3f}s as '{label}'")
+                                
+                            # Update engine metrics for persistence across scrolling
+                            if hasattr(self._engine, '_metrics'):
+                                engine_beat_found = False
+                                for m in self._engine._metrics:
+                                    all_beats = m.get('all_beats', [])
+                                    for engine_beat in all_beats:
+                                        if abs(float(engine_beat.get('timestamp', 0.0)) - target_ts) < snap_tolerance_sec:
+                                            engine_beat['label'] = label
+                                            engine_beat_found = True
+                                            break
+                                    if engine_beat_found:
+                                        break
+                                
+                                if not engine_beat_found and self._engine._metrics:
+                                    added = False
+                                    for m in self._engine._metrics:
+                                        m_start = float(m.get('start_sec', 0.0))
+                                        m_dur = float(m.get('duration', 3600.0))
+                                        if m_start <= target_ts <= m_start + m_dur:
+                                            m.setdefault('all_beats', []).append({'timestamp': target_ts, 'label': label})
+                                            added = True
+                                            break
+                                    if not added:
+                                        self._engine._metrics[0].setdefault('all_beats', []).append({'timestamp': target_ts, 'label': label})
                         
                         # Keep sorted by timestamp for consistent rendering
                         canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
@@ -869,6 +910,54 @@ class HolterFullDisclosureDialog(QDialog):
                                 c._beat_annotations.sort(key=lambda b: b['timestamp'])
                             c.update()
                 break
+        
+        # Persist all manual beat edits to disk so the report generator can read them
+        self._save_manual_beats()
+    
+    def _save_manual_beats(self):
+        """Write all manually-edited beat annotations to manual_beats.json in the session dir."""
+        import json
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+            
+            # Collect all beats from engine._metrics that exist there
+            # Use the first Lead-I canvas _beat_annotations as the master list
+            all_beats = []
+            lead_i_canvas = None
+            for c in self._canvases:
+                if c.lead_name == 'I':
+                    lead_i_canvas = c
+                    break
+            
+            if lead_i_canvas and hasattr(lead_i_canvas, '_beat_annotations'):
+                for b in lead_i_canvas._beat_annotations:
+                    all_beats.append({
+                        'timestamp': float(b.get('timestamp', 0.0)),
+                        'label': str(b.get('label', 'N')),
+                        'color': str(b.get('color', '#00FF00'))
+                    })
+            else:
+                # Fallback: collect from engine._metrics all_beats
+                if hasattr(self._engine, '_metrics'):
+                    seen = set()
+                    for m in self._engine._metrics:
+                        for b in m.get('all_beats', []):
+                            ts = float(b.get('timestamp', 0.0))
+                            if ts not in seen:
+                                seen.add(ts)
+                                all_beats.append({
+                                    'timestamp': ts,
+                                    'label': str(b.get('label', 'N')),
+                                    'color': '#00FF00'
+                                })
+            
+            all_beats.sort(key=lambda b: b['timestamp'])
+            with open(manual_beats_path, 'w') as f:
+                json.dump(all_beats, f, indent=2)
+            print(f"[Full Disclosure] Saved {len(all_beats)} manual beats to {manual_beats_path}")
+        except Exception as e:
+            print(f"[Full Disclosure] Could not save manual beats: {e}")
     
     def _delete_beat_at_position(self, click_x: int):
         """Delete the beat at the clicked position."""
@@ -913,6 +1002,18 @@ class HolterFullDisclosureDialog(QDialog):
                                     if not any(abs(b['timestamp'] - t_ts) < snap_tolerance_sec for t_ts in target_timestamps)
                                 ]
                             c.update()
+                            
+                        # Remove from engine metrics for persistence across scrolling
+                        if hasattr(self._engine, '_metrics'):
+                            for m in self._engine._metrics:
+                                if 'all_beats' in m:
+                                    m['all_beats'] = [
+                                        eb for eb in m['all_beats']
+                                        if not any(abs(float(eb.get('timestamp', 0.0)) - t_ts) < snap_tolerance_sec for t_ts in target_timestamps)
+                                    ]
+        
+        # Persist the deletion to disk
+        self._save_manual_beats()
 
     def _on_scrollbar_moved(self, val):
         start_sec = float(val) / 100.0
@@ -942,9 +1043,9 @@ class HolterFullDisclosureDialog(QDialog):
         if "30 Sec" in text: self._window_sec = 30.0
         elif "1 Min" in text: self._window_sec = 60.0
         elif "2 Min" in text: self._window_sec = 120.0
-        elif "5 Min" in text: self._window_sec = 300.0
-        elif "10 Min" in text: self._window_sec = 600.0
-        elif "15 Min" in text: self._window_sec = 900.0
+        # elif "5 Min" in text: self._window_sec = 300.0
+        # elif "10 Min" in text: self._window_sec = 600.0
+        # elif "15 Min" in text: self._window_sec = 900.0
         else: self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
         
         # Clear any selected beats and vertical lines when tab changes
@@ -969,12 +1070,10 @@ class HolterFullDisclosureDialog(QDialog):
         # Always enable mouse on overlay for dragging
         # self.overlay.set_mouse_enabled(True)
         
-        # When "Full disc" is selected, show the last part of the recording
-        if "Full disc" in text:
-            self._current_start = max(0.0, self._engine.duration_sec - self._window_sec)
-        else:
-            self._current_start = 0.0
-            
+        # Preserve current start position, just ensure it's within bounds
+        max_start = max(0.0, self._engine.duration_sec - self._window_sec)
+        self._current_start = max(0.0, min(self._current_start, max_start))
+        
         self._update_scrollbar_range()
         self.time_scrollbar.setValue(int(self._current_start * 100))
         self._update_canvases(self._current_start)
@@ -1031,6 +1130,22 @@ class HolterFullDisclosureDialog(QDialog):
             "X": "#0000FF",      # Artifact - Blue
             "Other": "#FFFF00"   # Other - Yellow
         }
+        
+        # Check if VFib is detected in this window
+        vfib_detected = False
+        try:
+            if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
+                for ev in self._engine._structured_events:
+                    ev_ts = float(ev.get('timestamp', 0.0))
+                    if start_sec <= ev_ts <= end_sec:
+                        ev_label = str(ev.get('label', ''))
+                        if 'Ventricular Fibrillation' in ev_label or 'VFib' in ev_label or 'VF' in ev_label:
+                            vfib_detected = True
+                            print(f"[Full Disclosure] VFib detected in window [{start_sec:.1f}, {end_sec:.1f}]")
+                            break
+        except Exception as e:
+            print(f"[Full Disclosure] VFib detection error: {e}")
+        
         try:
             for m in self._engine._metrics:
                 all_beats = m.get('all_beats', [])
@@ -1039,11 +1154,18 @@ class HolterFullDisclosureDialog(QDialog):
                 for beat in all_beats:
                     ts = float(beat.get('timestamp', 0.0))
                     if start_sec <= ts <= end_sec:
-                        lbl = str(beat.get('label', 'N'))
+                        # When VFib is detected, override all beats to 'V' with RED color
+                        if vfib_detected:
+                            lbl = 'V'
+                            color = label_colors.get('V', "#FF3333")  # RED for VFib
+                        else:
+                            lbl = str(beat.get('label', 'N'))
+                            color = label_colors.get(lbl, "#00FF00")  # Use beat's color
+                        
                         beat_annotations.append({
                             'timestamp': ts,
                             'label': lbl,
-                            'color': label_colors.get(lbl, "#00FF00")  # Default to green
+                            'color': color
                         })
             beat_annotations.sort(key=lambda b: b['timestamp'])
         except Exception as e:
