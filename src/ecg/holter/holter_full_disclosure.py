@@ -9,6 +9,7 @@ Classes:
 """
 
 import os
+import json
 import numpy as np
 from datetime import datetime
 
@@ -394,8 +395,26 @@ class HolterFullDisclosureDialog(QDialog):
         except Exception as e:
             print(f"[Full Disclosure] Error merging manual beats on startup: {e}")
 
+        # Load manual_segments.json if it exists and restore segment annotations
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+            if os.path.exists(manual_segments_path):
+                with open(manual_segments_path, 'r') as f:
+                    segments_data = json.load(f)
+                self._segment_annotations = segments_data
+                print(f"[Full Disclosure] Loaded {len(segments_data)} segment annotations on startup.")
+                print(f"[Full Disclosure] Segment data: {segments_data}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error loading segment annotations on startup: {e}")
+
         self._update_canvases(0.0)
 
+    def showEvent(self, event):
+        """Override showEvent to refresh segment overlay when dialog is shown."""
+        super().showEvent(event)
+        # Refresh segment overlay to ensure loaded segments are visible
+        QTimer.singleShot(100, self._refresh_segment_overlay)
 
     def _recalc_window(self):
         idx = self.time_tabs.currentIndex() if hasattr(self, 'time_tabs') else 0
@@ -1117,6 +1136,22 @@ class HolterFullDisclosureDialog(QDialog):
         }
         self._segment_annotations.append(annotation)
 
+        # Save segment annotations to JSON file for report generation
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            segments_path = os.path.join(session_dir, 'manual_segments.json')
+            segments_data = []
+            if os.path.exists(segments_path):
+                with open(segments_path, 'r') as f:
+                    segments_data = json.load(f)
+            segments_data.append(annotation)
+            with open(segments_path, 'w') as f:
+                json.dump(segments_data, f, indent=2)
+            print(f"[Full Disclosure] Saved segment annotation to {segments_path}")
+            print(f"[Full Disclosure] Total segments in file: {len(segments_data)}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error saving segment annotations: {e}")
+
         # Paint it on the overlay
         if hasattr(self, '_segment_overlay'):
             self._segment_overlay.clear_drag()
@@ -1137,6 +1172,26 @@ class HolterFullDisclosureDialog(QDialog):
         """Remove a finalized segment from annotations and the overlay."""
         if segment in self._segment_annotations:
             self._segment_annotations.remove(segment)
+        
+        # Remove from JSON file as well
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            segments_path = os.path.join(session_dir, 'manual_segments.json')
+            if os.path.exists(segments_path):
+                with open(segments_path, 'r') as f:
+                    segments_data = json.load(f)
+                # Remove the segment by matching start_sec, end_sec, and label
+                segments_data = [s for s in segments_data if not (
+                    abs(s.get('start_sec', 0) - segment.get('start_sec', 0)) < 0.01 and
+                    abs(s.get('end_sec', 0) - segment.get('end_sec', 0)) < 0.01 and
+                    s.get('label') == segment.get('label')
+                )]
+                with open(segments_path, 'w') as f:
+                    json.dump(segments_data, f, indent=2)
+                print(f"[Full Disclosure] Removed segment from {segments_path}")
+        except Exception as e:
+            print(f"[Full Disclosure] Error removing segment from JSON: {e}")
+        
         # Clear and rebuild visible segment list in segment overlay
         if hasattr(self, '_segment_overlay'):
             self._segment_overlay.clear_segments()
@@ -1774,6 +1829,42 @@ class HolterFullDisclosureDialog(QDialog):
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
+
+    def _refresh_segment_overlay(self):
+        """Force refresh of segment overlay to ensure loaded segments are visible."""
+        if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+            # Update overlay geometry to match current canvas frame size
+            if hasattr(self, '_canvas_frame'):
+                self._segment_overlay.setGeometry(self._canvas_frame.rect())
+            
+            self._segment_overlay.clear_segments()
+            ref = self._canvases[0] if self._canvases else None
+            if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
+                from PyQt5.QtCore import QPoint
+                ref_w  = ref.width()
+                data_l = len(ref._data)
+                if ref_w > 0 and data_l > 0:
+                    ref_end = ref._start_sec + data_l / ref._fs
+                    span    = ref_end - ref._start_sec
+                    
+                    for seg in self._segment_annotations:
+                        s_sec = seg['start_sec']
+                        e_sec = seg['end_sec']
+                        # Check overlap with visible range
+                        if max(s_sec, ref._start_sec) <= min(e_sec, ref_end):
+                            if span > 0:
+                                sx_local = int(((s_sec - ref._start_sec) / span) * ref_w)
+                                ex_local = int(((e_sec - ref._start_sec) / span) * ref_w)
+                                sx_local = max(0, min(ref_w, sx_local))
+                                ex_local = max(0, min(ref_w, ex_local))
+                                sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
+                                ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
+                                
+                                self._segment_overlay.add_segment(
+                                    sx_global, ex_global, s_sec, e_sec,
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
+                                )
+            self._segment_overlay.update()
 
 
 

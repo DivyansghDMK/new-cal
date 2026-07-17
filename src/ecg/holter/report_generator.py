@@ -248,7 +248,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
 
     timeline_events = load_events(session_dir)
     
-    # Load manual beats and append non-normal ones to timeline
+    # Load manual beats and append non-normal ones to timeline (parallel manual marking)
     manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
     if os.path.exists(manual_beats_path):
         try:
@@ -259,12 +259,35 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 if lbl != 'N':
                     timeline_events.append({
                         'timestamp': float(mb.get('timestamp', 0.0)),
-                        'label': f"Manually marked {lbl}",
+                        'label': f"Parallel manual marked ({lbl})",
                         'event_type': lbl,
                         'source': 'Manual'
                     })
         except Exception as _mb_e:
             print(f"[HolterReport] Could not load manual beats for timeline: {_mb_e}")
+    
+    # Load manual segments and append to timeline (segment manual marking)
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            for seg in manual_segments:
+                lbl = seg.get('label', 'Unknown')
+                start_sec = seg.get('start_sec', 0.0)
+                end_sec = seg.get('end_sec', 0.0)
+                start_time_str = seg.get('start_time_str', '')
+                end_time_str = seg.get('end_time_str', '')
+                # Show start and end time with label
+                time_range = f"{start_time_str} - {end_time_str}" if start_time_str and end_time_str else f"{_sec_to_hms(start_sec)} - {_sec_to_hms(end_sec)}"
+                timeline_events.append({
+                    'timestamp': float(start_sec),
+                    'label': f"Segment manual marked ({lbl})",
+                    'event_type': lbl,
+                    'source': 'Manual'
+                })
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for timeline: {_ms_e}")
             
     # Sort all events chronologically by timestamp
     timeline_events = sorted(timeline_events, key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
