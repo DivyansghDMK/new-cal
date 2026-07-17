@@ -124,12 +124,17 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     dur_h = int(summary.get('duration_sec', 0) // 3600)
     dur_m = int((summary.get('duration_sec', 0) % 3600) // 60)
     pname = patient_info.get('name', patient_info.get('patient_name', 'Unknown'))
+    
+    st_time_str, end_time_str = _get_recording_start_end(session_dir, float(summary.get('duration_sec', 0)))
+    
     pinfo_data = [
         ['Patient Name', pname,              'Recording Duration', f"{dur_h}h {dur_m}m"],
         ['Age / Gender', f"{patient_info.get('age','--')} / {patient_info.get('gender','--')}",
          'Report Date', datetime.now().strftime('%Y-%m-%d %H:%M')],
         ['Doctor',       patient_info.get('doctor', '--'),
-         'Organisation', patient_info.get('Org.', patient_info.get('org', '--'))],
+         'Recording Start', st_time_str],
+        ['Organisation', patient_info.get('Org.', patient_info.get('org', '--')),
+         'Recording End', end_time_str],
         ['Email',        patient_info.get('email', '--'),
          'Phone',        patient_info.get('phone', patient_info.get('doctor_mobile', '--'))],
     ]
@@ -245,25 +250,32 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     if timeline_events:
         story.append(Spacer(1, 6*mm))
         story.append(Paragraph("2B. EVENT TIMELINE", h2_style))
-        timeline_rows = [["Time", "Label", "Source", "Confidence"]]
-        for event in timeline_events[:50]:
-            timeline_rows.append([
-                _sec_to_hms(float(event.get("timestamp", 0.0) or 0.0)),
-                str(event.get("label", event.get("event_type", "Event"))),
-                str(event.get("source", "")),
-                f"{float(event.get('confidence', 0.0) or 0.0):.2f}",
-            ])
-        timeline_table = Table(timeline_rows, colWidths=[28*mm, 72*mm, 35*mm, 25*mm])
+        timeline_rows = [["Time", "Label", "Source"]]
+        seen_events = set()
+        for event in timeline_events:
+            t_str = _format_system_time(session_dir, float(event.get("timestamp", 0.0) or 0.0))
+            lbl   = str(event.get("label", event.get("event_type", "Event")))
+            src   = str(event.get("source", ""))
+            dedup_key = (t_str, lbl)
+            if dedup_key in seen_events:
+                continue
+            seen_events.add(dedup_key)
+            timeline_rows.append([t_str, lbl, src])
+
+
+        timeline_table = Table(timeline_rows, colWidths=[35*mm, 100*mm, 25*mm],
+                               repeatRows=1)          # repeat header on each page
         timeline_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), BLUE),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
+            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE',   (0, 0), (-1, -1), 7),     # compact font
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5FAFF')]),
-            ('GRID', (0, 0), (-1, -1), 0.4, colors.lightgrey),
-            ('PADDING', (0, 0), (-1, -1), 4),
+            ('GRID',       (0, 0), (-1, -1), 0.3, colors.lightgrey),
+            ('PADDING',    (0, 0), (-1, -1), 2),     # tight padding for more rows per page
         ]))
         story.append(timeline_table)
+
 
     #    HOURLY ANALYSIS                                                 
     story.append(Spacer(1, 15*mm))
@@ -375,7 +387,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ecgh_path = os.path.join(session_dir, 'recording.ecgh')
     if os.path.exists(ecgh_path):
         story.append(PageBreak())
-        story.append(Paragraph("FULL DISCLOSURE ECG (10s CHUNKS)", title_style))
+        story.append(Paragraph("FULL DISCLOSURE ECG", title_style))
         story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
         
         try:
@@ -390,6 +402,18 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             chunk_sec = 60.0 # 1 minute per row
             rows_per_page = 30 # 30 minutes per page
             fs = engine.fs if hasattr(engine, 'fs') else 250
+            
+            # --- Load manually marked QRS beats (saved by Full Disclosure dialog) ---
+            manual_beats = []  # list of {timestamp, label, color}
+            manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+            if os.path.exists(manual_beats_path):
+                try:
+                    with open(manual_beats_path, 'r') as _mb_f:
+                        manual_beats = json.load(_mb_f)
+                    print(f"[HolterReport] Loaded {len(manual_beats)} manual beats from {manual_beats_path}")
+                except Exception as _mb_e:
+                    print(f"[HolterReport] Could not load manual beats: {_mb_e}")
+                    manual_beats = []
             
             n_chunks = int(np.ceil(dur / chunk_sec))
             if n_chunks == 0: n_chunks = 1
@@ -407,28 +431,57 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 if actual_rows == 1: axes = [axes]
                 
                 # Title
-                fig.suptitle("Full Disclosure(CH1)", fontsize=14, fontweight='bold', y=0.98 if actual_rows > 5 else 1.1)
+                fig.suptitle("Full Disclosure(Lead II)", fontsize=14, fontweight='bold', y=0.98 if actual_rows > 5 else 1.1)
                 
                 for r in range(actual_rows):
                     chunk_i = start_chunk + r
                     start_t = chunk_i * chunk_sec
+                    end_t = start_t + chunk_sec
                     engine._current_sec = start_t + (chunk_sec/2)
                     data = engine.get_all_leads_data(window_sec=chunk_sec)
                     
                     if data is None or data.shape[0] == 0:
                         continue
                         
-                    ch1_data = data[0] # Lead 1
-                    x_time = np.linspace(start_t, start_t + chunk_sec, len(ch1_data))
+                    ch2_data = data[1] # Lead II
+                    x_time = np.linspace(start_t, end_t, len(ch2_data))
                     
                     ax = axes[r]
-                    ax.plot(x_time, ch1_data, color='black', linewidth=0.5)
+                    ax.plot(x_time, ch2_data, color='black', linewidth=0.5)
+                    
+                    # --- Overlay manually marked QRS beats for this time window ---
+                    if manual_beats:
+                        # Compute y-range for placing label text above the waveform
+                        y_min = float(np.min(ch2_data)) if len(ch2_data) > 0 else -1.0
+                        y_max = float(np.max(ch2_data)) if len(ch2_data) > 0 else 1.0
+                        y_range = y_max - y_min if (y_max - y_min) > 0 else 1.0
+                        tick_top = y_max + y_range * 0.05   # slightly above the signal
+                        text_y   = y_max + y_range * 0.15   # label sits above the tick
+                        
+                        for mb in manual_beats:
+                            ts = float(mb.get('timestamp', -1.0))
+                            if start_t <= ts < end_t:
+                                lbl   = str(mb.get('label', 'N'))
+                                # Convert stored hex color (#RRGGBB) to matplotlib-compatible tuple
+                                raw_col = str(mb.get('color', '#FF0000'))
+                                try:
+                                    import matplotlib.colors as mcolors
+                                    marker_color = mcolors.to_rgba(raw_col)
+                                except Exception:
+                                    marker_color = 'red'
+                                
+                                # Draw a short vertical tick line at the QRS position
+                                ax.axvline(x=ts, color=marker_color, linewidth=0.8,
+                                           alpha=0.85, ymin=0.85, ymax=1.0)
+                                
+                                # Draw the beat label above the tick
+                                ax.text(ts, text_y, lbl,
+                                        color=marker_color, fontsize=4,
+                                        ha='center', va='bottom',
+                                        fontweight='bold', clip_on=True)
                     
                     # Format timestamp
-                    h = int(start_t // 3600)
-                    m = int((start_t % 3600) // 60)
-                    s = int(start_t % 60)
-                    time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                    time_str = _format_system_time(session_dir, start_t)
                     
                     ax.set_ylabel(time_str, fontsize=6, rotation=0, labelpad=25, va='center')
                     ax.axis('off') # remove borders
@@ -453,6 +506,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         except Exception as e:
             print(f"Error generating full disclosure: {e}")
             story.append(Paragraph(f"Could not generate waveforms: {e}", body_style))
+
 
     doc.build(story)
     print(f"[HolterReport] PDF saved: {output_path}")
@@ -571,11 +625,11 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
     timeline_events = load_events(session_dir)
     if timeline_events:
         lines += ["", "EVENT TIMELINE"]
-        for event in timeline_events[:100]:
+        for event in timeline_events:
             lines.append(
-                f"  {_sec_to_hms(float(event.get('timestamp', 0.0) or 0.0))} | "
+                f"  {_format_system_time(session_dir, float(event.get('timestamp', 0.0) or 0.0))} | "
                 f"{event.get('label', event.get('event_type', 'Event'))} | "
-                f"{event.get('source', '')} | conf={float(event.get('confidence', 0.0) or 0.0):.2f}"
+                f"{event.get('source', '')}"
             )
 
     lines += ["", "=" * 60, "Physician Signature: _______________", "Date: _______________"]
@@ -592,3 +646,53 @@ def _sec_to_hms(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _format_system_time(session_dir: str, chunk_timestamp: float) -> str:
+    """
+    Convert chunk timestamp to system recording time.
+    Reads start_time from recording.ecgh index and adds chunk timestamp.
+    """
+    try:
+        import json
+        index_path = os.path.join(session_dir, 'recording_index.json')
+        if os.path.exists(index_path):
+            with open(index_path, 'r') as f:
+                index_data = json.load(f)
+            start_time = index_data.get('start_time')
+            if start_time:
+                from datetime import datetime
+                system_time = datetime.fromtimestamp(start_time + chunk_timestamp)
+                return system_time.strftime('%H:%M:%S')
+    except Exception as e:
+        print(f"[HolterReport] Error reading system time: {e}")
+    # Fallback to chunk time in HH:MM:SS format
+    return _sec_to_hms(chunk_timestamp)
+
+
+def _get_recording_start_end(session_dir: str, duration_sec: float) -> tuple:
+    """Return recording start and end date-time strings."""
+    start_time = None
+    try:
+        import json
+        index_path = os.path.join(session_dir, 'recording_index.json')
+        if os.path.exists(index_path):
+            with open(index_path, 'r') as f:
+                index_data = json.load(f)
+            start_time = index_data.get('start_time')
+    except Exception as e:
+        print(f"[HolterReport] Error reading start time: {e}")
+
+    if not start_time:
+        ecgh_path = os.path.join(session_dir, 'recording.ecgh')
+        if os.path.exists(ecgh_path):
+            start_time = os.path.getmtime(ecgh_path) - duration_sec
+        else:
+            import time
+            start_time = time.time() - duration_sec
+
+    from datetime import datetime
+    start_dt = datetime.fromtimestamp(start_time)
+    end_dt = datetime.fromtimestamp(start_time + duration_sec)
+    return start_dt.strftime('%Y-%m-%d %H:%M:%S'), end_dt.strftime('%Y-%m-%d %H:%M:%S')
+

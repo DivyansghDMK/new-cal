@@ -1,4 +1,4 @@
-﻿"""
+"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -434,6 +434,44 @@ def _show_message_box(parent, icon, title, text, buttons=QMessageBox.Ok, default
 def _sec_to_hms(s: float) -> str:
     h = int(s // 3600); m = int((s % 3600) // 60); sec = int(s % 60)
     return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def _format_system_time(session_dir: str, chunk_timestamp: float) -> str:
+    """Convert relative timestamp to actual system wall-clock time."""
+    if not session_dir:
+        return _sec_to_hms(chunk_timestamp)
+    try:
+        index_path = os.path.join(session_dir, 'recording_index.json')
+        if os.path.exists(index_path):
+            with open(index_path, 'r') as f:
+                index_data = json.load(f)
+            start_time = index_data.get('start_time')
+            if start_time:
+                system_time = datetime.fromtimestamp(start_time + chunk_timestamp)
+                return system_time.strftime('%H:%M:%S')
+    except Exception as e:
+        print(f"[HolterUI] Error reading system time: {e}")
+    return _sec_to_hms(chunk_timestamp)
+
+
+def _get_recording_start_end_times(session_dir: str, duration_sec: float) -> tuple:
+    """Return recording start and end date-time strings."""
+    if not session_dir:
+        return "Unknown", "Unknown"
+    try:
+        index_path = os.path.join(session_dir, 'recording_index.json')
+        if os.path.exists(index_path):
+            with open(index_path, 'r') as f:
+                index_data = json.load(f)
+            start_time = index_data.get('start_time')
+            if start_time:
+                start_dt = datetime.fromtimestamp(start_time)
+                end_dt = datetime.fromtimestamp(start_time + duration_sec)
+                return start_dt.strftime('%Y-%m-%d %H:%M:%S'), end_dt.strftime('%Y-%m-%d %H:%M:%S')
+    except Exception as e:
+        print(f"[HolterUI] Error reading recording start/end times: {e}")
+    return "Unknown", "Unknown"
+
 
 
 # -----------------------------------------------------------------------------
@@ -1186,7 +1224,8 @@ class HolterReplayPanel(QWidget):
             b.setCheckable(True)
             b.setToolTip(f"Show {lbl} beats" if key != "all" else "Show all beats")
             b.setFixedHeight(24)
-            b.setStyleSheet(_style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK))
+            style = _style_btn(COL_DARK, COL_GREEN, COL_GREEN_DRK).replace("padding: 7px 14px;", "padding: 1px 4px;")
+            b.setStyleSheet(style)
             b.clicked.connect(lambda checked=False, k=key: self._set_lorenz_class_filter(k))
             self._lorenz_class_btns[key] = b
             lorenz_filter_row.addWidget(b)
@@ -3223,7 +3262,7 @@ class ECGStripCanvas(QWidget):
         
         # Determine colored intervals based on annotations
         colored_intervals = []
-        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+        if self._show_annotations and hasattr(self, '_beat_annotations') and self._beat_annotations:
             end_sec = self._start_sec + len(d) / self._fs
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
@@ -3345,7 +3384,8 @@ class ECGStripCanvas(QWidget):
                         'end_label': 'N'
                     })
 
-        # Draw N labels for all peaks (annotated or detected) if annotations enabled
+        # Draw N/beat labels for all peaks (annotated or detected) if annotations enabled
+        # Labels should display the actual beat type (N, V, S, AF, etc.) and use the matching color
         if self._show_annotations:
             peaks_to_draw = list(annotated_beats.keys())
             if lead_name == 'I' and show_vertical_lines:
@@ -3364,33 +3404,36 @@ class ECGStripCanvas(QWidget):
                     pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
                     
-                    # Check if this peak has an annotation
-                    lbl = 'N'  # Default to N
+                    # Default: Normal beat shown as 'N' in white
+                    lbl = 'N'  
                     color = COL_WHITE
                     
+                    # Check if this peak has an annotation
                     annotated_beat = None
                     for annot_ts, beat in annotated_beats.items():
                         if abs(ts - annot_ts) < 0.05:  # Within 50ms
                             annotated_beat = beat
                             break
                     
+                    # If annotated, use the label and color from annotation
                     if annotated_beat:
                         lbl = annotated_beat.get('label', 'N')
                         color = annotated_beat.get('color', None)
                         
+                    # Fallback color mapping if color not in annotation
                     if not color:
-                        # Color code labels fallback
                         if lbl == 'N':
                             color = COL_WHITE
                         elif lbl == 'V':
-                            color = "#FF3333"
+                            color = "#FF3333"      # Red
                         elif lbl == 'S':
-                            color = "#00FFFF"
+                            color = "#00FFFF"      # Cyan
                         elif lbl in ['AF', 'P']:
-                            color = "#FF00FF"
+                            color = "#FF00FF"      # Magenta
                         else:
-                            color = "#FFFF00"
-                        
+                            color = "#FFFF00"      # Yellow
+                    
+                    # Draw label with its color
                     painter.setPen(QPen(QColor(color)))
                     painter.drawText(bx, 12, lbl)
         
@@ -4309,11 +4352,14 @@ class HolterEventsPanel(QWidget):
         nav_layout.addStretch()
         layout.addWidget(nav)
 
+    def set_session_dir(self, session_dir: str):
+        self._session_dir = session_dir or ""
+
     def load_events(self, events: list, summary: dict):
         self._events = events
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
-            t_str = _sec_to_hms(ev['timestamp'])
+            t_str = _format_system_time(self._session_dir, ev['timestamp'])
             source = ev.get("source", "analysis")
             conf = ev.get("confidence", 0.0)
             for j, val in enumerate([ev['label'], t_str, "12", "7s", source, f"{float(conf or 0.0):.2f}"]):
@@ -4383,10 +4429,10 @@ class HolterEventsPanel(QWidget):
         self._events = []
         self._selected_payload = {}
         self._ev_table.setRowCount(0)
+        
 # -----------------------------------------------------------------------------
-# ?????????????????????????????????????????????????????????????????????????????
 # 8. HOLTER TEMPLATE PANEL  (template gallery)
-# ?????????????????????????????????????????????????????????????????????????????
+# -----------------------------------------------------------------------------
 
 class _TemplateMetricCard(QFrame):
     def __init__(self, title: str, value: str = "", accent: str = COL_GREEN, parent=None):
@@ -8574,7 +8620,8 @@ class HolterEditEventPanel(QWidget):
         for i, ev in enumerate(events):
             source = str(ev.get("source", "analysis"))
             conf = float(ev.get("confidence", 0.0) or 0.0)
-            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "12", "7s", source, f"{conf:.2f}"]):
+            t_str = _format_system_time(self._session_dir, ev['timestamp'])
+            for j, val in enumerate([ev['label'], t_str, "12", "7s", source, f"{conf:.2f}"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 if j == 0:
@@ -8687,7 +8734,12 @@ class HolterEditStripsPanel(QWidget):
         self._selected_payload = {}
         self._tile_widgets = {}
         self._stat_labels = {}
+        self._session_dir = ""
         self._build_ui()
+
+    def set_session_dir(self, session_dir: str):
+        self._session_dir = session_dir or ""
+
 
     def _find_template_host(self):
         parent = self.parentWidget()
@@ -9048,7 +9100,8 @@ class HolterEditStripsPanel(QWidget):
         self._build_focus_cards()
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
-            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "12", "7s"]):
+            t_str = _format_system_time(self._session_dir, ev['timestamp'])
+            for j, val in enumerate([ev['label'], t_str, "12", "7s"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
@@ -9729,6 +9782,9 @@ class HolterMainWindow(QDialog):
         self._session_chip = QLabel(f"Session: {session_name}")
         self._session_chip.setStyleSheet(f"background:{UI_PANEL};color:{UI_MUTED};border:1px solid {UI_BORDER};border-radius:14px;padding:6px 12px;font-size:11px;font-weight:600;")
         sb_layout.addWidget(self._session_chip)
+        self._rec_time_chip = QLabel("Recording: --")
+        self._rec_time_chip.setStyleSheet(f"background:{UI_PANEL};color:{UI_MUTED};border:1px solid {UI_BORDER};border-radius:14px;padding:6px 12px;font-size:11px;font-weight:600;")
+        sb_layout.addWidget(self._rec_time_chip)
         sb_layout.addStretch()
         self._analysis_state = QLabel("Clinical review mode")
         self._analysis_state.setStyleSheet(f"color:{UI_MUTED};font-size:11px;font-weight:600;border:none;")
@@ -9903,6 +9959,7 @@ class HolterMainWindow(QDialog):
 
         # Event timeline
         self._events_panel = HolterEventsPanel()
+        self._events_panel.set_session_dir(self.session_dir)
         self._events_panel.load_events(events, self._summary)
         self._events_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._events_panel, "EVENTS")
@@ -9921,6 +9978,7 @@ class HolterMainWindow(QDialog):
 
         # Edit Strips
         self._edit_strips_panel = HolterEditStripsPanel()
+        self._edit_strips_panel.set_session_dir(self.session_dir)
         self._edit_strips_panel.seek_requested.connect(self._on_seek_requested)
         self._edit_strips_panel.load_events(events, self._summary, self._metrics_list)
         self._tabs.addTab(self._edit_strips_panel, "EDIT STRIPS")
@@ -10175,12 +10233,15 @@ class HolterMainWindow(QDialog):
             self._report_table_panel.update_from_metrics(self._metrics_list)
         events = self._build_linked_events()
         if hasattr(self, '_events_panel'):
+            self._events_panel.set_session_dir(self.session_dir)
             self._events_panel.load_events(events, self._summary)
         if hasattr(self, '_template_panel'):
             self._template_panel.update_from_metrics(self._metrics_list, self._summary)
         if hasattr(self, '_edit_event_panel'):
+            self._edit_event_panel.set_session_dir(self.session_dir)
             self._edit_event_panel.load_events(events, self._summary)
         if hasattr(self, '_edit_strips_panel'):
+            self._edit_strips_panel.set_session_dir(self.session_dir)
             self._edit_strips_panel.load_events(events, self._summary, self._metrics_list)
         if hasattr(self, '_wave_panel'):
             self._wave_panel.set_live_source(self._live_source)
@@ -10219,6 +10280,13 @@ class HolterMainWindow(QDialog):
         if hasattr(self, '_session_chip'):
             session_name = os.path.basename(self.session_dir) if self.session_dir else "Active Session"
             self._session_chip.setText(f"Session: {session_name}")
+        if hasattr(self, '_rec_time_chip'):
+            st_str, end_str = _get_recording_start_end_times(self.session_dir, dur)
+            if st_str != "Unknown":
+                self._rec_time_chip.setText(f"Recording: {st_str} to {end_str}")
+                self._rec_time_chip.show()
+            else:
+                self._rec_time_chip.hide()
         if hasattr(self, '_analysis_state') and hasattr(self, '_tabs'):
             self._analysis_state.setText(f"Focused view: {self._tabs.tabText(self._tabs.currentIndex())}")
 
@@ -10350,6 +10418,10 @@ class HolterMainWindow(QDialog):
             self.patient_info = _normalize_patient_info(patient_info)
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
+        if hasattr(self, '_events_panel'):
+            self._events_panel.set_session_dir(self.session_dir)
+        if hasattr(self, '_edit_strips_panel'):
+            self._edit_strips_panel.set_session_dir(self.session_dir)
         if writer and not hasattr(self, '_status_bar'):
             self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
             self._status_bar.stop_requested.connect(self._stop_recording)
@@ -10367,6 +10439,10 @@ class HolterMainWindow(QDialog):
         self.patient_info = _normalize_patient_info(patient_info or {})
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.set_session_dir(self.session_dir)
+        if hasattr(self, '_events_panel'):
+            self._events_panel.set_session_dir(self.session_dir)
+        if hasattr(self, '_edit_strips_panel'):
+            self._edit_strips_panel.set_session_dir(self.session_dir)
         if getattr(self, "_replay_engine", None) and self._replay_engine.is_playing():
             self._replay_engine.pause()
         if hasattr(self, "_replay_panel"):
