@@ -3502,25 +3502,25 @@ class ECGStripCanvas(QWidget):
                     pct = (ts - self._start_sec) / (end_sec - self._start_sec) if (end_sec - self._start_sec) > 0 else 0.0
                     bx = int(pct * w)
 
-                    # --- Draw beat label (bold, larger font) ---
+                    # --- Draw time string above the label (white, bold) ---
+                    if start_time:
+                        beat_time_str = datetime.fromtimestamp(start_time + ts).strftime('%H:%M:%S')
+                        time_font = painter.font()
+                        time_font.setPixelSize(9)
+                        time_font.setBold(True)
+                        painter.setFont(time_font)
+                        painter.setPen(QPen(QColor("#FFFFFF")))
+                        # Center time above the label position
+                        time_width = painter.fontMetrics().horizontalAdvance(beat_time_str)
+                        painter.drawText(bx - 4 - (time_width // 2) + (painter.fontMetrics().horizontalAdvance(lbl) // 2), 8, beat_time_str)
+
+                    # --- Draw beat label (bold, larger font) below the time ---
                     lbl_font = painter.font()
                     lbl_font.setPixelSize(11)
                     lbl_font.setBold(True)
                     painter.setFont(lbl_font)
                     painter.setPen(QPen(QColor(color)))
-                    painter.drawText(bx - 4, 13, lbl)
-
-                    # --- Draw time string immediately to the right of the label (same color, bold) ---
-                    if start_time:
-                        beat_time_str = datetime.fromtimestamp(start_time + ts).strftime('%H:%M:%S')
-                        lbl_width = painter.fontMetrics().horizontalAdvance(lbl)
-                        time_font = painter.font()
-                        time_font.setPixelSize(9)
-                        time_font.setBold(True)
-                        painter.setFont(time_font)
-                        painter.setPen(QPen(QColor("#FFFFFF")))  # white for clean readability
-                        # Place time 3px to the right of the label
-                        painter.drawText(bx - 4 + lbl_width + 3, 13, beat_time_str)
+                    painter.drawText(bx - 4, 18, lbl)
                     
                     # Restore a clean font state for subsequent peaks
                     restore_font = painter.font()

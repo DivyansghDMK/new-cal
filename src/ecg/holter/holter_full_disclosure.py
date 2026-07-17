@@ -181,7 +181,7 @@ class SegmentOverlay(QWidget):
 
         self._drag_start_x = None
         self._drag_end_x   = None
-        self._segments     = []   # list of {start_x, end_x, start_sec, end_sec, label, color, time_str}
+        self._segments     = []   # list of {start_x, end_x, start_sec, end_sec, label, color, start_time_str, end_time_str}
 
     def set_drag(self, start_x, end_x):
         self._drag_start_x = start_x
@@ -193,11 +193,11 @@ class SegmentOverlay(QWidget):
         self._drag_end_x   = None
         self.update()
 
-    def add_segment(self, start_x, end_x, start_sec, end_sec, label, color, time_str=''):
+    def add_segment(self, start_x, end_x, start_sec, end_sec, label, color, start_time_str='', end_time_str=''):
         self._segments.append({
             'start_x': start_x, 'end_x': end_x,
             'start_sec': start_sec, 'end_sec': end_sec,
-            'label': label, 'color': color, 'time_str': time_str
+            'label': label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
         })
         self.update()
 
@@ -241,7 +241,10 @@ class SegmentOverlay(QWidget):
 
             mid_x = (sx + ex) // 2
             lbl = seg.get('label', '')
-            time_str = seg.get('time_str', '')
+            start_sec = seg.get('start_sec', 0)
+            end_sec = seg.get('end_sec', 0)
+            start_time_str = seg.get('start_time_str', '')
+            end_time_str = seg.get('end_time_str', '')
 
             lbl_font = painter.font()
             lbl_font.setBold(True)
@@ -253,6 +256,14 @@ class SegmentOverlay(QWidget):
             t_font.setPixelSize(9)
             t_font.setBold(True)
             painter.setFont(t_font)
+            
+            # Calculate duration in seconds and format as HH:MM:SS
+            duration_sec = end_sec - start_sec
+            h = int(duration_sec // 3600)
+            m = int((duration_sec % 3600) // 60)
+            s = int(duration_sec % 60)
+            time_str = f"{h:02d}:{m:02d}:{s:02d}"
+            
             time_w = painter.fontMetrics().horizontalAdvance(time_str) if time_str else 0
 
             spacer_w = 4 if time_str else 0
@@ -264,11 +275,24 @@ class SegmentOverlay(QWidget):
             painter.setPen(QPen(c))
             painter.drawText(start_text_x, 20, lbl)
 
-            # Draw time string (y = 20, right of label, in white)
+            # Draw duration string (y = 20, right of label, in white)
             if time_str:
                 painter.setFont(t_font)
                 painter.setPen(QPen(QColor("#FFFFFF")))
                 painter.drawText(start_text_x + lbl_w + spacer_w, 20, time_str)
+
+            # Draw start time on left edge of segment (y = 20, in white)
+            if start_time_str:
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor("#FFFFFF")))
+                painter.drawText(sx + 4, 20, start_time_str)
+
+            # Draw end time on right edge of segment (y = 20, in white)
+            if end_time_str:
+                end_time_w = painter.fontMetrics().horizontalAdvance(end_time_str)
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor("#FFFFFF")))
+                painter.drawText(ex - end_time_w - 4, 20, end_time_str)
 
 
 
@@ -1062,18 +1086,26 @@ class HolterFullDisclosureDialog(QDialog):
         sx        = seg['start_x']
         ex        = seg['end_x']
 
-        # Compute real-world timestamp string using actual system recorded time
-        time_str = ''
+        # Compute real-world timestamp strings for both start and end using actual system recorded time
+        start_time_str = ''
+        end_time_str = ''
         try:
             reader = getattr(self._engine, '_reader', None) or getattr(self, '_reader', None)
             if reader and hasattr(reader, 'start_time') and reader.start_time is not None:
                 start_real = datetime.fromtimestamp(reader.start_time + start_sec)
-                time_str = start_real.strftime('%H:%M:%S')
+                end_real = datetime.fromtimestamp(reader.start_time + end_sec)
+                start_time_str = start_real.strftime('%H:%M:%S')
+                end_time_str = end_real.strftime('%H:%M:%S')
             else:
                 h = int(start_sec // 3600)
                 m = int((start_sec % 3600) // 60)
                 s = int(start_sec % 60)
-                time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                start_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                
+                h = int(end_sec // 3600)
+                m = int((end_sec % 3600) // 60)
+                s = int(end_sec % 60)
+                end_time_str = f"{h:02d}:{m:02d}:{s:02d}"
         except Exception as e:
             print(f"[Full Disclosure] Error formatting segment time: {e}")
 
@@ -1081,14 +1113,14 @@ class HolterFullDisclosureDialog(QDialog):
         # Store in persistent annotations list
         annotation = {
             'start_sec': start_sec, 'end_sec': end_sec,
-            'label': label, 'color': color, 'time_str': time_str
+            'label': label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
         }
         self._segment_annotations.append(annotation)
 
         # Paint it on the overlay
         if hasattr(self, '_segment_overlay'):
             self._segment_overlay.clear_drag()
-            self._segment_overlay.add_segment(sx, ex, start_sec, end_sec, label, color, time_str)
+            self._segment_overlay.add_segment(sx, ex, start_sec, end_sec, label, color, start_time_str, end_time_str)
 
         self._pending_segment = None
 
@@ -1132,7 +1164,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 
                                 self._segment_overlay.add_segment(
                                     sx_global, ex_global, s_sec, e_sec,
-                                    seg['label'], seg['color'], seg.get('time_str', '')
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
             self._segment_overlay.update()
 
@@ -1638,8 +1670,7 @@ class HolterFullDisclosureDialog(QDialog):
             earliest = all_events[0]
             if hasattr(self._engine, '_reader') and hasattr(self._engine._reader, 'start_time'):
                 ts_real = datetime.fromtimestamp(self._engine._reader.start_time + earliest['timestamp'])
-                src_str = "Manual" if earliest['source'] == 'Manual' else "Auto"
-                arrhythmia_label = f"Arrhythmia: {earliest['label']} ({src_str}) at {ts_real.strftime('%H:%M:%S')}"
+                arrhythmia_label = f"Arrhythmia: {earliest['label']} at {ts_real.strftime('%H:%M:%S')}"
                 
         self.lbl_arrhythmia.setText(arrhythmia_label)
 
@@ -1741,7 +1772,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 
                                 self._segment_overlay.add_segment(
                                     sx_global, ex_global, s_sec, e_sec,
-                                    seg['label'], seg['color'], seg.get('time_str', '')
+                                    seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
 
 
