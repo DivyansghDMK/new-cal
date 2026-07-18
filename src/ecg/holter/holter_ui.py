@@ -3280,9 +3280,13 @@ class ECGStripCanvas(QWidget):
         
         # 1. Color full regions for arrhythmias from _structured_events
         if hasattr(self, '_structured_events') and self._structured_events:
+            # Expanded color mapping for all arrhythmia types
             label_colors = {
                 "V": "#FF3333",      # Ventricular Premature - Red
                 "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+                "S": "#00FFFF",      # Sinus Bradycardia/Tachycardia - Cyan
+                "P": "#FF00FF",     # Paced/AV Blocks - Magenta
+                "X": "#0000FF",     # Asystole/Artifact - Blue
             }
             # Go through events and find regions
             for i, ev in enumerate(self._structured_events):
@@ -3291,20 +3295,43 @@ class ECGStripCanvas(QWidget):
                 
                 # Check if this event starts an arrhythmia
                 active_label = 'N'
-                if 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl or 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
+                if 'asystole' in ev_lbl:
+                    active_label = 'X'
+                elif 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl:
+                    active_label = 'V'
+                elif 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
                     active_label = 'V'
                 elif 'atrial fibrillation' in ev_lbl or 'afib' in ev_lbl:
                     active_label = 'AF'
+                elif 'atrial flutter' in ev_lbl or 'aflutter' in ev_lbl:
+                    active_label = 'AF'
+                elif 'sinus bradycardia' in ev_lbl or 'bradycardia' in ev_lbl:
+                    active_label = 'S'
+                elif 'sinus tachycardia' in ev_lbl or 'tachycardia' in ev_lbl:
+                    active_label = 'S'
+                elif 'av block' in ev_lbl or 'bundle branch block' in ev_lbl or 'paced' in ev_lbl:
+                    active_label = 'P'
+                elif 'premature ventricular' in ev_lbl or 'pvc' in ev_lbl:
+                    active_label = 'V'
+                elif 'premature atrial' in ev_lbl or 'pac' in ev_lbl:
+                    active_label = 'S'
+                elif 'st elevation' in ev_lbl or 'st depression' in ev_lbl:
+                    active_label = 'X'
                     
                 if active_label != 'N':
-                    color = label_colors.get(active_label, "#FF3333")
+                    # Use color from event if available, otherwise use label_colors
+                    color = ev.get('color', label_colors.get(active_label, "#FF3333"))
                     region_start_ts = ev_ts
                     
-                    # Find end of region (next event)
-                    region_end_ts = end_sec + 10.0 # arbitrarily large
-                    if i + 1 < len(self._structured_events):
-                        next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
-                        region_end_ts = next_ev_ts
+                    # Use end_timestamp if available, otherwise use next event
+                    region_end_ts = ev.get('end_timestamp')
+                    if region_end_ts is None:
+                        region_end_ts = end_sec + 10.0  # arbitrarily large
+                        if i + 1 < len(self._structured_events):
+                            next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
+                            region_end_ts = next_ev_ts
+                    else:
+                        region_end_ts = float(region_end_ts)
                         
                     # Calculate overlapping indices
                     if region_end_ts >= self._start_sec and region_start_ts <= end_sec:

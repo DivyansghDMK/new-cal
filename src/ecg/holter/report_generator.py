@@ -270,41 +270,49 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     timeline_events = load_events(session_dir)
     print(f"[HolterReport] Loaded {len(timeline_events)} events from database")
     
-    # Filter out automated events that fall within manually marked segments or near parallel markings
-    if manual_segments or manual_beats:
-        original_count = len(timeline_events)
-        filtered_events = []
-        for event in timeline_events:
-            # Keep manual events (they should not be filtered)
-            if event.get('source') == 'Manual':
-                filtered_events.append(event)
-                continue
-            
-            # Check if this automated event falls within any manually marked segment
-            event_ts = float(event.get('timestamp', 0.0))
-            should_filter = False
-            
-            # Check segment ranges
-            for seg in manual_segments:
-                start_sec = float(seg.get('start_sec', 0.0))
-                end_sec = float(seg.get('end_sec', 0.0))
-                if start_sec <= event_ts <= end_sec:
-                    should_filter = True
-                    break
-            
-            # Check parallel marking timestamps (within 0.15s tolerance)
-            if not should_filter and manual_beats:
-                for mb in manual_beats:
-                    mb_ts = float(mb.get('timestamp', 0.0))
-                    if abs(event_ts - mb_ts) < 0.15:
-                        should_filter = True
-                        break
-            
-            if not should_filter:
-                filtered_events.append(event)
+    # Filter out auto-detected arrhythmias (except Normal Sinus Rhythm) from event timeline
+    # Keep manual markings and Normal Sinus Rhythm only
+    original_count = len(timeline_events)
+    filtered_events = []
+    for event in timeline_events:
+        # Keep manual events (they should not be filtered)
+        if event.get('source') == 'Manual':
+            filtered_events.append(event)
+            continue
         
-        timeline_events = filtered_events
-        print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} automated events within manual markings")
+        # Keep auto-detected Normal Sinus Rhythm events
+        event_label = str(event.get('label', event.get('event_type', ''))).lower()
+        if 'normal sinus rhythm' in event_label or 'nsr' in event_label:
+            filtered_events.append(event)
+            continue
+        
+        # Filter out all other auto-detected arrhythmias
+        # Commented out: Original filtering logic for events within manual markings
+        # Check if this automated event falls within any manually marked segment
+        # event_ts = float(event.get('timestamp', 0.0))
+        # should_filter = False
+        # 
+        # # Check segment ranges
+        # for seg in manual_segments:
+        #     start_sec = float(seg.get('start_sec', 0.0))
+        #     end_sec = float(seg.get('end_sec', 0.0))
+        #     if start_sec <= event_ts <= end_sec:
+        #         should_filter = True
+        #         break
+        # 
+        # # Check parallel marking timestamps (within 0.15s tolerance)
+        # if not should_filter and manual_beats:
+        #     for mb in manual_beats:
+        #         mb_ts = float(mb.get('timestamp', 0.0))
+        #         if abs(event_ts - mb_ts) < 0.15:
+        #             should_filter = True
+        #             break
+        # 
+        # if not should_filter:
+        #     filtered_events.append(event)
+    
+    timeline_events = filtered_events
+    print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} auto-detected arrhythmias (kept Normal Sinus Rhythm and manual markings)")
     
     # Load manual beats and append non-normal ones to timeline (parallel manual marking)
     manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
@@ -315,9 +323,14 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             for mb in manual_beats:
                 lbl = mb.get('label', 'N')
                 if lbl != 'N':
+                    marking_mode = mb.get('marking_mode', 'parallel_single')
+                    if marking_mode == 'parallel_multi':
+                        label_text = f"Parallel multiple beat manual marked ({lbl})"
+                    else:
+                        label_text = f"Parallel single beat manual marked ({lbl})"
                     timeline_events.append({
                         'timestamp': float(mb.get('timestamp', 0.0)),
-                        'label': f"Parallel manual marked ({lbl})",
+                        'label': label_text,
                         'event_type': lbl,
                         'source': 'Manual'
                     })
@@ -823,9 +836,14 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
             for mb in manual_beats:
                 lbl = mb.get('label', 'N')
                 if lbl != 'N':
+                    marking_mode = mb.get('marking_mode', 'parallel_single')
+                    if marking_mode == 'parallel_multi':
+                        label_text = f"Parallel multiple beat manual marked ({lbl})"
+                    else:
+                        label_text = f"Parallel single beat manual marked ({lbl})"
                     timeline_events.append({
                         'timestamp': float(mb.get('timestamp', 0.0)),
-                        'label': f"Parallel manual marked ({lbl})",
+                        'label': label_text,
                         'event_type': lbl,
                         'source': 'Manual'
                     })
