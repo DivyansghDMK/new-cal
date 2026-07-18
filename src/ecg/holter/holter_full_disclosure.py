@@ -1618,15 +1618,26 @@ class HolterFullDisclosureDialog(QDialog):
         # Persist the deletion to disk
         self._save_manual_beats()
 
+    def _scroll_throttle_interval(self):
+        """Minimum seconds between live redraws while dragging, scaled to window size."""
+        win = getattr(self, '_window_sec', self._BASE_WIN_SEC)
+        if win <= 15.0:
+            return 0.030   # Full disc / 30 Sec — ~33 FPS, very cheap to redraw
+        elif win <= 65.0:
+            return 0.045   # 1 Min — a bit more data per frame
+        else:
+            return 0.060   # 2 Min — heaviest window, throttle a little more
+
     def _on_scrollbar_moved(self, val):
         self._pending_scroll_val = val
         if not self._scroll_timer.isActive():
             import time
             now = time.time()
-            if now - self._last_scroll_time > 0.030:
+            interval = self._scroll_throttle_interval()
+            if now - self._last_scroll_time > interval:
                 self._process_scroll_update()
             else:
-                delay = int((0.030 - (now - self._last_scroll_time)) * 1000)
+                delay = int((interval - (now - self._last_scroll_time)) * 1000)
                 self._scroll_timer.start(max(1, delay))
 
     def _on_scroll_timer_timeout(self):
