@@ -10,6 +10,7 @@ Classes:
 
 import os
 import json
+import copy
 import numpy as np
 from datetime import datetime
 
@@ -340,6 +341,10 @@ class HolterFullDisclosureDialog(QDialog):
         
         self._detected_r_peaks = []
 
+        # Undo stack: list of state snapshots pushed before each mutating
+        # annotation action (beat label/delete, segment label/delete).
+        self._undo_stack = []
+        self._UNDO_STACK_LIMIT = 50
 
         self.setWindowTitle("Full Disclosure ECG")
         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
@@ -519,6 +524,26 @@ class HolterFullDisclosureDialog(QDialog):
         top_layout.addWidget(self.time_tabs)
 
         top_layout.addStretch()
+
+        # Undo button — left of the Real Time display
+        self.btn_undo = QPushButton("↶ Undo")
+        self.btn_undo.setEnabled(False)
+        self.btn_undo.setStyleSheet(f"""
+            QPushButton {{
+                background: #0d1b2a; color: {COL_GREEN};
+                border: 1px solid {COL_GREEN_DRK}; padding: 4px 12px;
+                font-size: 13px; font-weight: bold; border-radius: 4px;
+            }}
+            QPushButton:hover:enabled {{ background: #162a3a; }}
+            QPushButton:disabled {{ color: #4a5a68; border: 1px solid #2a3a48; }}
+        """)
+        self.btn_undo.clicked.connect(self._undo_last_action)
+        top_layout.addWidget(self.btn_undo)
+
+        sep_undo = QFrame()
+        sep_undo.setFrameShape(QFrame.VLine)
+        sep_undo.setStyleSheet(f"color: {COL_GREEN_DRK};")
+        top_layout.addWidget(sep_undo)
 
         # Real-time display right of time tabs
         self.lbl_real_time = QLabel("Real Time: --:--:--")
@@ -1085,6 +1110,71 @@ class HolterFullDisclosureDialog(QDialog):
     # ------------------------------------------------------------------
     # Segment context menu + labeling
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Undo support
+    # ------------------------------------------------------------------
+    def _snapshot_state(self, action_label: str):
+        """Push a deep-copy snapshot of all mutable annotation state onto the
+        undo stack. Call this BEFORE applying a mutating action (beat label,
+        beat delete, segment label, segment delete) so undo can restore the
+        exact prior state."""
+        beat_annotations_by_lead = {}
+        for c in getattr(self, '_canvases', []):
+            if hasattr(c, '_beat_annotations') and c._beat_annotations is not None:
+                beat_annotations_by_lead[c.lead_name] = copy.deepcopy(c._beat_annotations)
+
+        snapshot = {
+            'action': action_label,
+            'segment_annotations': copy.deepcopy(getattr(self, '_segment_annotations', [])),
+            'beat_annotations_by_lead': beat_annotations_by_lead,
+            'engine_metrics': copy.deepcopy(getattr(self._engine, '_metrics', None)),
+            'structured_events': copy.deepcopy(getattr(self._engine, '_structured_events', None)),
+        }
+        self._undo_stack.append(snapshot)
+        if len(self._undo_stack) > self._UNDO_STACK_LIMIT:
+            self._undo_stack.pop(0)
+        if hasattr(self, 'btn_undo'):
+            self.btn_undo.setEnabled(True)
+
+    def _persist_segment_annotations(self):
+        """Overwrite manual_segments.json with the current in-memory list."""
+        try:
+            session_dir = os.path.dirname(self._engine.ecgh_path)
+            segments_path = os.path.join(session_dir, 'manual_segments.json')
+            with open(segments_path, 'w') as f:
+                json.dump(self._segment_annotations, f, indent=2)
+        except Exception as e:
+            print(f"[Full Disclosure] Error persisting segment annotations: {e}")
+
+    def _undo_last_action(self):
+        """Revert the most recent beat/segment annotation action."""
+        if not self._undo_stack:
+            return
+
+        snapshot = self._undo_stack.pop()
+
+        self._segment_annotations = snapshot['segment_annotations']
+
+        for c in self._canvases:
+            if c.lead_name in snapshot['beat_annotations_by_lead']:
+                c._beat_annotations = snapshot['beat_annotations_by_lead'][c.lead_name]
+
+        if snapshot['engine_metrics'] is not None:
+            self._engine._metrics = snapshot['engine_metrics']
+        if snapshot['structured_events'] is not None:
+            self._engine._structured_events = snapshot['structured_events']
+
+        # Persist the reverted state to disk so it stays consistent with
+        # report generation and future reloads.
+        self._save_manual_beats()
+        self._persist_segment_annotations()
+
+        self.btn_undo.setEnabled(bool(self._undo_stack))
+
+        # Refresh everything on screen: waveforms, beat markers, segment overlay.
+        self._update_canvases(self._current_start)
+        print(f"[Full Disclosure] Undid action: {snapshot['action']}")
+
     def _show_segment_context_menu(self, global_pos):
         """Show arrhythmia right-click context menu for labeling a selected segment."""
         from PyQt5.QtWidgets import QMenu, QAction
@@ -1123,6 +1213,8 @@ class HolterFullDisclosureDialog(QDialog):
         """Assign an arrhythmia label to the pending segment and render it."""
         if self._pending_segment is None:
             return
+
+        self._snapshot_state('label_segment')
 
         seg = self._pending_segment
         start_sec = seg['start_sec']
@@ -1197,6 +1289,7 @@ class HolterFullDisclosureDialog(QDialog):
 
     def _delete_segment(self, segment):
         """Remove a finalized segment from annotations and the overlay."""
+        self._snapshot_state('delete_segment')
         if segment in self._segment_annotations:
             self._segment_annotations.remove(segment)
         
@@ -1345,6 +1438,7 @@ class HolterFullDisclosureDialog(QDialog):
     
     def _label_beat(self, click_x: int, label: str):
         """Label the beat at click_x with the given label."""
+        self._snapshot_state('label_beat')
         # Define color mapping for beat types
         label_colors = {
             "N": "#00FF00",      # Normal - Green
@@ -1541,6 +1635,7 @@ class HolterFullDisclosureDialog(QDialog):
     
     def _delete_beat_at_position(self, click_x: int):
         """Delete the beat at the clicked position."""
+        self._snapshot_state('delete_beat')
         for canvas in self._canvases:
             if canvas.lead_name == 'I':
                 from PyQt5.QtCore import QPoint
@@ -1988,6 +2083,8 @@ class HolterFullDisclosureDialog(QDialog):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             event.ignore()
+        elif event.key() == Qt.Key_Z and event.modifiers() & Qt.ControlModifier:
+            self._undo_last_action()
         else:
             super().keyPressEvent(event)
 
