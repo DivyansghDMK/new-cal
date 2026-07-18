@@ -260,10 +260,10 @@ class SegmentOverlay(QWidget):
             
             # Calculate duration in seconds and format as HH:MM:SS
             duration_sec = end_sec - start_sec
-            h = int(duration_sec // 3600)
+            dur_h = int(duration_sec // 3600)
             m = int((duration_sec % 3600) // 60)
             s = int(duration_sec % 60)
-            time_str = f"{h:02d}:{m:02d}:{s:02d}"
+            time_str = f"{dur_h:02d}:{m:02d}:{s:02d}"
             
             time_w = painter.fontMetrics().horizontalAdvance(time_str) if time_str else 0
 
@@ -328,6 +328,9 @@ class HolterFullDisclosureDialog(QDialog):
         # Selection mode: 'parallel' | 'segment'
         self._selection_mode = 'parallel'
         
+        # Pending manual beats to restore after canvases are created
+        self._pending_manual_beats = None
+        
         # Segment selection state
         self._seg_start_x   = None   # pixel X where segment drag started
         self._seg_end_x     = None   # pixel X where drag currently ends
@@ -374,6 +377,7 @@ class HolterFullDisclosureDialog(QDialog):
                         ts = float(mb.get('timestamp', 0.0))
                         lbl = str(mb.get('label', 'N'))
                         is_man = mb.get('is_manual', False)
+                        color = mb.get('color', '#FFFF00')
                         
                         found = False
                         for m in self._engine._metrics:
@@ -392,8 +396,13 @@ class HolterFullDisclosureDialog(QDialog):
                                 'is_manual': is_man
                             })
                 print(f"[Full Disclosure] Loaded and merged {len(m_beats)} manual beats on startup.")
+                
+                # Also restore manual beats to canvas _beat_annotations for UI display
+                # This needs to happen after canvases are created, so we'll do it in _update_canvases
+                self._pending_manual_beats = m_beats
         except Exception as e:
             print(f"[Full Disclosure] Error merging manual beats on startup: {e}")
+            self._pending_manual_beats = []
 
         # Load manual_segments.json if it exists and restore segment annotations
         try:
@@ -414,7 +423,10 @@ class HolterFullDisclosureDialog(QDialog):
         """Override showEvent to refresh segment overlay when dialog is shown."""
         super().showEvent(event)
         # Refresh segment overlay to ensure loaded segments are visible
-        QTimer.singleShot(100, self._refresh_segment_overlay)
+        # Use longer delay to ensure canvas geometry is fully initialized
+        QTimer.singleShot(200, self._refresh_segment_overlay)
+        # Also raise overlay to ensure it's on top
+        QTimer.singleShot(250, lambda: self._segment_overlay.raise_() if hasattr(self, '_segment_overlay') else None)
 
     def _recalc_window(self):
         idx = self.time_tabs.currentIndex() if hasattr(self, 'time_tabs') else 0
@@ -713,6 +725,16 @@ class HolterFullDisclosureDialog(QDialog):
                 self._vertical_line_overlay.setGeometry(obj.rect())
             if hasattr(self, '_segment_overlay'):
                 self._segment_overlay.setGeometry(obj.rect())
+                # IMPORTANT: resizing the overlay only changes its bounding box —
+                # each segment's cached pixel start_x/end_x still reflects whatever
+                # canvas width was in effect when it was last computed. If the
+                # canvas frame was still being laid out (e.g. right after the
+                # dialog opens and finishes maximizing), those pixel positions
+                # are stale and the segment renders in the wrong place (often
+                # off-screen/invisible). Recompute them against the *current*
+                # canvas width every time a resize happens so segments always
+                # line up, on first open and on every subsequent resize.
+                self._refresh_segment_overlay()
         
         # Only process mouse events from canvas_frame and canvases, NOT from other widgets
         is_canvas_event = (obj == self._canvas_frame or obj in self._canvases)
@@ -1056,6 +1078,9 @@ class HolterFullDisclosureDialog(QDialog):
                 c._selected_beats = []
                 c._clicked_beat_timestamp = None
                 c.update()
+            if hasattr(self, '_segment_overlay'):
+                self._segment_overlay.show()
+                self._refresh_segment_overlay()
 
     # ------------------------------------------------------------------
     # Segment context menu + labeling
@@ -1152,12 +1177,14 @@ class HolterFullDisclosureDialog(QDialog):
         except Exception as e:
             print(f"[Full Disclosure] Error saving segment annotations: {e}")
 
-        # Paint it on the overlay
+        # Paint it on the overlay - _update_canvases will handle adding all segments
         if hasattr(self, '_segment_overlay'):
             self._segment_overlay.clear_drag()
-            self._segment_overlay.add_segment(sx, ex, start_sec, end_sec, label, color, start_time_str, end_time_str)
 
         self._pending_segment = None
+        
+        # Trigger canvas update to refresh segment overlay with new segment
+        self._update_canvases(self._current_start)
 
     def _clear_pending_segment(self):
         """Clear the current drag selection without labeling it."""
@@ -1634,6 +1661,11 @@ class HolterFullDisclosureDialog(QDialog):
             canvas.update()
             
         self._update_canvases(start_sec)
+        
+        # Ensure segment overlay is visible and on top after scrolling
+        if hasattr(self, '_segment_overlay') and hasattr(self, '_canvas_frame'):
+            self._segment_overlay.setGeometry(self._canvas_frame.rect())
+            self._segment_overlay.raise_()
 
     def _on_time_tab_changed(self, index):
         text = self.time_tabs.tabText(index)
@@ -1776,6 +1808,35 @@ class HolterFullDisclosureDialog(QDialog):
             beat_annotations.sort(key=lambda b: b['timestamp'])
         except Exception as e:
             print(f"[Full Disclosure] Error loading beat annotations: {e}")
+        
+        # Restore manual beats to canvas annotations if pending (on first load)
+        if hasattr(self, '_pending_manual_beats') and self._pending_manual_beats:
+            for c in self._canvases:
+                if not hasattr(c, '_beat_annotations') or c._beat_annotations is None:
+                    c._beat_annotations = []
+                for mb in self._pending_manual_beats:
+                    ts = float(mb.get('timestamp', 0.0))
+                    lbl = str(mb.get('label', 'N'))
+                    color = mb.get('color', label_colors.get(lbl, '#FFFF00'))
+                    # Check if beat already exists in canvas annotations
+                    found = False
+                    for b in c._beat_annotations:
+                        if abs(b['timestamp'] - ts) < 0.15:
+                            b['label'] = lbl
+                            b['color'] = color
+                            b['is_manual'] = True
+                            found = True
+                            break
+                    if not found:
+                        c._beat_annotations.append({
+                            'timestamp': ts,
+                            'label': lbl,
+                            'color': color,
+                            'is_manual': True
+                        })
+                c._beat_annotations.sort(key=lambda b: b['timestamp'])
+            print(f"[Full Disclosure] Restored {len(self._pending_manual_beats)} manual beats to canvas annotations")
+            self._pending_manual_beats = None  # Clear after restoration
 
         
         # Generate time array for ECG strips
@@ -1802,6 +1863,7 @@ class HolterFullDisclosureDialog(QDialog):
 
         # Clear and repopulate segment overlay with only visible segments
         if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+            print(f"[Full Disclosure] _update_canvases: refreshing overlay with {len(self._segment_annotations)} segments")
             self._segment_overlay.clear_segments()
             ref = self._canvases[0] if self._canvases else None
             if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
@@ -1811,6 +1873,7 @@ class HolterFullDisclosureDialog(QDialog):
                 if ref_w > 0 and data_l > 0:
                     ref_end = ref._start_sec + data_l / ref._fs
                     span    = ref_end - ref._start_sec
+                    print(f"[Full Disclosure] Canvas: ref_w={ref_w}, data_l={data_l}, span={span:.2f}")
                     
                     for seg in self._segment_annotations:
                         s_sec = seg['start_sec']
@@ -1825,14 +1888,20 @@ class HolterFullDisclosureDialog(QDialog):
                                 sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
                                 ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
                                 
+                                print(f"[Full Disclosure] _update_canvases adding segment: label={seg['label']}, sx_global={sx_global}, ex_global={ex_global}, color={seg['color']}")
                                 self._segment_overlay.add_segment(
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
+            # Ensure overlay is updated after segments are added (moved outside inner condition)
+            self._segment_overlay.update()
+            # Raise overlay to ensure it's visible on top of canvases
+            self._segment_overlay.raise_()
 
     def _refresh_segment_overlay(self):
         """Force refresh of segment overlay to ensure loaded segments are visible."""
         if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+            print(f"[Full Disclosure] _refresh_segment_overlay called with {len(self._segment_annotations)} segments")
             # Update overlay geometry to match current canvas frame size
             if hasattr(self, '_canvas_frame'):
                 self._segment_overlay.setGeometry(self._canvas_frame.rect())
@@ -1843,10 +1912,13 @@ class HolterFullDisclosureDialog(QDialog):
                 from PyQt5.QtCore import QPoint
                 ref_w  = ref.width()
                 data_l = len(ref._data)
+                print(f"[Full Disclosure] Canvas ref_w={ref_w}, data_l={data_l}, _start_sec={ref._start_sec}")
                 if ref_w > 0 and data_l > 0:
                     ref_end = ref._start_sec + data_l / ref._fs
                     span    = ref_end - ref._start_sec
+                    print(f"[Full Disclosure] Visible range: {ref._start_sec:.2f} to {ref_end:.2f}, span={span:.2f}")
                     
+                    added_count = 0
                     for seg in self._segment_annotations:
                         s_sec = seg['start_sec']
                         e_sec = seg['end_sec']
@@ -1864,7 +1936,15 @@ class HolterFullDisclosureDialog(QDialog):
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
+                                added_count += 1
+                    print(f"[Full Disclosure] Added {added_count} segments to overlay")
+                else:
+                    print(f"[Full Disclosure] Canvas not ready: ref_w={ref_w}, data_l={data_l}")
+            else:
+                print(f"[Full Disclosure] Canvas ref not available or missing attributes")
             self._segment_overlay.update()
+        else:
+            print(f"[Full Disclosure] _refresh_segment_overlay: overlay or annotations not available")
 
 
 

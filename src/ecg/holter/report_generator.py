@@ -246,7 +246,65 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     else:
         story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
 
+    # Load manual segments and beats to filter automated events within manually marked areas
+    manual_segments = []
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            print(f"[HolterReport] Loaded {len(manual_segments)} manual segments for filtering")
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for filtering: {_ms_e}")
+    
+    manual_beats = []
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            print(f"[HolterReport] Loaded {len(manual_beats)} manual beats for filtering")
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for filtering: {_mb_e}")
+    
     timeline_events = load_events(session_dir)
+    print(f"[HolterReport] Loaded {len(timeline_events)} events from database")
+    
+    # Filter out automated events that fall within manually marked segments or near parallel markings
+    if manual_segments or manual_beats:
+        original_count = len(timeline_events)
+        filtered_events = []
+        for event in timeline_events:
+            # Keep manual events (they should not be filtered)
+            if event.get('source') == 'Manual':
+                filtered_events.append(event)
+                continue
+            
+            # Check if this automated event falls within any manually marked segment
+            event_ts = float(event.get('timestamp', 0.0))
+            should_filter = False
+            
+            # Check segment ranges
+            for seg in manual_segments:
+                start_sec = float(seg.get('start_sec', 0.0))
+                end_sec = float(seg.get('end_sec', 0.0))
+                if start_sec <= event_ts <= end_sec:
+                    should_filter = True
+                    break
+            
+            # Check parallel marking timestamps (within 0.15s tolerance)
+            if not should_filter and manual_beats:
+                for mb in manual_beats:
+                    mb_ts = float(mb.get('timestamp', 0.0))
+                    if abs(event_ts - mb_ts) < 0.15:
+                        should_filter = True
+                        break
+            
+            if not should_filter:
+                filtered_events.append(event)
+        
+        timeline_events = filtered_events
+        print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} automated events within manual markings")
     
     # Load manual beats and append non-normal ones to timeline (parallel manual marking)
     manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
@@ -268,10 +326,13 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     
     # Load manual segments and append to timeline (segment manual marking)
     manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    print(f"[HolterReport] Looking for manual segments at: {manual_segments_path}")
+    print(f"[HolterReport] File exists: {os.path.exists(manual_segments_path)}")
     if os.path.exists(manual_segments_path):
         try:
             with open(manual_segments_path, 'r') as _ms_f:
                 manual_segments = json.load(_ms_f)
+            print(f"[HolterReport] Loaded {len(manual_segments)} manual segments from file")
             for seg in manual_segments:
                 lbl = seg.get('label', 'Unknown')
                 start_sec = seg.get('start_sec', 0.0)
@@ -280,17 +341,35 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 end_time_str = seg.get('end_time_str', '')
                 # Show start and end time with label
                 time_range = f"{start_time_str} - {end_time_str}" if start_time_str and end_time_str else f"{_sec_to_hms(start_sec)} - {_sec_to_hms(end_sec)}"
+                # Start-of-segment entry
                 timeline_events.append({
                     'timestamp': float(start_sec),
+                    'sort_ts': float(start_sec),
                     'label': f"Segment manual marked ({lbl})",
+                    'event_type': lbl,
+                    'source': 'Manual'
+                })
+                # End-of-segment entry — shows the segment's end system time.
+                # sort_ts is nudged a hair past start_sec (rather than using
+                # the true end_sec) so this row always sorts immediately
+                # below its start row, even when other analysis events fall
+                # chronologically in between the two.
+                timeline_events.append({
+                    'timestamp': float(end_sec),
+                    'sort_ts': float(start_sec) + 1e-6,
+                    'label': f"Segment manual marked end ({lbl})",
                     'event_type': lbl,
                     'source': 'Manual'
                 })
         except Exception as _ms_e:
             print(f"[HolterReport] Could not load manual segments for timeline: {_ms_e}")
+    else:
+        print(f"[HolterReport] Manual segments file not found at {manual_segments_path}")
             
-    # Sort all events chronologically by timestamp
-    timeline_events = sorted(timeline_events, key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
+    # Sort all events chronologically by timestamp (sort_ts overrides timestamp
+    # for manual segment end-rows, so they stay pinned beneath their start-row)
+    timeline_events = sorted(timeline_events, key=lambda x: float(x.get("sort_ts", x.get("timestamp", 0.0)) or 0.0))
+    print(f"[HolterReport] Total timeline events after adding manual segments: {len(timeline_events)}")
 
     if timeline_events:
         story.append(Spacer(1, 6*mm))
@@ -301,7 +380,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             t_str = _format_system_time(session_dir, float(event.get("timestamp", 0.0) or 0.0))
             lbl   = str(event.get("label", event.get("event_type", "Event")))
             src   = str(event.get("source", ""))
-            dedup_key = (t_str, lbl)
+            dedup_key = (t_str, lbl, src)
             if dedup_key in seen_events:
                 continue
             seen_events.add(dedup_key)
@@ -676,7 +755,117 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
     else:
         lines.append("  None detected")
 
+    # Load manual segments and beats to filter automated events within manually marked areas
+    manual_segments = []
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            print(f"[HolterReport] Loaded {len(manual_segments)} manual segments for filtering (text report)")
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for filtering: {_ms_e}")
+    
+    manual_beats = []
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            print(f"[HolterReport] Loaded {len(manual_beats)} manual beats for filtering (text report)")
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for filtering: {_mb_e}")
+    
     timeline_events = load_events(session_dir)
+    
+    # Filter out automated events that fall within manually marked segments or near parallel markings
+    if manual_segments or manual_beats:
+        original_count = len(timeline_events)
+        filtered_events = []
+        for event in timeline_events:
+            # Keep manual events (they should not be filtered)
+            if event.get('source') == 'Manual':
+                filtered_events.append(event)
+                continue
+            
+            # Check if this automated event falls within any manually marked segment
+            event_ts = float(event.get('timestamp', 0.0))
+            should_filter = False
+            
+            # Check segment ranges
+            for seg in manual_segments:
+                start_sec = float(seg.get('start_sec', 0.0))
+                end_sec = float(seg.get('end_sec', 0.0))
+                if start_sec <= event_ts <= end_sec:
+                    should_filter = True
+                    break
+            
+            # Check parallel marking timestamps (within 0.15s tolerance)
+            if not should_filter and manual_beats:
+                for mb in manual_beats:
+                    mb_ts = float(mb.get('timestamp', 0.0))
+                    if abs(event_ts - mb_ts) < 0.15:
+                        should_filter = True
+                        break
+            
+            if not should_filter:
+                filtered_events.append(event)
+        
+        timeline_events = filtered_events
+        print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} automated events within manual markings (text report)")
+    
+    # Load manual beats and append non-normal ones to timeline (parallel manual marking)
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            for mb in manual_beats:
+                lbl = mb.get('label', 'N')
+                if lbl != 'N':
+                    timeline_events.append({
+                        'timestamp': float(mb.get('timestamp', 0.0)),
+                        'label': f"Parallel manual marked ({lbl})",
+                        'event_type': lbl,
+                        'source': 'Manual'
+                    })
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for timeline: {_mb_e}")
+    
+    # Load manual segments and append to timeline (segment manual marking)
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            for seg in manual_segments:
+                lbl = seg.get('label', 'Unknown')
+                start_sec = seg.get('start_sec', 0.0)
+                end_sec = seg.get('end_sec', 0.0)
+                start_time_str = seg.get('start_time_str', '')
+                end_time_str = seg.get('end_time_str', '')
+                # Start-of-segment entry
+                timeline_events.append({
+                    'timestamp': float(start_sec),
+                    'sort_ts': float(start_sec),
+                    'label': f"Segment manual marked ({lbl})",
+                    'event_type': lbl,
+                    'source': 'Manual'
+                })
+                # End-of-segment entry
+                timeline_events.append({
+                    'timestamp': float(end_sec),
+                    'sort_ts': float(start_sec) + 1e-6,
+                    'label': f"Segment manual marked end ({lbl})",
+                    'event_type': lbl,
+                    'source': 'Manual'
+                })
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for timeline: {_ms_e}")
+    
+    # Sort all events chronologically
+    timeline_events = sorted(timeline_events, key=lambda x: float(x.get("sort_ts", x.get("timestamp", 0.0)) or 0.0))
+    
     if timeline_events:
         lines += ["", "EVENT TIMELINE"]
         for event in timeline_events:
@@ -749,4 +938,3 @@ def _get_recording_start_end(session_dir: str, duration_sec: float) -> tuple:
     start_dt = datetime.fromtimestamp(start_time)
     end_dt = datetime.fromtimestamp(start_time + duration_sec)
     return start_dt.strftime('%Y-%m-%d %H:%M:%S'), end_dt.strftime('%Y-%m-%d %H:%M:%S')
-
