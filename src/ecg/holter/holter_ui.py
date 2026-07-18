@@ -1,4 +1,4 @@
-"""
+﻿"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -44,7 +44,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog, QDoubleSpinBox,
     QAbstractItemView, QToolButton, QButtonGroup, QMenu, QScrollBar, QStackedWidget)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect, QObject, QEvent
-from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
+from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap, QPainterPath
 
 try:
     import pyqtgraph as pg
@@ -3335,29 +3335,40 @@ class ECGStripCanvas(QWidget):
         
         default_pen = QPen(QColor(self._color))
         default_pen.setWidthF(self._pen_width)
-        
-        current_interval_idx = 0
-        num_intervals = len(colored_intervals)
 
-        for i in range(1, len(d)):
-            x1 = (i - 1) * x_scale
-            y1 = h - (d[i-1] - mn) / rng * h
-            x2 = i * x_scale
-            y2 = h - (d[i] - mn) / rng * h
-            
-            # Advance interval index if we've passed the current interval
-            while current_interval_idx < num_intervals and i > colored_intervals[current_interval_idx][1]:
-                current_interval_idx += 1
-                
-            active_pen = default_pen
-            if current_interval_idx < num_intervals:
-                start_idx, end_idx, color = colored_intervals[current_interval_idx]
-                if start_idx <= i <= end_idx:
-                    active_pen = QPen(QColor(color))
-                    active_pen.setWidthF(self._pen_width * 3.0)
-            
-            painter.setPen(active_pen)
-            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        n = len(d)
+        # Vectorized coordinate computation (numpy) instead of a per-sample Python loop.
+        xs = np.arange(n, dtype=np.float64) * x_scale
+        ys = h - (d - mn) / rng * h
+
+        # Build the whole trace as a single QPainterPath and draw it in one call.
+        # This replaces issuing one drawLine() call per sample (extremely slow for
+        # large windows like 1 Min / 2 Min, and the main cause of scrollbar-drag lag),
+        # cutting per-frame Qt paint calls from O(n) down to O(1) + a handful for
+        # colored arrhythmia/annotation sub-segments.
+        painter.setPen(default_pen)
+        trace_path = QPainterPath()
+        trace_path.moveTo(xs[0], ys[0])
+        for xv, yv in zip(xs[1:], ys[1:]):
+            trace_path.lineTo(xv, yv)
+        painter.drawPath(trace_path)
+
+        # Overlay colored sub-segments (arrhythmia regions / annotated beats) on top
+        # of the base trace — only a handful of these exist per window, so drawing
+        # each as its own short path is cheap.
+        for start_idx, end_idx, color in colored_intervals:
+            start_idx = max(0, start_idx)
+            end_idx = min(n - 1, end_idx)
+            if end_idx <= start_idx:
+                continue
+            seg_pen = QPen(QColor(color))
+            seg_pen.setWidthF(self._pen_width * 3.0)
+            painter.setPen(seg_pen)
+            seg_path = QPainterPath()
+            seg_path.moveTo(xs[start_idx], ys[start_idx])
+            for xv, yv in zip(xs[start_idx + 1:end_idx + 1], ys[start_idx + 1:end_idx + 1]):
+                seg_path.lineTo(xv, yv)
+            painter.drawPath(seg_path)
 
             
         # --- Draw Clinical Beat Annotations ---
@@ -3376,48 +3387,61 @@ class ECGStripCanvas(QWidget):
                     annotated_beats[ts] = beat
         
         if lead_name == 'I' and show_vertical_lines:
-            # Detect R-peaks in real-time from the ECG signal
-            if len(d) > 50:
-                try:
-                    from scipy.signal import find_peaks
-                    
-                    # Simple R-peak detection
-                    # 1. Find local maxima in the signal
-                    signal = np.asarray(d, dtype=float)
-                    
-                    # Normalize signal for better peak detection
-                    sig_mean = np.mean(signal)
-                    sig_std = np.std(signal)
-                    if sig_std > 0:
-                        normalized = (signal - sig_mean) / sig_std
-                    else:
-                        normalized = signal - sig_mean
-                    
-                    # Find peaks with minimum distance (0.3s = 150 samples at 500Hz)
-                    # and height threshold (signal should be above mean)
-                    min_distance = int(0.3 * self._fs)  # Minimum 300ms between R-peaks
-                    peaks, properties = find_peaks(normalized, 
-                                                   distance=min_distance,
-                                                   height=0.5,  # Above 0.5 std
-                                                   prominence=0.3)
-                    
-                    # Convert peak indices to timestamps
-                    for peak_idx in peaks:
-                        ts = self._start_sec + (peak_idx / self._fs)
-                        detected_peaks.append(ts)
-                    
-                    # Store detected peaks in parent panel for cross-lead vertical lines
-                    parent = self.parent()
-                    while parent is not None:
-                        if hasattr(parent, '_detected_r_peaks'):
-                            parent._detected_r_peaks = detected_peaks
-                            parent._r_peak_start_sec = self._start_sec
-                            parent._r_peak_data_len = len(d)
-                            break
-                        parent = parent.parent()
+            # Only redo R-peak detection when the underlying data has actually
+            # changed (id(self._data) changes every time set_data() gets new
+            # samples). Otherwise reuse the last result — a plain repaint
+            # (resize, overlay refresh, etc.) should not re-run scipy.find_peaks
+            # over the whole window again.
+            data_key = id(self._data)
+            if getattr(self, '_peak_cache_key', None) == data_key and getattr(self, '_peak_cache_start_sec', None) == self._start_sec:
+                detected_peaks = self._detected_peaks_cache
+            else:
+                # Detect R-peaks in real-time from the ECG signal
+                if len(d) > 50:
+                    try:
+                        from scipy.signal import find_peaks
                         
-                except Exception as e:
-                    print(f"[ECGStripCanvas] R-peak detection error: {e}")
+                        # Simple R-peak detection
+                        # 1. Find local maxima in the signal
+                        signal = np.asarray(d, dtype=float)
+                        
+                        # Normalize signal for better peak detection
+                        sig_mean = np.mean(signal)
+                        sig_std = np.std(signal)
+                        if sig_std > 0:
+                            normalized = (signal - sig_mean) / sig_std
+                        else:
+                            normalized = signal - sig_mean
+                        
+                        # Find peaks with minimum distance (0.3s = 150 samples at 500Hz)
+                        # and height threshold (signal should be above mean)
+                        min_distance = int(0.3 * self._fs)  # Minimum 300ms between R-peaks
+                        peaks, properties = find_peaks(normalized, 
+                                                       distance=min_distance,
+                                                       height=0.5,  # Above 0.5 std
+                                                       prominence=0.3)
+                        
+                        # Convert peak indices to timestamps
+                        for peak_idx in peaks:
+                            ts = self._start_sec + (peak_idx / self._fs)
+                            detected_peaks.append(ts)
+                        
+                        # Store detected peaks in parent panel for cross-lead vertical lines
+                        parent = self.parent()
+                        while parent is not None:
+                            if hasattr(parent, '_detected_r_peaks'):
+                                parent._detected_r_peaks = detected_peaks
+                                parent._r_peak_start_sec = self._start_sec
+                                parent._r_peak_data_len = len(d)
+                                break
+                            parent = parent.parent()
+                            
+                    except Exception as e:
+                        print(f"[ECGStripCanvas] R-peak detection error: {e}")
+
+                self._detected_peaks_cache = detected_peaks
+                self._peak_cache_key = data_key
+                self._peak_cache_start_sec = self._start_sec
             
             # Calculate and store RR intervals from detected peaks (always keep for internal use)
             if detected_peaks:
