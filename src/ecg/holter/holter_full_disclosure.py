@@ -160,13 +160,13 @@ class VerticalLineOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Draw continuous vertical yellow lines starting from y=22 (below the N label box)
-        # This prevents the line from overlapping with the N label text and square box
+        # Draw continuous vertical yellow lines starting from y=30 (below label text)
+        # This prevents the line from overlapping with the label and time text
         painter.setPen(QPen(QColor("#FFFF00"), 2))
         
         for line_x in self._line_positions:
             if line_x is not None:
-                painter.drawLine(line_x, 22, line_x, self.height())
+                painter.drawLine(line_x, 30, line_x, self.height())
 
 
 class SegmentOverlay(QWidget):
@@ -1373,7 +1373,7 @@ class HolterFullDisclosureDialog(QDialog):
             ("Atrial Premature (S)",        "S",     "#00FFFF"),
             ("Ventricular Premature (V)",   "V",     "#FF3333"),
             ("Paced (P)",                   "P",     "#FF00FF"),
-            ("Atrial Fibrillation (AF)",    "AF",    "#FF00FF"),
+            ("Atrial Fibrillation (AF)",    "AF",    "#FFA500"),
             ("Artifact (X)",                "X",     "#0000FF"),
             ("Other",                       "Other", "#FFFF00"),
         ]
@@ -1541,7 +1541,7 @@ class HolterFullDisclosureDialog(QDialog):
             ("Atrial Premature(S)", "S", "#00FFFF"),  # Cyan
             ("Ventricular Premature(V)", "V", "#FF3333"),  # Red
             ("Paced(P)", "P", "#FF00FF"),  # Magenta
-            ("Atrial Fibrillation(AF)", "AF", "#FF00FF"),  # Magenta
+            ("Atrial Fibrillation(AF)", "AF", "#FFA500"),  # Orange
             ("Artifact(X)", "X", "#0000FF"),  # Blue
             ("Other", "Other", "#FFFF00"),  # Yellow
         ]
@@ -1620,7 +1620,7 @@ class HolterFullDisclosureDialog(QDialog):
             "S": "#00FFFF",      # Atrial Premature - Cyan
             "V": "#FF3333",      # Ventricular Premature - Red
             "P": "#FF00FF",      # Paced - Magenta
-            "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+            "AF": "#FFA500",     # Atrial Fibrillation - Orange
             "X": "#0000FF",      # Artifact - Blue
             "Other": "#FFFF00"   # Other - Yellow
         }
@@ -2311,7 +2311,7 @@ class HolterFullDisclosureDialog(QDialog):
             "S": "#00FFFF",      # Atrial Premature - Cyan
             "V": "#FF3333",      # Ventricular Premature - Red
             "P": "#FF00FF",      # Paced - Magenta
-            "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+            "AF": "#FFA500",     # Atrial Fibrillation - Orange
             "X": "#0000FF",      # Artifact - Blue
             "Other": "#FFFF00"   # Other - Yellow
         }

@@ -3600,9 +3600,8 @@ class ECGStripCanvas(QWidget):
                         time_font.setBold(True)
                         painter.setFont(time_font)
                         painter.setPen(QPen(QColor("#FFFFFF")))
-                        # Center time above the label position
                         time_width = painter.fontMetrics().horizontalAdvance(beat_time_str)
-                        painter.drawText(bx - 4 - (time_width // 2) + (painter.fontMetrics().horizontalAdvance(lbl) // 2), 8, beat_time_str)
+                        painter.drawText(bx - (time_width // 2), 12, beat_time_str)
 
                     # --- Draw beat label (bold, larger font) below the time ---
                     lbl_font = painter.font()
@@ -3610,7 +3609,8 @@ class ECGStripCanvas(QWidget):
                     lbl_font.setBold(True)
                     painter.setFont(lbl_font)
                     painter.setPen(QPen(QColor(color)))
-                    painter.drawText(bx - 4, 18, lbl)
+                    lbl_width = painter.fontMetrics().horizontalAdvance(lbl)
+                    painter.drawText(bx - (lbl_width // 2), 24, lbl)
                     
                     # Restore a clean font state for subsequent peaks
                     restore_font = painter.font()
