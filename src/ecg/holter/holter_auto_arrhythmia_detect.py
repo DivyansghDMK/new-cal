@@ -139,7 +139,7 @@ def detect_arrhythmias(
                             detected_segments.append({
                                 'start_sec': current_time,
                                 'end_sec': window_end,
-                                'label': label_code,
+                                'label': detected_label,
                                 'color': color,
                                 'start_time_str': start_time_str,
                                 'end_time_str': end_time_str,
@@ -198,8 +198,8 @@ def convert_to_structured_events(detected_segments: List[Dict[str, Any]]) -> Lis
     for seg in detected_segments:
         structured_events.append({
             'timestamp': seg['start_sec'],
-            'type': seg['detected_rhythm'],
-            'label': seg['detected_rhythm'],
+            'type': seg['label'],
+            'label': seg['label'],
             'end_timestamp': seg['end_sec'],
             'color': seg['color']
         })

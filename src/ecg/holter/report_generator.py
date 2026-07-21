@@ -267,10 +267,18 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     for label, count in manual_arrhy_counts.items():
         combined_arrhy_counts[label] = combined_arrhy_counts.get(label, 0) + count
 
-    if combined_arrhy_counts:
+    # Filter out Long QT Syndrome, Wide QRS, Frequent PVCs, and Multifocal PVCs from arrhythmia summary
+    filtered_arrhy_counts = {}
+    for label, count in combined_arrhy_counts.items():
+        label_lower = label.lower()
+        if 'long qt' in label_lower or 'wide qrs' in label_lower or 'frequent pvc' in label_lower or 'multifocal pvc' in label_lower:
+            continue
+        filtered_arrhy_counts[label] = count
+
+    if filtered_arrhy_counts:
         arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden', 'Source']]
         total_chunks = max(1, summary.get('chunks_analyzed', 1))
-        for label, count in sorted(combined_arrhy_counts.items(), key=lambda x: -x[1]):
+        for label, count in sorted(filtered_arrhy_counts.items(), key=lambda x: -x[1]):
             burden = f"{count / total_chunks * 100:.1f}%"
             # Determine source
             source = []
@@ -338,6 +346,10 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         
         # Filter out Long QT Syndrome and Wide QRS (non-specific) from report
         if 'long qt' in event_label or 'wide qrs' in event_label:
+            continue
+        
+        # Filter out Frequent PVCs and Multifocal PVCs from event timeline as requested
+        if 'frequent pvc' in event_label or 'multifocal pvc' in event_label:
             continue
         
         # Filter out auto-detected arrhythmias only if they fall within manually marked areas

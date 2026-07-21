@@ -4529,9 +4529,17 @@ class HolterEventsPanel(QWidget):
         self._session_dir = session_dir or ""
 
     def load_events(self, events: list, summary: dict):
-        self._events = events
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
             source = ev.get("source", "analysis")
             conf = ev.get("confidence", 0.0)
@@ -8788,9 +8796,17 @@ class HolterEditEventPanel(QWidget):
         layout.addWidget(right, 2)
 
     def load_events(self, events: list, summary: dict):
-        self._events = events
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             source = str(ev.get("source", "analysis"))
             conf = float(ev.get("confidence", 0.0) or 0.0)
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
@@ -9267,12 +9283,20 @@ class HolterEditStripsPanel(QWidget):
                 self.seek_requested.emit(timestamp)
 
     def load_events(self, events: list, summary: dict, metrics_list: Optional[list] = None):
-        self._events = events
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
         self._summary = dict(summary or {})
         self._metrics_list = list(metrics_list or [])
         self._build_focus_cards()
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
             for j, val in enumerate([ev['label'], t_str, "12", "7s"]):
                 item = QTableWidgetItem(val)
