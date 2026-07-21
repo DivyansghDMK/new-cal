@@ -225,14 +225,63 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     story.append(Paragraph("2. ARRHYTHMIA SUMMARY", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
 
-    if arrhy_counts:
-        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
-        total_chunks = max(1, summary.get('chunks_analyzed', 1))
-        for label, count in sorted(arrhy_counts.items(), key=lambda x: -x[1]):
-            burden = f"{count / total_chunks * 100:.1f}%"
-            arrhy_data.append([label, str(count), burden])
+    # Load manual beats and segments to include in arrhythmia summary
+    manual_beats = []
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            print(f"[HolterReport] Loaded {len(manual_beats)} manual beats for arrhythmia summary")
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for arrhythmia summary: {_mb_e}")
 
-        arrhy_table = Table(arrhy_data, colWidths=[90*mm, 30*mm, 30*mm])
+    manual_segments = []
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            print(f"[HolterReport] Loaded {len(manual_segments)} manual segments for arrhythmia summary")
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for arrhythmia summary: {_ms_e}")
+
+    # Count manual markings by label type
+    manual_arrhy_counts = {}
+    for mb in manual_beats:
+        lbl = mb.get('label', 'N')
+        # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+        short_code = lbl
+        if '(' in lbl and ')' in lbl:
+            short_code = lbl.split('(')[1].split(')')[0]
+        if short_code != 'N':
+            # Use full label as key for display
+            manual_arrhy_counts[lbl] = manual_arrhy_counts.get(lbl, 0) + 1
+
+    for seg in manual_segments:
+        lbl = seg.get('label', 'Unknown')
+        manual_arrhy_counts[lbl] = manual_arrhy_counts.get(lbl, 0) + 1
+
+    # Merge auto-detected and manual arrhythmia counts
+    combined_arrhy_counts = dict(arrhy_counts)
+    for label, count in manual_arrhy_counts.items():
+        combined_arrhy_counts[label] = combined_arrhy_counts.get(label, 0) + count
+
+    if combined_arrhy_counts:
+        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden', 'Source']]
+        total_chunks = max(1, summary.get('chunks_analyzed', 1))
+        for label, count in sorted(combined_arrhy_counts.items(), key=lambda x: -x[1]):
+            burden = f"{count / total_chunks * 100:.1f}%"
+            # Determine source
+            source = []
+            if label in arrhy_counts:
+                source.append("Auto")
+            if label in manual_arrhy_counts:
+                source.append("Manual")
+            source_str = ", ".join(source)
+            arrhy_data.append([label, str(count), burden, source_str])
+
+        arrhy_table = Table(arrhy_data, colWidths=[80*mm, 25*mm, 25*mm, 20*mm])
         arrhy_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), RED),
             ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),

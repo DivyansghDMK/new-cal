@@ -3272,7 +3272,8 @@ class ECGStripCanvas(QWidget):
         if n_visible < len(d):
             d = d[-n_visible:]   # show the most recent n_visible samples (stretched)
         # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
-        x_scale = w / max(1, len(d) - 1)
+        # Apply speed factor to x_scale so the waveform stretches/compresses visually
+        x_scale = w / max(1, len(d) - 1) * speed_factor
         
         # Determine colored intervals based on annotations and structured events
         colored_intervals = []
@@ -4086,11 +4087,9 @@ class HolterRRTrendCanvas(QWidget):
             return
 
         # -- Time range ------------------------------------------------------
-        t_vals = [p[0] for p in self._points]
-        t_min = min(t_vals)
-        t_max = max(t_vals)
-        if t_max <= t_min:
-            t_max = t_min + 1.0
+        # Fixed 12-hour X-axis range
+        t_min = 0.0
+        t_max = 12.0 * 3600.0  # 24 hours in seconds
         t_rng = float(t_max - t_min)
 
         def to_x(t):

@@ -480,10 +480,17 @@ class HolterFullDisclosureDialog(QDialog):
         
         if "Full disc" in text:
             self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
+        elif "30 Sec" in text:
+            self._window_sec = 30.0
+        elif "1 Min" in text:
+            self._window_sec = 60.0
+        elif "2 Min" in text:
+            self._window_sec = 120.0
+        # elif "5 Min" in text: self._window_sec = 300.0
+        # elif "10 Min" in text: self._window_sec = 600.0
+        # elif "15 Min" in text: self._window_sec = 900.0
         else:
-            # When a specific time tab is selected, the window size remains fixed
-            # to that duration, ignoring paper speed changes.
-            pass
+            self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
 
     def _update_scrollbar_range(self):
         total = max(0.0, self._engine.duration_sec - self._window_sec)
@@ -1146,7 +1153,7 @@ class HolterFullDisclosureDialog(QDialog):
         self._recalc_window()
         self._update_scrollbar_range()
         for c in self._canvases:
-            c.set_paper_speed(25)
+            c.set_paper_speed(int(self._paper_speed))
         self._update_canvases(self._current_start)
         # Restore selection box when speed is changed
         self._deactivate_tools()
@@ -1447,7 +1454,7 @@ class HolterFullDisclosureDialog(QDialog):
             "P": "#FF00FF",      # Premature - Magenta
             "V": "#FF3333",      # Ventricular - Red
             "C": "#FFA500",      # Conduction - Orange
-            "T": "#00FF00",      # TV Paced - Green
+            "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
             "A": "#FFFF00",      # ACLS - Yellow
         }
         
@@ -1700,7 +1707,7 @@ class HolterFullDisclosureDialog(QDialog):
             "Premature": "#FF00FF",         # Magenta
             "Ventricular": "#FF3333",       # Red
             "Conduction": "#FFA500",        # Orange
-            "TV Paced": "#00FF00",          # Green
+            "TV Paced": "#9932CC",          # Dark Orchid (Purple)
             "ACLS": "#FFFF00"               # Yellow
         }
         
@@ -1800,7 +1807,7 @@ class HolterFullDisclosureDialog(QDialog):
             "P": "#FF00FF",      # Premature - Magenta
             "V": "#FF3333",      # Ventricular - Red
             "C": "#FFA500",      # Conduction - Orange
-            "T": "#00FF00",      # TV Paced - Green
+            "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
             "A": "#FFFF00",      # ACLS - Yellow
             "N": "#00FF00",      # Normal - Green (legacy)
             "X": "#0000FF",      # Artifact - Blue (legacy)
