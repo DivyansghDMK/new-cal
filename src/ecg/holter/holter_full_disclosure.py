@@ -1351,7 +1351,7 @@ class HolterFullDisclosureDialog(QDialog):
             self.btn_auto_detect.setText("⚡ Auto Detect")
 
     def _show_segment_context_menu(self, global_pos):
-        """Show arrhythmia right-click context menu for labeling a selected segment."""
+        """Show arrhythmia right-click context menu for labeling a selected segment with hierarchical dropdown menus."""
         from PyQt5.QtWidgets import QMenu, QAction
         if self._pending_segment is None:
             return
@@ -1368,23 +1368,109 @@ class HolterFullDisclosureDialog(QDialog):
             QMenu::item {{ padding: 6px 20px; }}
         """)
 
-        beat_options = [
-            ("Normal (N)",                 "N",     "#00FF00"),
-            ("Atrial Premature (S)",        "S",     "#00FFFF"),
-            ("Ventricular Premature (V)",   "V",     "#FF3333"),
-            ("Paced (P)",                   "P",     "#FF00FF"),
-            ("Atrial Fibrillation (AF)",    "AF",    "#FFA500"),
-            ("Artifact (X)",                "X",     "#0000FF"),
-            ("Other",                       "Other", "#FFFF00"),
-        ]
-        for label_text, code, color in beat_options:
-            act = QAction(label_text, self)
-            act.triggered.connect(lambda checked, full_label=label_text, c=code, col=color: self._label_segment(c, col, full_label))
-            menu.addAction(act)
+        # Define hierarchical arrhythmia structure with main labels and sub-labels
+        # Format: sub_label(First capital letter of main label)
+        arrhythmia_structure = {
+            "Supraventricular": [
+                "Atrial Fibrillation 1",
+                "Atrial Fibrillation 2",
+                "Atrial Flutter",
+                "Sinus Arrhythmia",
+                "Missed Beat at 80 bpm",
+                "Missed Beat at 120 bpm",
+                "Atrial Tach",
+                "Paroxysmal A Tach",
+                "Nodal Rhythm",
+                "Supra VTach"
+            ],
+            "Premature": [
+                "Atrial PAC",
+                "Nodal PNC",
+                "PVC1 left Vent",
+                "PVC1 LV Early",
+                "PVC1 LV R on T",
+                "PVC2 Right Vent",
+                "PVC2 RV Early",
+                "PVC2 RV R on T",
+                "Multi-focal PVCs"
+            ],
+            "Ventricular": [
+                "PVCs",
+                "Freq Multi-focal PV",
+                "Trigeminy",
+                "Bigeminy",
+                "R on of PVCs",
+                "Mono VTach",
+                "Poly VTach",
+                "Ventricular Fibrillation",
+                "Asystole"
+            ],
+            "Conduction": [
+                "1st Deg AV Block",
+                "2nd Deg AV Block T1",
+                "2nd Deg AV Block T2",
+                "3rd Deg AV Block",
+                "Rt Bundle Branch Block",
+                "Lt Bundle Branch Block"
+            ],
+            "TV Paced": [
+                "Atrial 80 bpm",
+                "Asynchronous 75 bpm",
+                "Demand Freq Sinus",
+                "Demand Occ Sinus",
+                "Atr-Vent Sequential",
+                "Non-Capture",
+                "Non-Function"
+            ],
+            "ACLS": [
+                "Ventricular Fibrillation",
+                "Poly VTach (Unstable)",
+                "Asystole",
+                "Sinus Bradycardia",
+                "2nd Deg AV Block T",
+                "3rd Deg AV Block",
+                "Rt Bundle Branch B",
+                "Lt Bundle Branch B1",
+                "Narrow QRS Tach",
+                "Wide QRS Tach",
+                "Atrial Fibrillation 1",
+                "Atrial Fibrillation 2",
+                "Atrial Flutter",
+                "Mono VTach (Unstable)",
+                "Torsade de Pointe"
+            ]
+        }
+        
+        # Color mapping for main label first letters
+        main_label_colors = {
+            "S": "#00FFFF",      # Supraventricular - Cyan
+            "P": "#FF00FF",      # Premature - Magenta
+            "V": "#FF3333",      # Ventricular - Red
+            "C": "#FFA500",      # Conduction - Orange
+            "T": "#00FF00",      # TV Paced - Green
+            "A": "#FFFF00",      # ACLS - Yellow
+        }
+        
+        # Create hierarchical menu structure
+        for main_label, sub_labels in arrhythmia_structure.items():
+            # Get first letter of main label
+            main_first_letter = main_label[0]
+            
+            # Create submenu for this main label
+            submenu = menu.addMenu(main_label)
+            
+            # Add sub-labels to the submenu
+            for sub_label in sub_labels:
+                # Format: sub_label(First capital letter of main label)
+                formatted_label = f"{sub_label}({main_first_letter})"
+                color = main_label_colors.get(main_first_letter, "#FFFF00")
+                act = QAction(formatted_label, self)
+                act.triggered.connect(lambda checked, full_label=formatted_label, col=color: self._label_segment(full_label, col))
+                submenu.addAction(act)
 
         menu.exec_(global_pos)
 
-    def _label_segment(self, label: str, color: str, full_label: str):
+    def _label_segment(self, full_label: str, color: str):
         """Assign an arrhythmia label to the pending segment and render it."""
         if self._pending_segment is None:
             return
@@ -1520,7 +1606,7 @@ class HolterFullDisclosureDialog(QDialog):
 
 
     def _show_beat_context_menu(self, click_x: int, global_pos):
-        """Show right-click context menu for beat labeling."""
+        """Show right-click context menu for beat labeling with hierarchical dropdown menus."""
         from PyQt5.QtWidgets import QMenu, QAction
         
         menu = QMenu(self)
@@ -1535,21 +1621,104 @@ class HolterFullDisclosureDialog(QDialog):
             }}
         """)
         
-        # Beat type options with colors (no sub-menus)
-        beat_options = [
-            ("Normal(N)", "N", "#00FF00"),  # Green
-            ("Atrial Premature(S)", "S", "#00FFFF"),  # Cyan
-            ("Ventricular Premature(V)", "V", "#FF3333"),  # Red
-            ("Paced(P)", "P", "#FF00FF"),  # Magenta
-            ("Atrial Fibrillation(AF)", "AF", "#FFA500"),  # Orange
-            ("Artifact(X)", "X", "#0000FF"),  # Blue
-            ("Other", "Other", "#FFFF00"),  # Yellow
-        ]
+        # Define hierarchical arrhythmia structure with main labels and sub-labels
+        # Format: sub_label(First capital letter of main label)
+        arrhythmia_structure = {
+            "Supraventricular": [
+                "Atrial Fibrillation 1",
+                "Atrial Fibrillation 2",
+                "Atrial Flutter",
+                "Sinus Arrhythmia",
+                "Missed Beat at 80 bpm",
+                "Missed Beat at 120 bpm",
+                "Atrial Tach",
+                "Paroxysmal A Tach",
+                "Nodal Rhythm",
+                "Supra VTach"
+            ],
+            "Premature": [
+                "Atrial PAC",
+                "Nodal PNC",
+                "PVC1 left Vent",
+                "PVC1 LV Early",
+                "PVC1 LV R on T",
+                "PVC2 Right Vent",
+                "PVC2 RV Early",
+                "PVC2 RV R on T",
+                "Multi-focal PVCs"
+            ],
+            "Ventricular": [
+                "PVCs",
+                "Freq Multi-focal PV",
+                "Trigeminy",
+                "Bigeminy",
+                "R on of PVCs",
+                "Mono VTach",
+                "Poly VTach",
+                "Ventricular Fibrillation",
+                "Asystole"
+            ],
+            "Conduction": [
+                "1st Deg AV Block",
+                "2nd Deg AV Block T1",
+                "2nd Deg AV Block T2",
+                "3rd Deg AV Block",
+                "Rt Bundle Branch Block",
+                "Lt Bundle Branch Block"
+            ],
+            "TV Paced": [
+                "Atrial 80 bpm",
+                "Asynchronous 75 bpm",
+                "Demand Freq Sinus",
+                "Demand Occ Sinus",
+                "Atr-Vent Sequential",
+                "Non-Capture",
+                "Non-Function"
+            ],
+            "ACLS": [
+                "Ventricular Fibrillation",
+                "Poly VTach (Unstable)",
+                "Asystole",
+                "Sinus Bradycardia",
+                "2nd Deg AV Block T",
+                "3rd Deg AV Block",
+                "Rt Bundle Branch B",
+                "Lt Bundle Branch B1",
+                "Narrow QRS Tach",
+                "Wide QRS Tach",
+                "Atrial Fibrillation 1",
+                "Atrial Fibrillation 2",
+                "Atrial Flutter",
+                "Mono VTach (Unstable)",
+                "Torsade de Pointe"
+            ]
+        }
         
-        for label, code, color in beat_options:
-            action = QAction(label, self)
-            action.triggered.connect(lambda checked, full_label=label, c=code, x=click_x: self._label_beat(x, c, full_label))
-            menu.addAction(action)
+        # Color mapping for main labels
+        main_label_colors = {
+            "Supraventricular": "#00FFFF",  # Cyan
+            "Premature": "#FF00FF",         # Magenta
+            "Ventricular": "#FF3333",       # Red
+            "Conduction": "#FFA500",        # Orange
+            "TV Paced": "#00FF00",          # Green
+            "ACLS": "#FFFF00"               # Yellow
+        }
+        
+        # Create hierarchical menu structure
+        for main_label, sub_labels in arrhythmia_structure.items():
+            # Get first letter of main label
+            main_first_letter = main_label[0]
+            
+            # Create submenu for this main label
+            submenu = menu.addMenu(main_label)
+            
+            # Add sub-labels to the submenu
+            for sub_label in sub_labels:
+                # Format: sub_label(First capital letter of main label)
+                formatted_label = f"{sub_label}({main_first_letter})"
+                action = QAction(formatted_label, self)
+                action.triggered.connect(lambda checked, full_label=formatted_label, x=click_x: self._label_beat(x, full_label))
+                submenu.addAction(action)
         
         menu.addSeparator()
         
@@ -1611,18 +1780,30 @@ class HolterFullDisclosureDialog(QDialog):
         # Show menu at cursor position
         menu.exec_(global_pos)
     
-    def _label_beat(self, click_x: int, label: str, full_label: str):
+    def _label_beat(self, click_x: int, full_label: str):
         """Label the beat at click_x with the given label."""
         self._snapshot_state('label_beat')
-        # Define color mapping for beat types
+        
+        # Extract the short code from full_label (e.g., "Atrial Fibrillation 1(S)" -> "S")
+        # The format is: sub_label(First capital letter of main label)
+        import re
+        match = re.search(r'\(([A-Z])\)$', full_label)
+        if match:
+            label = match.group(1)  # Extract the letter in parentheses
+        else:
+            # Fallback: use first letter if no parentheses found
+            label = full_label[0] if full_label else "N"
+        
+        # Define color mapping for main label first letters
         label_colors = {
-            "N": "#00FF00",      # Normal - Green
-            "S": "#00FFFF",      # Atrial Premature - Cyan
-            "V": "#FF3333",      # Ventricular Premature - Red
-            "P": "#FF00FF",      # Paced - Magenta
-            "AF": "#FFA500",     # Atrial Fibrillation - Orange
-            "X": "#0000FF",      # Artifact - Blue
-            "Other": "#FFFF00"   # Other - Yellow
+            "S": "#00FFFF",      # Supraventricular - Cyan
+            "P": "#FF00FF",      # Premature - Magenta
+            "V": "#FF3333",      # Ventricular - Red
+            "C": "#FFA500",      # Conduction - Orange
+            "T": "#00FF00",      # TV Paced - Green
+            "A": "#FFFF00",      # ACLS - Yellow
+            "N": "#00FF00",      # Normal - Green (legacy)
+            "X": "#0000FF",      # Artifact - Blue (legacy)
         }
         
         # Parallel multi mode: label all beats between two vertical lines
