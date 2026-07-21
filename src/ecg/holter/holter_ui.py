@@ -3292,10 +3292,25 @@ class ECGStripCanvas(QWidget):
             for i, ev in enumerate(self._structured_events):
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
                 ev_lbl = str(ev.get('label', '')).lower()
+                ev_lbl_orig = str(ev.get('label', ''))
+                
+                print(f"[ECGStripCanvas] Processing structured event: label='{ev_lbl_orig}', timestamp={ev_ts}, end_timestamp={ev.get('end_timestamp')}")
                 
                 # Check if this event starts an arrhythmia
                 active_label = 'N'
-                if 'asystole' in ev_lbl:
+                # Check for single-letter labels first (from manual marking)
+                if ev_lbl == 'v':
+                    active_label = 'V'
+                elif ev_lbl == 's':
+                    active_label = 'S'
+                elif ev_lbl == 'af':
+                    active_label = 'AF'
+                elif ev_lbl == 'p':
+                    active_label = 'P'
+                elif ev_lbl == 'x':
+                    active_label = 'X'
+                # Check for full label names (from auto-detection)
+                elif 'asystole' in ev_lbl:
                     active_label = 'X'
                 elif 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl:
                     active_label = 'V'
@@ -3317,6 +3332,21 @@ class ECGStripCanvas(QWidget):
                     active_label = 'S'
                 elif 'st elevation' in ev_lbl or 'st depression' in ev_lbl:
                     active_label = 'X'
+                
+                # Also check the original label (case-sensitive) for single letters
+                if active_label == 'N':
+                    if ev_lbl_orig == 'V':
+                        active_label = 'V'
+                    elif ev_lbl_orig == 'S':
+                        active_label = 'S'
+                    elif ev_lbl_orig == 'AF':
+                        active_label = 'AF'
+                    elif ev_lbl_orig == 'P':
+                        active_label = 'P'
+                    elif ev_lbl_orig == 'X':
+                        active_label = 'X'
+                
+                print(f"[ECGStripCanvas] active_label='{active_label}' for event label='{ev_lbl_orig}'")
                     
                 if active_label != 'N':
                     # Use color from event if available, otherwise use label_colors
@@ -3345,8 +3375,12 @@ class ECGStripCanvas(QWidget):
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
                 lbl = beat.get('label', 'N')
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
                 # Highlight QRS peak if the label is something other than 'N'
-                if lbl != 'N' and self._start_sec <= ts <= end_sec:
+                if short_code != 'N' and self._start_sec <= ts <= end_sec:
                     color = beat.get('color', "#FFFF00")
                     # R-peak window: ~60ms before and after (120ms QRS width)
                     qrs_start_ts = ts - 0.06
@@ -3497,16 +3531,21 @@ class ECGStripCanvas(QWidget):
             # 1. Explicitly annotated beats
             for annot_ts, beat in annotated_beats.items():
                 lbl = beat.get('label', 'N')
-                if lbl == 'N' and not beat.get('is_manual', False):
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
+                
+                if short_code == 'N' and not beat.get('is_manual', False):
                     continue   # skip default N annotations — user only sees manual arrhythmia marks
 
                 color = beat.get('color', None)
                 if not color:
-                    if lbl == 'V':
+                    if short_code == 'V':
                         color = "#FF3333"
-                    elif lbl == 'S':
+                    elif short_code == 'S':
                         color = "#00FFFF"
-                    elif lbl in ['AF', 'P']:
+                    elif short_code in ['AF', 'P']:
                         color = "#FF00FF"
                     else:
                         color = "#FFFF00"

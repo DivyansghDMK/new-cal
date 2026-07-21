@@ -322,10 +322,14 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 manual_beats = json.load(_mb_f)
             for mb in manual_beats:
                 lbl = mb.get('label', 'N')
-                if lbl != 'N':
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
+                if short_code != 'N':
                     marking_mode = mb.get('marking_mode', 'parallel_single')
                     if marking_mode == 'parallel_multi':
-                        label_text = f"Parallel multiple beat manual marked ({lbl})"
+                        label_text = f"Parallel multiple mark ({lbl})"
                     else:
                         label_text = f"Parallel single beat manual marked ({lbl})"
                     timeline_events.append({
@@ -835,10 +839,14 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
                 manual_beats = json.load(_mb_f)
             for mb in manual_beats:
                 lbl = mb.get('label', 'N')
-                if lbl != 'N':
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
+                if short_code != 'N':
                     marking_mode = mb.get('marking_mode', 'parallel_single')
                     if marking_mode == 'parallel_multi':
-                        label_text = f"Parallel multiple beat manual marked ({lbl})"
+                        label_text = f"Parallel multiple mark ({lbl})"
                     else:
                         label_text = f"Parallel single beat manual marked ({lbl})"
                     timeline_events.append({

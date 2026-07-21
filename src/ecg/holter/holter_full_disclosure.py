@@ -1013,14 +1013,14 @@ class HolterFullDisclosureDialog(QDialog):
         
         elif event.type() == QEvent.MouseMove:
             if hasattr(self, '_drag_start_x') and self._drag_start_x is not None and is_canvas_event:
-                if obj in self._canvases:
-                    drag_pos_global = obj.mapTo(self._canvas_frame, event.pos())
-                    drag_x = drag_pos_global.x()
-                else:
-                    drag_x = event.pos().x()
-                
                 # Parallel multi mode: second line follows mouse
                 if self._selection_mode == 'parallel_multi':
+                    if obj in self._canvases:
+                        drag_pos_global = obj.mapTo(self._canvas_frame, event.pos())
+                        drag_x = drag_pos_global.x()
+                    else:
+                        drag_x = event.pos().x()
+                    
                     self._multi_line2_x = drag_x
                     if hasattr(self, '_vertical_line_overlay'):
                         line_positions = []
@@ -1031,52 +1031,30 @@ class HolterFullDisclosureDialog(QDialog):
                         self._vertical_line_overlay.set_line_positions(line_positions)
                     return True
                 
-                # Original single mode drag behavior
-                if not self._is_dragging and abs(drag_x - self._drag_start_x) > 5:
-                    self._is_dragging = True
+                # Parallel single mode: disable drag behavior
+                if self._selection_mode == 'parallel_single':
+                    return True
                 
-                if self._is_dragging:
-                    self._drag_current_x = drag_x
-                    start_x = min(self._drag_start_x, drag_x)
-                    end_x   = max(self._drag_start_x, drag_x)
+                # Segment mode: allow drag
+                if self._selection_mode == 'segment':
+                    if obj in self._canvases:
+                        drag_pos_global = obj.mapTo(self._canvas_frame, event.pos())
+                        drag_x = drag_pos_global.x()
+                    else:
+                        drag_x = event.pos().x()
                     
-                    selected_beats = []
-                    lead_i_canvas = None
-                    for c in self._canvases:
-                        if c.lead_name == 'I':
-                            lead_i_canvas = c
-                            break
+                    if not self._is_dragging and abs(drag_x - self._drag_start_x) > 5:
+                        self._is_dragging = True
                     
-                    if lead_i_canvas:
-                        from PyQt5.QtCore import QPoint
-                        w_i = lead_i_canvas.width()
-                        start_x_local = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(start_x, 0)).x()
-                        end_x_local   = lead_i_canvas.mapFrom(self._canvas_frame, QPoint(end_x,   0)).x()
-                        start_x_local = max(0, min(w_i, start_x_local))
-                        end_x_local   = max(0, min(w_i, end_x_local))
-                        selected_beats = lead_i_canvas._find_beats_in_range(start_x_local, end_x_local)
-                    
-                    for canvas in self._canvases:
-                        canvas._selected_beats = selected_beats
-                        canvas.update()
-                    
-                    if hasattr(self, '_vertical_line_overlay'):
-                        line_positions = []
-                        if selected_beats and lead_i_canvas:
-                            w = lead_i_canvas.width()
-                            start_sec = lead_i_canvas._start_sec
-                            data_len  = len(lead_i_canvas._data) if hasattr(lead_i_canvas, '_data') else 0
-                            if w > 0 and data_len > 0:
-                                end_sec2 = start_sec + data_len / lead_i_canvas._fs
-                                for beat_ts in selected_beats:
-                                    if start_sec <= beat_ts <= end_sec2:
-                                        pct = (beat_ts - start_sec) / (end_sec2 - start_sec) if (end_sec2 - start_sec) > 0 else 0.0
-                                        beat_x = int(pct * w)
-                                        from PyQt5.QtCore import QPoint
-                                        beat_x_global = lead_i_canvas.mapTo(self._canvas_frame, QPoint(beat_x, 0)).x()
-                                        line_positions.append(beat_x_global)
-                        self._vertical_line_overlay.set_line_positions(line_positions)
-                return True
+                    if self._is_dragging:
+                        self._drag_current_x = drag_x
+                        start_x = min(self._drag_start_x, drag_x)
+                        end_x   = max(self._drag_start_x, drag_x)
+                        
+                        self._seg_end_x = end_x
+                        if hasattr(self, '_segment_overlay'):
+                            self._segment_overlay.update()
+                        return True
         
         elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
             if hasattr(self, '_drag_start_x') and is_canvas_event:
@@ -1162,6 +1140,7 @@ class HolterFullDisclosureDialog(QDialog):
             # Restore vertical line overlay visibility
             if hasattr(self, '_vertical_line_overlay'):
                 self._vertical_line_overlay.show()
+            # DO NOT clear structured events - they should persist across mode switches
         elif mode == 'parallel_multi':
             self.btn_sel_mode.setText("▲ Parallel Multi")
             # Clear any pending segment drag
@@ -1178,6 +1157,7 @@ class HolterFullDisclosureDialog(QDialog):
             if hasattr(self, '_vertical_line_overlay'):
                 self._vertical_line_overlay.clear_line()
                 self._vertical_line_overlay.show()
+            # DO NOT clear structured events - they should persist across mode switches
         else:  # segment mode
             self.btn_sel_mode.setText("▲ Segment Sel.")
             # Clear parallel-mode state
@@ -1191,6 +1171,8 @@ class HolterFullDisclosureDialog(QDialog):
                 c._selected_beats = []
                 c._clicked_beat_timestamp = None
                 c.update()
+            # DO NOT clear structured events when switching to segment mode - they should persist
+            # Structured events are only cleared when explicitly deleted or when the dialog is closed
             if hasattr(self, '_segment_overlay'):
                 self._segment_overlay.show()
                 self._refresh_segment_overlay()
@@ -1352,12 +1334,12 @@ class HolterFullDisclosureDialog(QDialog):
         ]
         for label_text, code, color in beat_options:
             act = QAction(label_text, self)
-            act.triggered.connect(lambda checked, c=code, col=color: self._label_segment(c, col))
+            act.triggered.connect(lambda checked, full_label=label_text, c=code, col=color: self._label_segment(c, col, full_label))
             menu.addAction(act)
 
         menu.exec_(global_pos)
 
-    def _label_segment(self, label: str, color: str):
+    def _label_segment(self, label: str, color: str, full_label: str):
         """Assign an arrhythmia label to the pending segment and render it."""
         if self._pending_segment is None:
             return
@@ -1397,7 +1379,7 @@ class HolterFullDisclosureDialog(QDialog):
         # Store in persistent annotations list
         annotation = {
             'start_sec': start_sec, 'end_sec': end_sec,
-            'label': label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
+            'label': full_label, 'color': color, 'start_time_str': start_time_str, 'end_time_str': end_time_str
         }
         self._segment_annotations.append(annotation)
 
@@ -1508,7 +1490,7 @@ class HolterFullDisclosureDialog(QDialog):
             }}
         """)
         
-        # Beat type options with colors
+        # Beat type options with colors (no sub-menus)
         beat_options = [
             ("Normal(N)", "N", "#00FF00"),  # Green
             ("Atrial Premature(S)", "S", "#00FFFF"),  # Cyan
@@ -1521,7 +1503,7 @@ class HolterFullDisclosureDialog(QDialog):
         
         for label, code, color in beat_options:
             action = QAction(label, self)
-            action.triggered.connect(lambda checked, c=code, x=click_x: self._label_beat(x, c))
+            action.triggered.connect(lambda checked, full_label=label, c=code, x=click_x: self._label_beat(x, c, full_label))
             menu.addAction(action)
         
         menu.addSeparator()
@@ -1584,7 +1566,7 @@ class HolterFullDisclosureDialog(QDialog):
         # Show menu at cursor position
         menu.exec_(global_pos)
     
-    def _label_beat(self, click_x: int, label: str):
+    def _label_beat(self, click_x: int, label: str, full_label: str):
         """Label the beat at click_x with the given label."""
         self._snapshot_state('label_beat')
         # Define color mapping for beat types
@@ -1631,6 +1613,32 @@ class HolterFullDisclosureDialog(QDialog):
                         end_ts = start_sec + (end_x_local / w) * (end_sec - start_sec)
                         
                         # Label all beats in this range for all leads
+                        import time
+                        batch_id = int(time.time() * 1000)  # Unique ID for this batch
+                        
+                        print(f"[Full Disclosure] Parallel multi marking: label='{label}', start_ts={start_ts:.3f}s, end_ts={end_ts:.3f}s")
+                        
+                        # Add structured event for entire waveform coloring (non-NSR labels only)
+                        if label != 'N':
+                            if not hasattr(self._engine, '_structured_events'):
+                                self._engine._structured_events = []
+                            
+                            structured_event = {
+                                'timestamp': start_ts,
+                                'end_timestamp': end_ts,
+                                'label': full_label,
+                                'color': label_colors.get(label, "#FFFF00"),
+                                'event_type': label
+                            }
+                            self._engine._structured_events.append(structured_event)
+                            print(f"[Full Disclosure] Added structured event from {start_ts:.3f}s to {end_ts:.3f}s as '{label}'")
+                            
+                            # Refresh UI to apply waveform coloring
+                            self._update_canvases(self._current_start)
+                        else:
+                            print(f"[Full Disclosure] NSR label selected - skipping waveform coloring, only QRS peaks will be colored")
+                        
+                        # Also label individual beats for report timeline
                         for canvas in self._canvases:
                             if not hasattr(canvas, '_beat_annotations') or canvas._beat_annotations is None:
                                 canvas._beat_annotations = []
@@ -1648,20 +1656,22 @@ class HolterFullDisclosureDialog(QDialog):
                                 found = False
                                 for beat in canvas._beat_annotations:
                                     if abs(beat['timestamp'] - target_ts) < snap_tolerance_sec:
-                                        beat['label'] = label
+                                        beat['label'] = full_label
                                         beat['color'] = label_colors.get(label, "#FFFF00")
                                         beat['is_manual'] = True
                                         beat['marking_mode'] = 'parallel_multi'
+                                        beat['batch_id'] = batch_id
                                         found = True
                                         break
                                 
                                 if not found:
                                     new_beat = {
                                         'timestamp': target_ts,
-                                        'label': label,
+                                        'label': full_label,
                                         'color': label_colors.get(label, "#FFFF00"),
                                         'is_manual': True,
-                                        'marking_mode': 'parallel_multi'
+                                        'marking_mode': 'parallel_multi',
+                                        'batch_id': batch_id
                                     }
                                     canvas._beat_annotations.append(new_beat)
                         
@@ -1727,10 +1737,13 @@ class HolterFullDisclosureDialog(QDialog):
                             found = False
                             for beat in canvas._beat_annotations:
                                 if abs(beat['timestamp'] - target_ts) < snap_tolerance_sec:
-                                    beat['label'] = label
+                                    beat['label'] = full_label
                                     beat['color'] = label_colors.get(label, "#FFFF00")
                                     beat['is_manual'] = True
-                                    print(f"[Full Disclosure] Updated beat at {target_ts:.3f}s as '{label}'")
+                                    # Set marking_mode based on current selection mode
+                                    if self._selection_mode == 'parallel_single':
+                                        beat['marking_mode'] = 'parallel_single'
+                                    print(f"[Full Disclosure] Updated beat at {target_ts:.3f}s as '{full_label}'")
                                     found = True
                                     break
                             
@@ -1738,12 +1751,15 @@ class HolterFullDisclosureDialog(QDialog):
                             if not found:
                                 new_beat = {
                                     'timestamp': target_ts,
-                                    'label': label,
+                                    'label': full_label,
                                     'color': label_colors.get(label, "#FFFF00"),
                                     'is_manual': True
                                 }
+                                # Set marking_mode based on current selection mode
+                                if self._selection_mode == 'parallel_single':
+                                    new_beat['marking_mode'] = 'parallel_single'
                                 canvas._beat_annotations.append(new_beat)
-                                print(f"[Full Disclosure] Created new beat annotation at {target_ts:.3f}s as '{label}'")
+                                print(f"[Full Disclosure] Created new beat annotation at {target_ts:.3f}s as '{full_label}'")
                                 
                             # Update engine metrics for persistence across scrolling
                             if hasattr(self._engine, '_metrics'):
@@ -1752,7 +1768,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     all_beats = m.get('all_beats', [])
                                     for engine_beat in all_beats:
                                         if abs(float(engine_beat.get('timestamp', 0.0)) - target_ts) < snap_tolerance_sec:
-                                            engine_beat['label'] = label
+                                            engine_beat['label'] = full_label
                                             engine_beat['is_manual'] = True
                                             engine_beat_found = True
                                             break
@@ -1767,7 +1783,7 @@ class HolterFullDisclosureDialog(QDialog):
                                         if m_start <= target_ts <= m_start + m_dur:
                                             m.setdefault('all_beats', []).append({
                                                 'timestamp': target_ts,
-                                                'label': label,
+                                                'label': full_label,
                                                 'is_manual': True
                                             })
                                             added = True
@@ -1775,7 +1791,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     if not added:
                                         self._engine._metrics[0].setdefault('all_beats', []).append({
                                             'timestamp': target_ts,
-                                            'label': label,
+                                            'label': full_label,
                                             'is_manual': True
                                         })
                         
@@ -1794,7 +1810,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     beat_found_in_c = False
                                     for b in c._beat_annotations:
                                         if abs(b['timestamp'] - target_ts) < snap_tolerance_sec:
-                                            b['label'] = label
+                                            b['label'] = full_label
                                             b['color'] = label_colors.get(label, "#FFFF00")
                                             b['is_manual'] = True
                                             beat_found_in_c = True
@@ -1802,7 +1818,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     if not beat_found_in_c:
                                         c._beat_annotations.append({
                                             'timestamp': target_ts,
-                                            'label': label,
+                                            'label': full_label,
                                             'color': label_colors.get(label, "#FFFF00"),
                                             'is_manual': True
                                         })
@@ -1918,6 +1934,17 @@ class HolterFullDisclosureDialog(QDialog):
                                     if not any(abs(b['timestamp'] - t_ts) < snap_tolerance_sec for t_ts in beats_in_range)
                                 ]
                                 canvas.update()
+                        
+                        # Also remove structured events in this range (for waveform coloring)
+                        if hasattr(self._engine, '_structured_events'):
+                            self._engine._structured_events[:] = [
+                                ev for ev in self._engine._structured_events
+                                if not (ev.get('timestamp', 0) < end_ts and ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts)
+                            ]
+                            print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
+                            
+                            # Refresh UI to remove waveform coloring
+                            self._update_canvases(self._current_start)
                         
                         print(f"[Full Disclosure] Deleted all beats between {start_ts:.3f}s and {end_ts:.3f}s")
                         
@@ -2200,7 +2227,11 @@ class HolterFullDisclosureDialog(QDialog):
                     ts = float(beat.get('timestamp', 0.0))
                     if start_sec <= ts <= end_sec:
                         lbl = str(beat.get('label', 'N'))
-                        color = label_colors.get(lbl, "#00FF00")
+                        # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                        short_code = lbl
+                        if '(' in lbl and ')' in lbl:
+                            short_code = lbl.split('(')[1].split(')')[0]
+                        color = label_colors.get(short_code, "#00FF00")
                         beat_annotations.append({
                             'timestamp': ts,
                             'label': lbl,
