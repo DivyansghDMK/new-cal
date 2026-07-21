@@ -3280,31 +3280,88 @@ class ECGStripCanvas(QWidget):
         
         # 1. Color full regions for arrhythmias from _structured_events
         if hasattr(self, '_structured_events') and self._structured_events:
+            # Expanded color mapping for all arrhythmia types
             label_colors = {
                 "V": "#FF3333",      # Ventricular Premature - Red
                 "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
+                "S": "#00FFFF",      # Sinus Bradycardia/Tachycardia - Cyan
+                "P": "#FF00FF",     # Paced/AV Blocks - Magenta
+                "X": "#0000FF",     # Asystole/Artifact - Blue
             }
             # Go through events and find regions
             for i, ev in enumerate(self._structured_events):
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
                 ev_lbl = str(ev.get('label', '')).lower()
+                ev_lbl_orig = str(ev.get('label', ''))
+                
+                print(f"[ECGStripCanvas] Processing structured event: label='{ev_lbl_orig}', timestamp={ev_ts}, end_timestamp={ev.get('end_timestamp')}")
                 
                 # Check if this event starts an arrhythmia
                 active_label = 'N'
-                if 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl or 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
+                # Check for single-letter labels first (from manual marking)
+                if ev_lbl == 'v':
+                    active_label = 'V'
+                elif ev_lbl == 's':
+                    active_label = 'S'
+                elif ev_lbl == 'af':
+                    active_label = 'AF'
+                elif ev_lbl == 'p':
+                    active_label = 'P'
+                elif ev_lbl == 'x':
+                    active_label = 'X'
+                # Check for full label names (from auto-detection)
+                elif 'asystole' in ev_lbl:
+                    active_label = 'X'
+                elif 'ventricular fibrillation' in ev_lbl or 'vfib' in ev_lbl:
+                    active_label = 'V'
+                elif 'ventricular tachycardia' in ev_lbl or 'vtach' in ev_lbl:
                     active_label = 'V'
                 elif 'atrial fibrillation' in ev_lbl or 'afib' in ev_lbl:
                     active_label = 'AF'
+                elif 'atrial flutter' in ev_lbl or 'aflutter' in ev_lbl:
+                    active_label = 'AF'
+                elif 'sinus bradycardia' in ev_lbl or 'bradycardia' in ev_lbl:
+                    active_label = 'S'
+                elif 'sinus tachycardia' in ev_lbl or 'tachycardia' in ev_lbl:
+                    active_label = 'S'
+                elif 'av block' in ev_lbl or 'bundle branch block' in ev_lbl or 'paced' in ev_lbl:
+                    active_label = 'P'
+                elif 'premature ventricular' in ev_lbl or 'pvc' in ev_lbl:
+                    active_label = 'V'
+                elif 'premature atrial' in ev_lbl or 'pac' in ev_lbl:
+                    active_label = 'S'
+                elif 'st elevation' in ev_lbl or 'st depression' in ev_lbl:
+                    active_label = 'X'
+                
+                # Also check the original label (case-sensitive) for single letters
+                if active_label == 'N':
+                    if ev_lbl_orig == 'V':
+                        active_label = 'V'
+                    elif ev_lbl_orig == 'S':
+                        active_label = 'S'
+                    elif ev_lbl_orig == 'AF':
+                        active_label = 'AF'
+                    elif ev_lbl_orig == 'P':
+                        active_label = 'P'
+                    elif ev_lbl_orig == 'X':
+                        active_label = 'X'
+                
+                print(f"[ECGStripCanvas] active_label='{active_label}' for event label='{ev_lbl_orig}'")
                     
                 if active_label != 'N':
-                    color = label_colors.get(active_label, "#FF3333")
+                    # Use color from event if available, otherwise use label_colors
+                    color = ev.get('color', label_colors.get(active_label, "#FF3333"))
                     region_start_ts = ev_ts
                     
-                    # Find end of region (next event)
-                    region_end_ts = end_sec + 10.0 # arbitrarily large
-                    if i + 1 < len(self._structured_events):
-                        next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
-                        region_end_ts = next_ev_ts
+                    # Use end_timestamp if available, otherwise use next event
+                    region_end_ts = ev.get('end_timestamp')
+                    if region_end_ts is None:
+                        region_end_ts = end_sec + 10.0  # arbitrarily large
+                        if i + 1 < len(self._structured_events):
+                            next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
+                            region_end_ts = next_ev_ts
+                    else:
+                        region_end_ts = float(region_end_ts)
                         
                     # Calculate overlapping indices
                     if region_end_ts >= self._start_sec and region_start_ts <= end_sec:
@@ -3318,8 +3375,12 @@ class ECGStripCanvas(QWidget):
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
                 lbl = beat.get('label', 'N')
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
                 # Highlight QRS peak if the label is something other than 'N'
-                if lbl != 'N' and self._start_sec <= ts <= end_sec:
+                if short_code != 'N' and self._start_sec <= ts <= end_sec:
                     color = beat.get('color', "#FFFF00")
                     # R-peak window: ~60ms before and after (120ms QRS width)
                     qrs_start_ts = ts - 0.06
@@ -3470,16 +3531,21 @@ class ECGStripCanvas(QWidget):
             # 1. Explicitly annotated beats
             for annot_ts, beat in annotated_beats.items():
                 lbl = beat.get('label', 'N')
-                if lbl == 'N' and not beat.get('is_manual', False):
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
+                
+                if short_code == 'N' and not beat.get('is_manual', False):
                     continue   # skip default N annotations — user only sees manual arrhythmia marks
 
                 color = beat.get('color', None)
                 if not color:
-                    if lbl == 'V':
+                    if short_code == 'V':
                         color = "#FF3333"
-                    elif lbl == 'S':
+                    elif short_code == 'S':
                         color = "#00FFFF"
-                    elif lbl in ['AF', 'P']:
+                    elif short_code in ['AF', 'P']:
                         color = "#FF00FF"
                     else:
                         color = "#FFFF00"
@@ -3534,9 +3600,8 @@ class ECGStripCanvas(QWidget):
                         time_font.setBold(True)
                         painter.setFont(time_font)
                         painter.setPen(QPen(QColor("#FFFFFF")))
-                        # Center time above the label position
                         time_width = painter.fontMetrics().horizontalAdvance(beat_time_str)
-                        painter.drawText(bx - 4 - (time_width // 2) + (painter.fontMetrics().horizontalAdvance(lbl) // 2), 8, beat_time_str)
+                        painter.drawText(bx - (time_width // 2), 12, beat_time_str)
 
                     # --- Draw beat label (bold, larger font) below the time ---
                     lbl_font = painter.font()
@@ -3544,7 +3609,8 @@ class ECGStripCanvas(QWidget):
                     lbl_font.setBold(True)
                     painter.setFont(lbl_font)
                     painter.setPen(QPen(QColor(color)))
-                    painter.drawText(bx - 4, 18, lbl)
+                    lbl_width = painter.fontMetrics().horizontalAdvance(lbl)
+                    painter.drawText(bx - (lbl_width // 2), 24, lbl)
                     
                     # Restore a clean font state for subsequent peaks
                     restore_font = painter.font()
