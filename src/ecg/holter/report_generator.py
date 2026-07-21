@@ -321,6 +321,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     
     # Filter out auto-detected arrhythmias (except Normal Sinus Rhythm) from event timeline
     # Keep manual markings and Normal Sinus Rhythm only
+    # Also filter out Long QT Syndrome and Wide QRS (non-specific) as requested
     original_count = len(timeline_events)
     filtered_events = []
     for event in timeline_events:
@@ -335,30 +336,33 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             filtered_events.append(event)
             continue
         
-        # Filter out all other auto-detected arrhythmias
-        # Commented out: Original filtering logic for events within manual markings
+        # Filter out Long QT Syndrome and Wide QRS (non-specific) from report
+        if 'long qt' in event_label or 'wide qrs' in event_label:
+            continue
+        
+        # Filter out auto-detected arrhythmias only if they fall within manually marked areas
         # Check if this automated event falls within any manually marked segment
-        # event_ts = float(event.get('timestamp', 0.0))
-        # should_filter = False
-        # 
-        # # Check segment ranges
-        # for seg in manual_segments:
-        #     start_sec = float(seg.get('start_sec', 0.0))
-        #     end_sec = float(seg.get('end_sec', 0.0))
-        #     if start_sec <= event_ts <= end_sec:
-        #         should_filter = True
-        #         break
-        # 
-        # # Check parallel marking timestamps (within 0.15s tolerance)
-        # if not should_filter and manual_beats:
-        #     for mb in manual_beats:
-        #         mb_ts = float(mb.get('timestamp', 0.0))
-        #         if abs(event_ts - mb_ts) < 0.15:
-        #             should_filter = True
-        #             break
-        # 
-        # if not should_filter:
-        #     filtered_events.append(event)
+        event_ts = float(event.get('timestamp', 0.0))
+        should_filter = False
+        
+        # Check segment ranges
+        for seg in manual_segments:
+            start_sec = float(seg.get('start_sec', 0.0))
+            end_sec = float(seg.get('end_sec', 0.0))
+            if start_sec <= event_ts <= end_sec:
+                should_filter = True
+                break
+        
+        # Check parallel marking timestamps (within 0.15s tolerance)
+        if not should_filter and manual_beats:
+            for mb in manual_beats:
+                mb_ts = float(mb.get('timestamp', 0.0))
+                if abs(event_ts - mb_ts) < 0.15:
+                    should_filter = True
+                    break
+        
+        if not should_filter:
+            filtered_events.append(event)
     
     timeline_events = filtered_events
     print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} auto-detected arrhythmias (kept Normal Sinus Rhythm and manual markings)")
