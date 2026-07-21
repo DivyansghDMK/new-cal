@@ -373,6 +373,20 @@ class HolterFullDisclosureDialog(QDialog):
         self._pending_scroll_val = None
         self._last_scroll_time = 0
 
+        # Cached, timestamp-sorted beat/event index for O(log n) windowed lookups.
+        # _update_canvases() used to linear-scan the FULL recording's beat list
+        # (all_beats across all metrics) on every single redraw while dragging -
+        # for long Holter recordings that's tens of thousands of beats scanned
+        # up to ~30x/sec, which is what caused the dragging lag on 30 Sec/1 Min/
+        # 2 Min views. These caches are rebuilt lazily (only when marked dirty by
+        # an actual beat/event add/delete/undo) and sliced with bisect instead.
+        self._beat_index_dirty = True
+        self._cached_beat_ts = np.array([], dtype=np.float64)
+        self._cached_beat_list = []
+        self._event_index_dirty = True
+        self._cached_event_ts = np.array([], dtype=np.float64)
+        self._cached_event_list = []
+
         # Load manual_beats.json if it exists and merge into engine metrics on startup
         try:
             session_dir = os.path.dirname(self._engine.ecgh_path)
@@ -436,6 +450,29 @@ class HolterFullDisclosureDialog(QDialog):
         QTimer.singleShot(200, self._refresh_segment_overlay)
         # Also raise overlay to ensure it's on top
         QTimer.singleShot(250, lambda: self._segment_overlay.raise_() if hasattr(self, '_segment_overlay') else None)
+
+    # Per-lead row height (px) by gain multiplier. At higher gain the same
+    # mV deflection paints taller, so a fixed 90px row clips QRS peaks against
+    # the next row - give higher gains more headroom (paid for by the tightened
+    # container/row margins above), and let it be honest about the room a low
+    # gain trace actually needs.
+    _GAIN_CANVAS_HEIGHT = {0.5: 84, 1.0: 92, 2.0: 108}
+
+    def _canvas_height_for_gain(self, gain):
+        return self._GAIN_CANVAS_HEIGHT.get(gain, 92)
+
+    def _apply_canvas_height_for_gain(self):
+        """Resize every lead row to match the current gain's headroom and
+        force a relayout/repaint so peaks stop clipping immediately."""
+        new_height = self._canvas_height_for_gain(self._gain)
+        if new_height == getattr(self, '_canvas_height', None):
+            return
+        self._canvas_height = new_height
+        for c in getattr(self, '_canvases', []):
+            c.setFixedHeight(new_height)
+            c.update()
+        if hasattr(self, 'canvas_layout'):
+            self.canvas_layout.activate()
 
     def _recalc_window(self):
         idx = self.time_tabs.currentIndex() if hasattr(self, 'time_tabs') else 0
@@ -577,15 +614,19 @@ class HolterFullDisclosureDialog(QDialog):
         canvas_frame = QFrame()
         canvas_frame.setStyleSheet(f"background: {COL_BLACK};")
         self.canvas_layout = QVBoxLayout(canvas_frame)
-        self.canvas_layout.setContentsMargins(4, 6, 4, 6)
-        self.canvas_layout.setSpacing(2)
+        # Tightened from (4,4,4,4) - reclaim the outer gap so it can go toward
+        # per-lead row height instead (see _canvas_height_for_gain below).
+        self.canvas_layout.setContentsMargins(2, 2, 2, 2)
+        self.canvas_layout.setSpacing(0)
 
         self._canvases = []
         leads = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        self._canvas_height = self._canvas_height_for_gain(self._gain)
         for lead in leads:
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(4)
+            # Tightened from 4 - small reclaim from the label/canvas gap too.
+            row.setSpacing(3)
 
             lbl = QLabel(lead)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -596,7 +637,7 @@ class HolterFullDisclosureDialog(QDialog):
             )
             lbl.setFixedWidth(44)
 
-            canvas = ECGStripCanvas(canvas_frame, height=60, color=COL_GREEN, lead_name=lead, show_annotations=(lead == "I"))
+            canvas = ECGStripCanvas(canvas_frame, height=self._canvas_height, color=COL_GREEN, lead_name=lead, show_annotations=(lead == "I"))
             canvas.set_paper_speed(25)
             canvas.set_gain(self._gain)
             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1088,6 +1129,7 @@ class HolterFullDisclosureDialog(QDialog):
         next_step = self._GAIN_STEPS[(idx + 1) % len(self._GAIN_STEPS)]
         self._gain, self._gain_label = next_step
         self.btn_gain.setText(f"Gain: {self._gain_label}")
+        self._apply_canvas_height_for_gain()
         for c in self._canvases:
             c.set_gain(self._gain)
             c.update()  # Force repaint with new gain
@@ -1231,8 +1273,10 @@ class HolterFullDisclosureDialog(QDialog):
 
         if snapshot['engine_metrics'] is not None:
             self._engine._metrics = snapshot['engine_metrics']
+            self._beat_index_dirty = True
         if snapshot['structured_events'] is not None:
             self._engine._structured_events = snapshot['structured_events']
+            self._event_index_dirty = True
 
         # Persist the reverted state to disk so it stays consistent with
         # report generation and future reloads.
@@ -1287,6 +1331,7 @@ class HolterFullDisclosureDialog(QDialog):
                 
                 # Sort structured_events by timestamp
                 self._engine._structured_events.sort(key=lambda x: float(x.get('timestamp', 0.0) or 0.0))
+                self._event_index_dirty = True
                 
                 print(f"[Full Disclosure] Auto-detection complete: {len(detected_segments)} arrhythmias added to structured_events")
                 
@@ -1631,6 +1676,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 'event_type': label
                             }
                             self._engine._structured_events.append(structured_event)
+                            self._event_index_dirty = True
                             print(f"[Full Disclosure] Added structured event from {start_ts:.3f}s to {end_ts:.3f}s as '{label}'")
                             
                             # Refresh UI to apply waveform coloring
@@ -1794,6 +1840,8 @@ class HolterFullDisclosureDialog(QDialog):
                                             'label': full_label,
                                             'is_manual': True
                                         })
+                                    # A beat was added -> cached windowed index is stale
+                                    self._beat_index_dirty = True
                         
                         # Keep sorted by timestamp for consistent rendering
                         canvas._beat_annotations.sort(key=lambda b: b['timestamp'])
@@ -1941,6 +1989,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 ev for ev in self._engine._structured_events
                                 if not (ev.get('timestamp', 0) < end_ts and ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts)
                             ]
+                            self._event_index_dirty = True
                             print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
                             
                             # Refresh UI to remove waveform coloring
@@ -2009,6 +2058,8 @@ class HolterFullDisclosureDialog(QDialog):
                                         eb for eb in m['all_beats']
                                         if not any(abs(float(eb.get('timestamp', 0.0)) - t_ts) < snap_tolerance_sec for t_ts in target_timestamps)
                                     ]
+                            # Beats were removed -> cached windowed index is stale
+                            self._beat_index_dirty = True
                                     
                         # --- Also allow deleting Arrythmia Regions ---
                         if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
@@ -2028,6 +2079,7 @@ class HolterFullDisclosureDialog(QDialog):
                                         
                             if to_remove:
                                 events.remove(to_remove)
+                                self._event_index_dirty = True
                                 print(f"[Full Disclosure] Deleted arrhythmia event: {to_remove.get('label')} at {to_remove.get('timestamp')}")
                                 
                                 # Re-update the canvases so the region coloring is removed immediately
@@ -2035,6 +2087,54 @@ class HolterFullDisclosureDialog(QDialog):
                                 
         # Persist the deletion to disk
         self._save_manual_beats()
+
+    def _rebuild_beat_index(self):
+        """Merge all_beats across every engine metric into one timestamp-sorted
+        list + parallel numpy array, so windowed lookups can use bisect instead
+        of a full linear scan. Call is cheap to skip via the dirty flag - only
+        actually rebuilds when a beat was added/removed/restored since last time."""
+        merged = []
+        if hasattr(self._engine, '_metrics') and self._engine._metrics:
+            for m in self._engine._metrics:
+                merged.extend(m.get('all_beats', []))
+        merged.sort(key=lambda b: float(b.get('timestamp', 0.0)))
+        self._cached_beat_list = merged
+        self._cached_beat_ts = np.array(
+            [float(b.get('timestamp', 0.0)) for b in merged], dtype=np.float64
+        )
+        self._beat_index_dirty = False
+
+    def _beats_in_window(self, start_sec, end_sec):
+        """O(log n + k) windowed beat lookup (k = beats actually in range)."""
+        if self._beat_index_dirty:
+            self._rebuild_beat_index()
+        if len(self._cached_beat_ts) == 0:
+            return []
+        import bisect
+        lo = bisect.bisect_left(self._cached_beat_ts, start_sec)
+        hi = bisect.bisect_right(self._cached_beat_ts, end_sec)
+        return self._cached_beat_list[lo:hi]
+
+    def _rebuild_event_index(self):
+        """Same idea as _rebuild_beat_index but for structured (arrhythmia) events."""
+        events = list(getattr(self._engine, '_structured_events', []) or [])
+        events.sort(key=lambda e: float(e.get('timestamp', 0.0) or 0.0))
+        self._cached_event_list = events
+        self._cached_event_ts = np.array(
+            [float(e.get('timestamp', 0.0) or 0.0) for e in events], dtype=np.float64
+        )
+        self._event_index_dirty = False
+
+    def _events_in_window(self, start_sec, end_sec):
+        """O(log n + k) windowed structured-event lookup."""
+        if self._event_index_dirty:
+            self._rebuild_event_index()
+        if len(self._cached_event_ts) == 0:
+            return []
+        import bisect
+        lo = bisect.bisect_left(self._cached_event_ts, start_sec)
+        hi = bisect.bisect_right(self._cached_event_ts, end_sec)
+        return self._cached_event_list[lo:hi]
 
     def _scroll_throttle_interval(self):
         """Minimum seconds between live redraws while dragging, scaled to window size."""
@@ -2146,17 +2246,15 @@ class HolterFullDisclosureDialog(QDialog):
             self.lbl_real_time.setText(f"Real Time: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
         
         # Update arrhythmia indicator
-        # 1. Collect automatic events
+        # 1. Collect automatic events (windowed lookup via cached sorted index)
         auto_events = []
-        if hasattr(self._engine, '_structured_events'):
-            for ev in self._engine._structured_events:
-                ts = float(ev.get('timestamp', 0.0) or 0.0)
-                if start_sec <= ts <= end_sec:
-                    auto_events.append({
-                        'timestamp': ts,
-                        'label': ev.get('label', 'Event'),
-                        'source': 'Auto'
-                    })
+        for ev in self._events_in_window(start_sec, end_sec):
+            ts = float(ev.get('timestamp', 0.0) or 0.0)
+            auto_events.append({
+                'timestamp': ts,
+                'label': ev.get('label', 'Event'),
+                'source': 'Auto'
+            })
                     
         # 2. Collect manually annotated beats (non-N) in the current window
         manual_events = []
@@ -2219,26 +2317,23 @@ class HolterFullDisclosureDialog(QDialog):
         }
         
         try:
-            for m in self._engine._metrics:
-                all_beats = m.get('all_beats', [])
-                if not all_beats:
-                    continue
-                for beat in all_beats:
-                    ts = float(beat.get('timestamp', 0.0))
-                    if start_sec <= ts <= end_sec:
-                        lbl = str(beat.get('label', 'N'))
-                        # Extract short code from full label name (e.g., "Normal(N)" -> "N")
-                        short_code = lbl
-                        if '(' in lbl and ')' in lbl:
-                            short_code = lbl.split('(')[1].split(')')[0]
-                        color = label_colors.get(short_code, "#00FF00")
-                        beat_annotations.append({
-                            'timestamp': ts,
-                            'label': lbl,
-                            'color': color,
-                            'is_manual': beat.get('is_manual', False)
-                        })
-            beat_annotations.sort(key=lambda b: b['timestamp'])
+            # Windowed lookup via cached sorted index (bisect) instead of
+            # scanning every beat in the whole recording on every redraw.
+            for beat in self._beats_in_window(start_sec, end_sec):
+                ts = float(beat.get('timestamp', 0.0))
+                lbl = str(beat.get('label', 'N'))
+                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+                short_code = lbl
+                if '(' in lbl and ')' in lbl:
+                    short_code = lbl.split('(')[1].split(')')[0]
+                color = label_colors.get(short_code, "#00FF00")
+                beat_annotations.append({
+                    'timestamp': ts,
+                    'label': lbl,
+                    'color': color,
+                    'is_manual': beat.get('is_manual', False)
+                })
+            # Already sorted (index is built sorted, and slicing preserves order)
         except Exception as e:
             print(f"[Full Disclosure] Error loading beat annotations: {e}")
         
@@ -2296,7 +2391,6 @@ class HolterFullDisclosureDialog(QDialog):
 
         # Clear and repopulate segment overlay with only visible segments
         if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
-            print(f"[Full Disclosure] _update_canvases: refreshing overlay with {len(self._segment_annotations)} segments")
             self._segment_overlay.clear_segments()
             ref = self._canvases[0] if self._canvases else None
             if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
@@ -2306,8 +2400,7 @@ class HolterFullDisclosureDialog(QDialog):
                 if ref_w > 0 and data_l > 0:
                     ref_end = ref._start_sec + data_l / ref._fs
                     span    = ref_end - ref._start_sec
-                    print(f"[Full Disclosure] Canvas: ref_w={ref_w}, data_l={data_l}, span={span:.2f}")
-                    
+
                     for seg in self._segment_annotations:
                         s_sec = seg['start_sec']
                         e_sec = seg['end_sec']
@@ -2320,8 +2413,7 @@ class HolterFullDisclosureDialog(QDialog):
                                 ex_local = max(0, min(ref_w, ex_local))
                                 sx_global = ref.mapTo(self._canvas_frame, QPoint(sx_local, 0)).x()
                                 ex_global = ref.mapTo(self._canvas_frame, QPoint(ex_local, 0)).x()
-                                
-                                print(f"[Full Disclosure] _update_canvases adding segment: label={seg['label']}, sx_global={sx_global}, ex_global={ex_global}, color={seg['color']}")
+
                                 self._segment_overlay.add_segment(
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
