@@ -2829,14 +2829,21 @@ class ECGStripCanvas(QWidget):
         self._clicked_beat_x_pos = None
         self.update()
 
-    def set_data(self, *args, beat_annotations=None, start_sec=0.0, structured_events=None):
+    def set_data(self, *args, beat_annotations=None, start_sec=0.0, structured_events=None, fast_preview=False):
         if len(args) == 2:
             raw_data = np.asarray(args[1], dtype=float)
         elif len(args) == 1:
             raw_data = np.asarray(args[0], dtype=float)
         else:
             raw_data = np.zeros(0)
-            
+
+        # NOTE: fast_preview no longer skips the low-pass filter below - an
+        # earlier version did, to save time on in-between scrub frames, but
+        # that displayed the raw unfiltered signal (baseline wander + HF
+        # noise the filter normally removes) and made the trace look like
+        # pure noise while dragging. Filtering always runs; fast_preview now
+        # only skips the RR-interval recompute (self._rr_intervals), which
+        # isn't drawn as part of the trace itself.
         if len(raw_data) > 15:
             try:
                 if getattr(self, '_filter_ba', None) is None:
@@ -2849,18 +2856,19 @@ class ECGStripCanvas(QWidget):
                 self._data = raw_data
         else:
             self._data = raw_data
-            
+
         self._beat_annotations = beat_annotations or []
         self._structured_events = structured_events or []
         self._start_sec = start_sec
-        self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
+        if fast_preview:
+            self._rr_intervals = []
+        else:
+            self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
         self.update()
     
     def _calculate_rr_intervals(self):
         """Calculate RR intervals (N-N intervals) between consecutive R-peaks."""
         if not self._beat_annotations:
-            lead_name = getattr(self, 'lead_name', 'Unknown')
-            print(f"[ECGStripCanvas] No beat annotations for {lead_name}")
             return []
         
         # Filter and sort beats by timestamp
@@ -2893,9 +2901,6 @@ class ECGStripCanvas(QWidget):
                 'start_label': curr_beat['label'],
                 'end_label': next_beat['label']
             })
-        
-        lead_name = getattr(self, 'lead_name', 'Unknown')
-        print(f"[ECGStripCanvas] {lead_name}: Found {len(beats_in_window)} beats, {len(intervals)} intervals in window [{self._start_sec:.2f}, {end_sec:.2f}]s")
         
         return intervals
 
@@ -3286,17 +3291,18 @@ class ECGStripCanvas(QWidget):
                 "V": "#FF3333",      # Ventricular Premature - Red
                 "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
                 "S": "#00FFFF",      # Sinus Bradycardia/Tachycardia - Cyan
-                "P": "#FF00FF",     # Paced/AV Blocks - Magenta
-                "X": "#0000FF",     # Asystole/Artifact - Blue
+                "P": "#FF00FF",      # Paced/AV Blocks - Magenta
+                "C": "#FFA500",      # Conduction Blocks - Orange
+                "T": "#9932CC",      # TV Paced - Purple
+                "A": "#FFFF00",      # ACLS - Yellow
+                "X": "#0000FF",      # Asystole/Artifact - Blue
             }
             # Go through events and find regions
             for i, ev in enumerate(self._structured_events):
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
                 ev_lbl = str(ev.get('label', '')).lower()
                 ev_lbl_orig = str(ev.get('label', ''))
-                
-                print(f"[ECGStripCanvas] Processing structured event: label='{ev_lbl_orig}', timestamp={ev_ts}, end_timestamp={ev.get('end_timestamp')}")
-                
+
                 # Check if this event starts an arrhythmia
                 active_label = 'N'
                 # Check for single-letter labels first (from manual marking)
@@ -3308,6 +3314,12 @@ class ECGStripCanvas(QWidget):
                     active_label = 'AF'
                 elif ev_lbl == 'p':
                     active_label = 'P'
+                elif ev_lbl == 'c':  # Conduction blocks
+                    active_label = 'C'
+                elif ev_lbl == 't':  # TV Paced
+                    active_label = 'T'
+                elif ev_lbl == 'a':  # ACLS
+                    active_label = 'A'
                 elif ev_lbl == 'x':
                     active_label = 'X'
                 # Check for full label names (from auto-detection)
@@ -3321,15 +3333,21 @@ class ECGStripCanvas(QWidget):
                     active_label = 'AF'
                 elif 'atrial flutter' in ev_lbl or 'aflutter' in ev_lbl:
                     active_label = 'AF'
-                elif 'sinus bradycardia' in ev_lbl or 'bradycardia' in ev_lbl:
+                elif 'sinus bradycardia' in ev_lbl:
                     active_label = 'S'
-                elif 'sinus tachycardia' in ev_lbl or 'tachycardia' in ev_lbl:
+                elif 'sinus tachycardia' in ev_lbl:
                     active_label = 'S'
-                elif 'av block' in ev_lbl or 'bundle branch block' in ev_lbl or 'paced' in ev_lbl:
+                elif 'bradycardia (non-sinus)' in ev_lbl:
+                    active_label = 'S'
+                elif 'tachycardia (non-sinus)' in ev_lbl:
+                    active_label = 'S'
+                elif '1st-degree av block' in ev_lbl or '2nd-degree av block' in ev_lbl or '3rd-degree av block' in ev_lbl:
                     active_label = 'P'
-                elif 'premature ventricular' in ev_lbl or 'pvc' in ev_lbl:
+                elif 'right bundle branch block' in ev_lbl or 'left bundle branch block' in ev_lbl:
+                    active_label = 'P'
+                elif 'premature ventricular contraction' in ev_lbl or 'pvc' in ev_lbl:
                     active_label = 'V'
-                elif 'premature atrial' in ev_lbl or 'pac' in ev_lbl:
+                elif 'premature atrial contraction' in ev_lbl or 'pac' in ev_lbl:
                     active_label = 'S'
                 elif 'st elevation' in ev_lbl or 'st depression' in ev_lbl:
                     active_label = 'X'
@@ -3346,9 +3364,7 @@ class ECGStripCanvas(QWidget):
                         active_label = 'P'
                     elif ev_lbl_orig == 'X':
                         active_label = 'X'
-                
-                print(f"[ECGStripCanvas] active_label='{active_label}' for event label='{ev_lbl_orig}'")
-                    
+
                 if active_label != 'N':
                     # Use color from event if available, otherwise use label_colors
                     color = ev.get('color', label_colors.get(active_label, "#FF3333"))

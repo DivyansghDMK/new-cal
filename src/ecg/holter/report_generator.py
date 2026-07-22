@@ -338,12 +338,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             filtered_events.append(event)
             continue
         
-        # Keep auto-detected Normal Sinus Rhythm events
         event_label = str(event.get('label', event.get('event_type', ''))).lower()
-        if 'normal sinus rhythm' in event_label or 'nsr' in event_label:
-            filtered_events.append(event)
-            continue
-        
+
         # Filter out Long QT Syndrome and Wide QRS (non-specific) from report
         if 'long qt' in event_label or 'wide qrs' in event_label:
             continue
@@ -352,8 +348,14 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         if 'frequent pvc' in event_label or 'multifocal pvc' in event_label:
             continue
         
-        # Filter out auto-detected arrhythmias only if they fall within manually marked areas
-        # Check if this automated event falls within any manually marked segment
+        # Filter out auto-detected events - INCLUDING Normal Sinus Rhythm -
+        # if they fall within a manually marked area. Manual marks take
+        # priority and must suppress any auto label at that time, not just
+        # non-NSR ones. (This used to be split: NSR had its own "always
+        # keep" branch that returned before should_filter was even computed,
+        # which is why an auto "Normal Sinus Rhythm" row could still show up
+        # at the exact same timestamp as a manual VF mark - NSR never
+        # reached the suppression check below.)
         event_ts = float(event.get('timestamp', 0.0))
         should_filter = False
         

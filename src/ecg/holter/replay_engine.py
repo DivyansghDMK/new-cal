@@ -138,6 +138,111 @@ class HolterReplayEngine:
                     self._summary = dict(metadata["summary"])
         except Exception as e:
             print(f"[Replay] Could not load session metadata: {e}")
+    
+    def get_events_with_manual_priority(self, start_sec=None, end_sec=None):
+        """
+        Get all events with MANUAL PRIORITY over AUTO-DETECTION.
+        
+        When both manual and auto marks exist:
+        - Manual marks are always shown
+        - Auto marks that overlap with manual marks (within 150ms) are suppressed
+        - This ensures manual marks take precedence in reports
+        
+        Args:
+            start_sec: Start time (None = from beginning)
+            end_sec: End time (None = to end)
+            
+        Returns:
+            List[dict]: Combined events with manual marks having priority
+        """
+        if start_sec is None:
+            start_sec = 0.0
+        if end_sec is None:
+            end_sec = self.duration_sec
+            
+        SUPPRESS_TOLERANCE_SEC = 0.15
+        
+        # 1. Load manual beats from disk if they exist
+        manual_events = []
+        manual_timestamps = set()
+        session_dir = os.path.dirname(self.ecgh_path)
+        manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+        
+        try:
+            if os.path.exists(manual_beats_path):
+                with open(manual_beats_path, 'r') as f:
+                    manual_beats = json.load(f)
+                    for beat in manual_beats:
+                        ts = float(beat.get('timestamp', 0.0))
+                        lbl = str(beat.get('label', 'N'))
+                        is_manual = beat.get('is_manual', False)
+                        if lbl != 'N' and start_sec <= ts <= end_sec and is_manual:
+                            manual_events.append({
+                                'timestamp': ts,
+                                'label': lbl,
+                                'source': 'Manual',
+                                'is_manual': True,
+                                'color': beat.get('color', '#FFFF00')
+                            })
+                            manual_timestamps.add(round(ts, 2))
+        except Exception as e:
+            print(f"[ReplayEngine] Could not load manual beats: {e}")
+        
+        # 2. Load manual segments from disk if they exist
+        manual_segments = []
+        manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+        try:
+            if os.path.exists(manual_segments_path):
+                with open(manual_segments_path, 'r') as f:
+                    segments = json.load(f)
+                    for seg in segments:
+                        start = float(seg.get('start_sec', 0.0))
+                        end = float(seg.get('end_sec', 0.0))
+                        # Check if segment overlaps with the requested window
+                        if start <= end_sec and end >= start_sec:
+                            manual_segments.append({
+                                'timestamp': start,
+                                'end_timestamp': end,
+                                'label': str(seg.get('label', 'Event')),
+                                'source': 'Manual',
+                                'is_manual': True,
+                                'color': seg.get('color', '#FFFF00'),
+                                'segment': True  # Mark as segment type
+                            })
+                            # Add segment start/end to manual timestamps for suppression
+                            for ts in np.linspace(start, end, max(2, int((end - start) / 0.5))):
+                                manual_timestamps.add(round(float(ts), 2))
+        except Exception as e:
+            print(f"[ReplayEngine] Could not load manual segments: {e}")
+        
+        # 3. Collect auto-detected events, suppressing those that overlap with manual marks
+        auto_events = []
+        for ev in self._structured_events:
+            ts = float(ev.get('timestamp', 0.0) or 0.0)
+            
+            # Only include events in the requested window
+            if not (start_sec <= ts <= end_sec):
+                continue
+            
+            # Check if this auto event falls within tolerance of any manual mark
+            is_suppressed = False
+            for manual_ts in manual_timestamps:
+                if abs(ts - manual_ts) < SUPPRESS_TOLERANCE_SEC:
+                    is_suppressed = True
+                    break
+            
+            if not is_suppressed:
+                auto_events.append({
+                    'timestamp': ts,
+                    'label': ev.get('label', 'Event'),
+                    'source': 'Auto',
+                    'is_manual': False,
+                    'type': ev.get('type', 'Event')
+                })
+        
+        # Combine all events and return sorted by timestamp
+        all_events = sorted(manual_events + manual_segments + auto_events, key=lambda x: x['timestamp'])
+        return all_events
 
     #    Callbacks                                                              
 
