@@ -73,13 +73,58 @@ class HolterReplayEngine:
                     if line:
                         m = json.loads(line)
                         self._metrics.append(m)
-                        # Extract arrhythmia events
+                        # Extract arrhythmia events with proper color coding for waveform display
                         for a in m.get('arrhythmias', []):
                             self._arrhythmia_events.append((m['t'], a))
+                            
+                            # Determine label code and color for waveform coloring
+                            arr_label = str(a).lower()
+                            label_code = 'N'
+                            color = '#00FF00'  # Default green for NSR
+                            
+                            # Color mapping for arrhythmia types
+                            if 'ventricular fibrillation' in arr_label or 'vfib' in arr_label or 'vf' in arr_label:
+                                label_code = 'V'
+                                color = '#FF3333'  # Red
+                            elif 'ventricular tachycardia' in arr_label or 'vtach' in arr_label:
+                                label_code = 'V'
+                                color = '#FFA500'  # Orange
+                            elif 'atrial fibrillation' in arr_label or 'afib' in arr_label:
+                                label_code = 'AF'
+                                color = '#9932CC'  # Purple
+                            elif 'atrial flutter' in arr_label or 'aflutter' in arr_label:
+                                label_code = 'AF'
+                                color = '#FF69B4'  # Pink
+                            elif 'sinus bradycardia' in arr_label or 'bradycardia' in arr_label:
+                                label_code = 'S'
+                                color = '#0000FF'  # Blue
+                            elif 'sinus tachycardia' in arr_label or 'tachycardia' in arr_label:
+                                label_code = 'S'
+                                color = '#00BFFF'  # Deep Sky Blue
+                            elif '1st-degree av block' in arr_label or '2nd-degree av block' in arr_label or '3rd-degree av block' in arr_label:
+                                label_code = 'P'
+                                color = '#FFFF00'  # Yellow
+                            elif 'right bundle branch block' in arr_label or 'left bundle branch block' in arr_label:
+                                label_code = 'P'
+                                color = '#FFD700'  # Gold
+                            elif 'premature ventricular contraction' in arr_label or 'pvc' in arr_label:
+                                label_code = 'V'
+                                color = '#8B4513'  # Brown
+                            elif 'premature atrial contraction' in arr_label or 'pac' in arr_label:
+                                label_code = 'S'
+                                color = '#00FFFF'  # Cyan
+                            
+                            # Calculate end timestamp (use chunk duration)
+                            chunk_start = float(m.get('t', 0.0) or 0.0)
+                            chunk_duration = float(m.get('duration', 60.0) or 60.0)
+                            
                             self._structured_events.append({
-                                'timestamp': float(m.get('t', 0.0) or 0.0),
+                                'timestamp': chunk_start,
+                                'end_timestamp': chunk_start + chunk_duration,
                                 'type': str(a),
                                 'label': str(a),
+                                'event_type': label_code,
+                                'color': color,
                                 'source': 'arrhythmia',
                             })
                         for ev in (m.get('classified_events', []) or []):
@@ -113,14 +158,63 @@ class HolterReplayEngine:
                 for item in layered_events:
                     ts = float(item.get("timestamp", item.get("t", 0.0)) or 0.0)
                     label = str(item.get("label", item.get("event_type", "Event")))
-                    self._structured_events.append({
+                    label_lower = label.lower()
+                    
+                    # Determine label code and color for waveform coloring
+                    label_code = 'N'
+                    color = '#00FF00'  # Default green for NSR
+                    
+                    # Color mapping for arrhythmia types
+                    if 'ventricular fibrillation' in label_lower or 'vfib' in label_lower or 'vf' in label_lower:
+                        label_code = 'V'
+                        color = '#FF3333'  # Red
+                    elif 'ventricular tachycardia' in label_lower or 'vtach' in label_lower:
+                        label_code = 'V'
+                        color = '#FFA500'  # Orange
+                    elif 'atrial fibrillation' in label_lower or 'afib' in label_lower:
+                        label_code = 'AF'
+                        color = '#9932CC'  # Purple
+                    elif 'atrial flutter' in label_lower or 'aflutter' in label_lower:
+                        label_code = 'AF'
+                        color = '#FF69B4'  # Pink
+                    elif 'sinus bradycardia' in label_lower or 'bradycardia' in label_lower:
+                        label_code = 'S'
+                        color = '#0000FF'  # Blue
+                    elif 'sinus tachycardia' in label_lower or 'tachycardia' in label_lower:
+                        label_code = 'S'
+                        color = '#00BFFF'  # Deep Sky Blue
+                    elif '1st-degree av block' in label_lower or '2nd-degree av block' in label_lower or '3rd-degree av block' in label_lower:
+                        label_code = 'P'
+                        color = '#FFFF00'  # Yellow
+                    elif 'right bundle branch block' in label_lower or 'left bundle branch block' in label_lower:
+                        label_code = 'P'
+                        color = '#FFD700'  # Gold
+                    elif 'premature ventricular contraction' in label_lower or 'pvc' in label_lower:
+                        label_code = 'V'
+                        color = '#8B4513'  # Brown
+                    elif 'premature atrial contraction' in label_lower or 'pac' in label_lower:
+                        label_code = 'S'
+                        color = '#00FFFF'  # Cyan
+                    
+                    # Check if item has end_timestamp, otherwise calculate from duration
+                    end_ts = item.get("end_timestamp")
+                    if end_ts is None:
+                        duration = float(item.get("duration", 60.0) or 60.0)
+                        end_ts = ts + duration
+                    
+                    event_dict = {
                         "timestamp": ts,
+                        "end_timestamp": float(end_ts),
                         "type": str(item.get("event_type", label)),
                         "label": label,
+                        "event_type": label_code,
+                        "color": color,
                         "template_label": str(item.get("template_label", item.get("event_type", label))),
                         "source": str(item.get("source", "analysis")),
                         "confidence": float(item.get("confidence", 0.0) or 0.0),
-                    })
+                    }
+                    self._structured_events.append(event_dict)
+                    
                     if "arrhythmia" in str(item.get("source", "")).lower() or "analysis" in str(item.get("source", "")).lower():
                         self._arrhythmia_events.append((ts, label))
                 self._structured_events.sort(key=lambda item: float(item.get('timestamp', 0.0) or 0.0))

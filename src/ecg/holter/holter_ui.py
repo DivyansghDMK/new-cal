@@ -3455,6 +3455,104 @@ class ECGStripCanvas(QWidget):
                 seg_path.lineTo(xv, yv)
             painter.drawPath(seg_path)
 
+        # --- Draw Auto-Detected Arrhythmia Labels ---
+        # Display labels only for main arrhythmia types (not beat-level classifications)
+        # at the start of color-coded regions with system time
+        if not self._disable_all_coloring and hasattr(self, '_structured_events') and self._structured_events:
+            # Filter for main arrhythmia types only (exclude beat-level classifications)
+            main_arrhythmia_keywords = [
+                'sinus tachycardia', 'sinus bradycardia', 'tachycardia', 'bradycardia',
+                'atrial fibrillation', 'atrial flutter', 'afib', 'aflutter',
+                'ventricular fibrillation', 'ventricular tachycardia', 'vfib', 'vtach',
+                '1st-degree av block', '2nd-degree av block', '3rd-degree av block',
+                'right bundle branch block', 'left bundle branch block'
+            ]
+            
+            for ev in self._structured_events:
+                ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+                ev_label = str(ev.get('label', '')).lower()
+                ev_color = str(ev.get('color', '#FFFF00'))
+                
+                # Only draw if:
+                # 1. Event is visible in current window
+                # 2. Label contains a main arrhythmia keyword (not beat-level like "Long QT", "wide QRS", "PVC")
+                # 3. Not Normal Sinus Rhythm
+                is_main_arrhythmia = any(keyword in ev_label for keyword in main_arrhythmia_keywords)
+                is_not_nsr = 'normal sinus rhythm' not in ev_label
+                is_visible = self._start_sec <= ev_ts <= end_sec
+                
+                if is_main_arrhythmia and is_not_nsr and is_visible:
+                    # Calculate pixel position for the label
+                    label_x = int((ev_ts - self._start_sec) * self._fs * x_scale)
+                    if 0 <= label_x < w:
+                        # Get actual system recording time from recording_index.json
+                        time_str = ""
+                        try:
+                            import json
+                            import os
+                            # Try to get session directory from parent
+                            session_dir = None
+                            parent = self.parent()
+                            while parent is not None:
+                                if hasattr(parent, 'session_dir'):
+                                    session_dir = parent.session_dir
+                                    break
+                                parent = parent.parent()
+                            
+                            if session_dir:
+                                index_path = os.path.join(session_dir, 'recording_index.json')
+                                if os.path.exists(index_path):
+                                    with open(index_path, 'r') as f:
+                                        index_data = json.load(f)
+                                    start_time = index_data.get('start_time')
+                                    if start_time:
+                                        from datetime import datetime
+                                        system_time = datetime.fromtimestamp(start_time + ev_ts)
+                                        time_str = system_time.strftime('%H:%M:%S')
+                        except Exception as e:
+                            print(f"[ECGStripCanvas] Error reading system time: {e}")
+                        
+                        # Fallback to elapsed time if system time not available
+                        if not time_str:
+                            time_str = f"{int(ev_ts // 60):02d}:{int(ev_ts % 60):02d}"
+                        
+                        # Draw label background
+                        painter.setPen(QPen(QColor(ev_color)))
+                        painter.setBrush(QColor(ev_color))
+                        font = painter.font()
+                        font.setBold(True)
+                        font.setPixelSize(10)
+                        painter.setFont(font)
+                        
+                        # Calculate text dimensions
+                        label_text = str(ev.get('label', ''))
+                        label_metrics = painter.fontMetrics()
+                        label_w = label_metrics.horizontalAdvance(label_text)
+                        time_w = label_metrics.horizontalAdvance(time_str)
+                        total_w = max(label_w, time_w) + 8
+                        total_h = 28
+                        
+                        # Position label above the waveform at the exact start point
+                        label_y = 5
+                        rect_x = max(0, min(w - total_w, label_x - total_w // 2))
+                        rect_y = label_y
+                        
+                        # Draw rounded rectangle background
+                        painter.drawRoundedRect(rect_x, rect_y, total_w, total_h, 4, 4)
+                        
+                        # Draw time text (white, smaller) at top
+                        font.setPixelSize(9)
+                        font.setBold(False)
+                        painter.setFont(font)
+                        painter.setPen(QPen(QColor("#FFFFFF")))
+                        painter.drawText(rect_x + 4, rect_y + 12, time_str)
+                        
+                        # Draw label text (white, bold) below time
+                        font.setPixelSize(10)
+                        font.setBold(True)
+                        painter.setFont(font)
+                        painter.drawText(rect_x + 4, rect_y + 24, label_text)
+
             
         # --- Draw Clinical Beat Annotations ---
         lead_name = getattr(self, 'lead_name', '')
