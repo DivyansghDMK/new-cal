@@ -1269,8 +1269,8 @@ class HolterReplayPanel(QWidget):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
             # Height 60px makes them compact enough to fit well, but scrollable if needed
-            # Replay mode: disable annotations (show_annotations=False)
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_annotations=False)
+            # Replay mode: disable ALL coloring (disable_all_coloring=True) - no arrhythmia colors, just green
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_annotations=False, disable_all_coloring=True)
             strip.set_gain(1.0)
             self._lead_strips[lead] = strip
             self._ch_strips.append(strip)
@@ -1290,8 +1290,8 @@ class HolterReplayPanel(QWidget):
         rhythm_lbl.setFixedWidth(34)
         rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        # Replay mode: disable annotations
-        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9, show_annotations=False)
+        # Replay mode: disable ALL coloring
+        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9, show_annotations=False, disable_all_coloring=True)
         rhythm_row.addWidget(rhythm_lbl)
         rhythm_row.addWidget(self._mini_strip, 1)
         ecg_right_layout.addLayout(rhythm_row)
@@ -2727,7 +2727,7 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True, show_annotations: bool = True):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True, show_annotations: bool = True, disable_all_coloring: bool = False):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
@@ -2736,6 +2736,7 @@ class ECGStripCanvas(QWidget):
         self._start_sec = 0.0
         self._show_vertical_lines = show_vertical_lines  # Control whether to show R-peak vertical lines
         self._show_annotations = show_annotations  # Control whether to show N labels and RR numbers
+        self._disable_all_coloring = disable_all_coloring  # CRITICAL: Disable ALL coloring (for replay/overview)
         self._gain = 1.0
         self._speed = 25
         self.setFixedHeight(height)
@@ -3285,7 +3286,10 @@ class ECGStripCanvas(QWidget):
         end_sec = self._start_sec + len(d) / self._fs
         
         # 1. Color full regions for arrhythmias from _structured_events
-        if hasattr(self, '_structured_events') and self._structured_events:
+        # CRITICAL FIX: Only apply structured event coloring if disable_all_coloring is False
+        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
+        # For Full Disclosure (disable_all_coloring=False), show waveform coloring regardless of show_annotations
+        if not self._disable_all_coloring and hasattr(self, '_structured_events') and self._structured_events:
             # Expanded color mapping for all arrhythmia types
             label_colors = {
                 "V": "#FF3333",      # Ventricular Premature - Red
@@ -3388,7 +3392,10 @@ class ECGStripCanvas(QWidget):
                             colored_intervals.append((start_idx, end_idx, color))
         
         # 2. Color QRS complex for explicitly annotated beats
-        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+        # CRITICAL FIX: Only apply beat annotation coloring if disable_all_coloring is False
+        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
+        # For Full Disclosure (disable_all_coloring=False), show beat coloring regardless of show_annotations
+        if not self._disable_all_coloring and hasattr(self, '_beat_annotations') and self._beat_annotations:
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
                 lbl = beat.get('label', 'N')
@@ -4260,7 +4267,8 @@ class HolterExpertReviewPanel(QWidget):
             lbl.setFixedWidth(34)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False, show_annotations=False)
+            # Expert/Overview mode: disable ALL coloring (disable_all_coloring=True) - no arrhythmia colors, just green
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False, show_annotations=False, disable_all_coloring=True)
             strip.set_gain(1.0)
             self._expert_lead_strips[lead] = strip
             row_h.addWidget(lbl)
@@ -4270,14 +4278,14 @@ class HolterExpertReviewPanel(QWidget):
         leads_scroll.setWidget(leads_container)
         center_l.addWidget(leads_scroll, 1)
 
-        # Rhythm strip at bottom (Lead II) - also disable vertical lines
+        # Rhythm strip at bottom (Lead II) - also disable vertical lines and ALL coloring
         rhythm_row = QHBoxLayout()
         rhythm_row.setSpacing(4)
         rlbl = QLabel("II")
         rlbl.setFixedWidth(34)
         rlbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rlbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False, show_annotations=False)
+        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False, show_annotations=False, disable_all_coloring=True)
         rhythm_row.addWidget(rlbl)
         rhythm_row.addWidget(self._mini, 1)
         center_l.addLayout(rhythm_row)

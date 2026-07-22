@@ -44,6 +44,13 @@ except ImportError:
                                    TOOL_RULER, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_SELECT)
     from ecg.holter.holter_ui import ECGStripCanvas, MagnifierOverlay
 
+try:
+    from utils.settings_manager import SettingsManager
+except ImportError:
+    try:
+        from ecg.utils.settings_manager import SettingsManager
+    except ImportError:
+        SettingsManager = None
 
 from PyQt5.QtCore import pyqtSignal
 
@@ -345,7 +352,16 @@ class HolterFullDisclosureDialog(QDialog):
         self._multi_line2_x = None  # Second line (follows drag, fixed on release)
         
         # Selection mode: 'parallel_single' | 'parallel_multi' | 'segment'
-        self._selection_mode = 'parallel_single'
+        # CRITICAL FIX: Restore from saved settings instead of always defaulting to 'parallel_single'
+        if SettingsManager is not None:
+            try:
+                settings = SettingsManager()
+                self._selection_mode = settings.get_setting('holter_selection_mode', 'parallel_single')
+            except Exception as e:
+                print(f"[Full Disclosure] Could not restore selection mode from settings: {e}")
+                self._selection_mode = 'parallel_single'
+        else:
+            self._selection_mode = 'parallel_single'
         
         # Pending manual beats to restore after canvases are created
         self._pending_manual_beats = None
@@ -464,6 +480,13 @@ class HolterFullDisclosureDialog(QDialog):
             print(f"[Full Disclosure] Error loading segment annotations on startup: {e}")
 
         self._update_canvases(0.0)
+        
+        # CRITICAL FIX: Apply the restored selection mode to update button text and UI state
+        # This ensures the button shows the correct mode after reopening the dialog
+        if hasattr(self, '_selection_mode'):
+            # Call _switch_selection_mode to properly initialize the UI for the restored mode
+            # But we need to do this AFTER the button is created, so use a short delay
+            QTimer.singleShot(50, lambda: self._switch_selection_mode(self._selection_mode))
 
     def showEvent(self, event):
         """Override showEvent to refresh segment overlay when dialog is shown."""
@@ -1202,6 +1225,16 @@ class HolterFullDisclosureDialog(QDialog):
     def _switch_selection_mode(self, mode: str):
         """Switch between 'parallel_single', 'parallel_multi', and 'segment' modes."""
         self._selection_mode = mode
+        
+        # CRITICAL FIX: Save selection mode to settings so it persists after dialog close/reopen
+        if SettingsManager is not None:
+            try:
+                settings = SettingsManager()
+                settings.set_setting('holter_selection_mode', mode)
+                print(f"[Full Disclosure] Saved selection mode: {mode}")
+            except Exception as e:
+                print(f"[Full Disclosure] Could not save selection mode to settings: {e}")
+        
         if mode == 'parallel_single':
             self.btn_sel_mode.setText("▲ Parallel Single")
             # Clear any pending segment drag
@@ -2131,12 +2164,15 @@ class HolterFullDisclosureDialog(QDialog):
                     "X": "#0000FF",      # Artifact - Blue (legacy)
                 }
                 
+                print(f"[Full Disclosure] SAVE: Lead I has {len(lead_i_canvas._beat_annotations)} beats to save")
+                
                 for b in lead_i_canvas._beat_annotations:
                     beat_entry = {
                         'timestamp': float(b.get('timestamp', 0.0)),
                         'label': str(b.get('label', 'N')),
                         'is_manual': b.get('is_manual', False)
                     }
+                    print(f"[Full Disclosure] SAVING: beat at {beat_entry['timestamp']:.3f}s label={beat_entry['label']} is_manual={beat_entry['is_manual']}")
                     
                     # CRITICAL FIX: Use saved color if available, otherwise derive from label code
                     saved_color = b.get('color', '')
@@ -2247,24 +2283,36 @@ class HolterFullDisclosureDialog(QDialog):
                             # Delete all beats in this range for all leads
                             snap_tolerance_sec = 0.15
                             deleted_timestamps = set()
+                            deleted_batch_ids = set()
+                            
+                            print(f"[Full Disclosure] START DELETE: time range {start_ts:.3f}s to {end_ts:.3f}s")
                             
                             for canvas in self._canvases:
                                 if hasattr(canvas, '_beat_annotations') and canvas._beat_annotations:
+                                    print(f"[Full Disclosure] {canvas.lead_name}: {len(canvas._beat_annotations)} beats before delete")
+                                    
                                     # Collect kept beats and track deleted timestamps
-                                    # Delete beats that fall within the time range and are manually marked
+                                    # For parallel multi delete: delete beats with matching batch_id OR is_manual in range
                                     kept_beats = []
                                     for b in canvas._beat_annotations:
                                         ts = b.get('timestamp', 0.0)
                                         is_manual = b.get('is_manual', False)
+                                        batch_id = b.get('batch_id')
+                                        lbl = b.get('label', 'N')
                                         
-                                        # Delete if: manually marked AND within time range
-                                        if is_manual and start_ts <= ts <= end_ts:
+                                        # Delete if within range AND (manually marked OR has batch_id from parallel marking)
+                                        should_delete = start_ts <= ts <= end_ts and (is_manual or batch_id is not None)
+                                        
+                                        if should_delete:
                                             deleted_timestamps.add(ts)
-                                            print(f"[Full Disclosure] Deleting manual beat at {ts:.3f}s (manual={is_manual})")
+                                            if batch_id is not None:
+                                                deleted_batch_ids.add(batch_id)
+                                            print(f"[Full Disclosure] DELETE {canvas.lead_name}: beat at {ts:.3f}s label={lbl} is_manual={is_manual} batch_id={batch_id}")
                                         else:
                                             kept_beats.append(b)
                                     
                                     canvas._beat_annotations[:] = kept_beats
+                                    print(f"[Full Disclosure] {canvas.lead_name}: {len(canvas._beat_annotations)} beats after delete")
                                     canvas.update()
                             
                             # CRITICAL FIX: Also remove deleted beats from _pending_manual_beats
@@ -2276,6 +2324,20 @@ class HolterFullDisclosureDialog(QDialog):
                                 ]
                                 print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from pending manual beats")
                             
+                            # CRITICAL FIX #2: Also remove deleted beats from self._engine._metrics
+                            # Otherwise _beats_in_window will return them from the cached beat list
+                            if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                                for m in self._engine._metrics:
+                                    if 'all_beats' in m:
+                                        m['all_beats'][:] = [
+                                            b for b in m['all_beats']
+                                            if not any(abs(b.get('timestamp', 0.0) - t_ts) < snap_tolerance_sec for t_ts in deleted_timestamps)
+                                        ]
+                                print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from engine metrics")
+                            
+                            # Mark beat index dirty so it rebuilds from updated metrics
+                            self._beat_index_dirty = True
+                            
                             # Also remove structured events in this range (for waveform coloring)
                             if hasattr(self._engine, '_structured_events'):
                                 self._engine._structured_events[:] = [
@@ -2284,9 +2346,6 @@ class HolterFullDisclosureDialog(QDialog):
                                 ]
                                 self._event_index_dirty = True
                                 print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
-                                
-                                # Refresh UI to remove waveform coloring
-                                self._update_canvases(self._current_start)
                             
                             print(f"[Full Disclosure] Deleted all beats between {start_ts:.3f}s and {end_ts:.3f}s")
                             
@@ -2357,6 +2416,20 @@ class HolterFullDisclosureDialog(QDialog):
                                 if not any(abs(mb.get('timestamp', 0.0) - t_ts) < 0.15 for t_ts in deleted_timestamps)
                             ]
                             print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from pending manual beats")
+                        
+                        # CRITICAL FIX #2: Also remove deleted beats from self._engine._metrics
+                        # Otherwise _beats_in_window will return them from the cached beat list
+                        if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                            for m in self._engine._metrics:
+                                if 'all_beats' in m:
+                                    m['all_beats'][:] = [
+                                        b for b in m['all_beats']
+                                        if not any(abs(b.get('timestamp', 0.0) - t_ts) < 0.15 for t_ts in deleted_timestamps)
+                                    ]
+                            print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from engine metrics")
+                        
+                        # Mark beat index dirty so it rebuilds from updated metrics
+                        self._beat_index_dirty = True
                         
                         # Also remove corresponding structured events
                         if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
@@ -2906,6 +2979,10 @@ class HolterFullDisclosureDialog(QDialog):
                         batch_groups[batch_id] = []
                     batch_groups[batch_id].append(mb)
             
+            # CRITICAL FIX: Clear _pending_manual_beats after restoration
+            # Otherwise _update_canvases will re-apply them on every refresh, causing deleted beats to reappear!
+            self._pending_manual_beats = []
+            
             # Define color mapping for all label codes (matching canvas rendering)
             beat_label_colors = {
                 "S": "#00FFFF",      # Supraventricular - Cyan
@@ -3060,9 +3137,9 @@ class HolterFullDisclosureDialog(QDialog):
                 c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=visible_structured_events, fast_preview=not update_extras)
 
         # Clear and repopulate segment overlay with only visible segments.
-        # Gated by update_extras: rebuilding this list and remapping every
-        # segment's pixel coords isn't needed on every single scrub frame.
-        if update_extras and hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
+        # CRITICAL FIX: ALWAYS update segment positions on scroll, not just when update_extras=True
+        # Otherwise segments appear to move with scrolling instead of staying anchored to timestamps
+        if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
             self._segment_overlay.clear_segments()
             ref = self._canvases[0] if self._canvases else None
             if ref and hasattr(ref, '_start_sec') and hasattr(ref, '_data') and hasattr(ref, '_fs'):
@@ -3090,7 +3167,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
-            # Ensure overlay is updated after segments are added (moved outside inner condition)
+            # Ensure overlay is updated after segments are added
             self._segment_overlay.update()
             # Raise overlay to ensure it's visible on top of canvases
             self._segment_overlay.raise_()
