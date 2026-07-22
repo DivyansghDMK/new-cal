@@ -1269,8 +1269,8 @@ class HolterReplayPanel(QWidget):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
             # Height 60px makes them compact enough to fit well, but scrollable if needed
-            # Replay mode: disable annotations (show_annotations=False)
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_annotations=False)
+            # Replay mode: disable ALL coloring (disable_all_coloring=True) - no arrhythmia colors, just green
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_annotations=False, disable_all_coloring=True)
             strip.set_gain(1.0)
             self._lead_strips[lead] = strip
             self._ch_strips.append(strip)
@@ -1290,8 +1290,8 @@ class HolterReplayPanel(QWidget):
         rhythm_lbl.setFixedWidth(34)
         rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        # Replay mode: disable annotations
-        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9, show_annotations=False)
+        # Replay mode: disable ALL coloring
+        self._mini_strip = ECGStripCanvas(height=60, color="#00AA00", pen_width=0.9, show_annotations=False, disable_all_coloring=True)
         rhythm_row.addWidget(rhythm_lbl)
         rhythm_row.addWidget(self._mini_strip, 1)
         ecg_right_layout.addLayout(rhythm_row)
@@ -2727,7 +2727,7 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True, show_annotations: bool = True):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = "", show_vertical_lines: bool = True, show_annotations: bool = True, disable_all_coloring: bool = False):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
@@ -2736,6 +2736,7 @@ class ECGStripCanvas(QWidget):
         self._start_sec = 0.0
         self._show_vertical_lines = show_vertical_lines  # Control whether to show R-peak vertical lines
         self._show_annotations = show_annotations  # Control whether to show N labels and RR numbers
+        self._disable_all_coloring = disable_all_coloring  # CRITICAL: Disable ALL coloring (for replay/overview)
         self._gain = 1.0
         self._speed = 25
         self.setFixedHeight(height)
@@ -2829,14 +2830,21 @@ class ECGStripCanvas(QWidget):
         self._clicked_beat_x_pos = None
         self.update()
 
-    def set_data(self, *args, beat_annotations=None, start_sec=0.0, structured_events=None):
+    def set_data(self, *args, beat_annotations=None, start_sec=0.0, structured_events=None, fast_preview=False):
         if len(args) == 2:
             raw_data = np.asarray(args[1], dtype=float)
         elif len(args) == 1:
             raw_data = np.asarray(args[0], dtype=float)
         else:
             raw_data = np.zeros(0)
-            
+
+        # NOTE: fast_preview no longer skips the low-pass filter below - an
+        # earlier version did, to save time on in-between scrub frames, but
+        # that displayed the raw unfiltered signal (baseline wander + HF
+        # noise the filter normally removes) and made the trace look like
+        # pure noise while dragging. Filtering always runs; fast_preview now
+        # only skips the RR-interval recompute (self._rr_intervals), which
+        # isn't drawn as part of the trace itself.
         if len(raw_data) > 15:
             try:
                 if getattr(self, '_filter_ba', None) is None:
@@ -2849,18 +2857,19 @@ class ECGStripCanvas(QWidget):
                 self._data = raw_data
         else:
             self._data = raw_data
-            
+
         self._beat_annotations = beat_annotations or []
         self._structured_events = structured_events or []
         self._start_sec = start_sec
-        self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
+        if fast_preview:
+            self._rr_intervals = []
+        else:
+            self._rr_intervals = self._calculate_rr_intervals() if beat_annotations else []
         self.update()
     
     def _calculate_rr_intervals(self):
         """Calculate RR intervals (N-N intervals) between consecutive R-peaks."""
         if not self._beat_annotations:
-            lead_name = getattr(self, 'lead_name', 'Unknown')
-            print(f"[ECGStripCanvas] No beat annotations for {lead_name}")
             return []
         
         # Filter and sort beats by timestamp
@@ -2893,9 +2902,6 @@ class ECGStripCanvas(QWidget):
                 'start_label': curr_beat['label'],
                 'end_label': next_beat['label']
             })
-        
-        lead_name = getattr(self, 'lead_name', 'Unknown')
-        print(f"[ECGStripCanvas] {lead_name}: Found {len(beats_in_window)} beats, {len(intervals)} intervals in window [{self._start_sec:.2f}, {end_sec:.2f}]s")
         
         return intervals
 
@@ -3272,30 +3278,35 @@ class ECGStripCanvas(QWidget):
         if n_visible < len(d):
             d = d[-n_visible:]   # show the most recent n_visible samples (stretched)
         # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
-        x_scale = w / max(1, len(d) - 1)
+        # Apply speed factor to x_scale so the waveform stretches/compresses visually
+        x_scale = w / max(1, len(d) - 1) * speed_factor
         
         # Determine colored intervals based on annotations and structured events
         colored_intervals = []
         end_sec = self._start_sec + len(d) / self._fs
         
         # 1. Color full regions for arrhythmias from _structured_events
-        if hasattr(self, '_structured_events') and self._structured_events:
+        # CRITICAL FIX: Only apply structured event coloring if disable_all_coloring is False
+        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
+        # For Full Disclosure (disable_all_coloring=False), show waveform coloring regardless of show_annotations
+        if not self._disable_all_coloring and hasattr(self, '_structured_events') and self._structured_events:
             # Expanded color mapping for all arrhythmia types
             label_colors = {
                 "V": "#FF3333",      # Ventricular Premature - Red
                 "AF": "#FF00FF",     # Atrial Fibrillation - Magenta
                 "S": "#00FFFF",      # Sinus Bradycardia/Tachycardia - Cyan
-                "P": "#FF00FF",     # Paced/AV Blocks - Magenta
-                "X": "#0000FF",     # Asystole/Artifact - Blue
+                "P": "#FF00FF",      # Paced/AV Blocks - Magenta
+                "C": "#FFA500",      # Conduction Blocks - Orange
+                "T": "#9932CC",      # TV Paced - Purple
+                "A": "#FFFF00",      # ACLS - Yellow
+                "X": "#0000FF",      # Asystole/Artifact - Blue
             }
             # Go through events and find regions
             for i, ev in enumerate(self._structured_events):
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
                 ev_lbl = str(ev.get('label', '')).lower()
                 ev_lbl_orig = str(ev.get('label', ''))
-                
-                print(f"[ECGStripCanvas] Processing structured event: label='{ev_lbl_orig}', timestamp={ev_ts}, end_timestamp={ev.get('end_timestamp')}")
-                
+
                 # Check if this event starts an arrhythmia
                 active_label = 'N'
                 # Check for single-letter labels first (from manual marking)
@@ -3307,6 +3318,12 @@ class ECGStripCanvas(QWidget):
                     active_label = 'AF'
                 elif ev_lbl == 'p':
                     active_label = 'P'
+                elif ev_lbl == 'c':  # Conduction blocks
+                    active_label = 'C'
+                elif ev_lbl == 't':  # TV Paced
+                    active_label = 'T'
+                elif ev_lbl == 'a':  # ACLS
+                    active_label = 'A'
                 elif ev_lbl == 'x':
                     active_label = 'X'
                 # Check for full label names (from auto-detection)
@@ -3320,15 +3337,21 @@ class ECGStripCanvas(QWidget):
                     active_label = 'AF'
                 elif 'atrial flutter' in ev_lbl or 'aflutter' in ev_lbl:
                     active_label = 'AF'
-                elif 'sinus bradycardia' in ev_lbl or 'bradycardia' in ev_lbl:
+                elif 'sinus bradycardia' in ev_lbl:
                     active_label = 'S'
-                elif 'sinus tachycardia' in ev_lbl or 'tachycardia' in ev_lbl:
+                elif 'sinus tachycardia' in ev_lbl:
                     active_label = 'S'
-                elif 'av block' in ev_lbl or 'bundle branch block' in ev_lbl or 'paced' in ev_lbl:
+                elif 'bradycardia (non-sinus)' in ev_lbl:
+                    active_label = 'S'
+                elif 'tachycardia (non-sinus)' in ev_lbl:
+                    active_label = 'S'
+                elif '1st-degree av block' in ev_lbl or '2nd-degree av block' in ev_lbl or '3rd-degree av block' in ev_lbl:
                     active_label = 'P'
-                elif 'premature ventricular' in ev_lbl or 'pvc' in ev_lbl:
+                elif 'right bundle branch block' in ev_lbl or 'left bundle branch block' in ev_lbl:
+                    active_label = 'P'
+                elif 'premature ventricular contraction' in ev_lbl or 'pvc' in ev_lbl:
                     active_label = 'V'
-                elif 'premature atrial' in ev_lbl or 'pac' in ev_lbl:
+                elif 'premature atrial contraction' in ev_lbl or 'pac' in ev_lbl:
                     active_label = 'S'
                 elif 'st elevation' in ev_lbl or 'st depression' in ev_lbl:
                     active_label = 'X'
@@ -3345,9 +3368,7 @@ class ECGStripCanvas(QWidget):
                         active_label = 'P'
                     elif ev_lbl_orig == 'X':
                         active_label = 'X'
-                
-                print(f"[ECGStripCanvas] active_label='{active_label}' for event label='{ev_lbl_orig}'")
-                    
+
                 if active_label != 'N':
                     # Use color from event if available, otherwise use label_colors
                     color = ev.get('color', label_colors.get(active_label, "#FF3333"))
@@ -3371,7 +3392,10 @@ class ECGStripCanvas(QWidget):
                             colored_intervals.append((start_idx, end_idx, color))
         
         # 2. Color QRS complex for explicitly annotated beats
-        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+        # CRITICAL FIX: Only apply beat annotation coloring if disable_all_coloring is False
+        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
+        # For Full Disclosure (disable_all_coloring=False), show beat coloring regardless of show_annotations
+        if not self._disable_all_coloring and hasattr(self, '_beat_annotations') and self._beat_annotations:
             for beat in self._beat_annotations:
                 ts = beat['timestamp']
                 lbl = beat.get('label', 'N')
@@ -4086,11 +4110,9 @@ class HolterRRTrendCanvas(QWidget):
             return
 
         # -- Time range ------------------------------------------------------
-        t_vals = [p[0] for p in self._points]
-        t_min = min(t_vals)
-        t_max = max(t_vals)
-        if t_max <= t_min:
-            t_max = t_min + 1.0
+        # Fixed 12-hour X-axis range
+        t_min = 0.0
+        t_max = 12.0 * 3600.0  # 24 hours in seconds
         t_rng = float(t_max - t_min)
 
         def to_x(t):
@@ -4245,7 +4267,8 @@ class HolterExpertReviewPanel(QWidget):
             lbl.setFixedWidth(34)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False, show_annotations=False)
+            # Expert/Overview mode: disable ALL coloring (disable_all_coloring=True) - no arrhythmia colors, just green
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead, show_vertical_lines=False, show_annotations=False, disable_all_coloring=True)
             strip.set_gain(1.0)
             self._expert_lead_strips[lead] = strip
             row_h.addWidget(lbl)
@@ -4255,14 +4278,14 @@ class HolterExpertReviewPanel(QWidget):
         leads_scroll.setWidget(leads_container)
         center_l.addWidget(leads_scroll, 1)
 
-        # Rhythm strip at bottom (Lead II) - also disable vertical lines
+        # Rhythm strip at bottom (Lead II) - also disable vertical lines and ALL coloring
         rhythm_row = QHBoxLayout()
         rhythm_row.setSpacing(4)
         rlbl = QLabel("II")
         rlbl.setFixedWidth(34)
         rlbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         rlbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
-        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False, show_annotations=False)
+        self._mini = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9, show_vertical_lines=False, show_annotations=False, disable_all_coloring=True)
         rhythm_row.addWidget(rlbl)
         rhythm_row.addWidget(self._mini, 1)
         center_l.addLayout(rhythm_row)
@@ -4530,9 +4553,17 @@ class HolterEventsPanel(QWidget):
         self._session_dir = session_dir or ""
 
     def load_events(self, events: list, summary: dict):
-        self._events = events
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
             source = ev.get("source", "analysis")
             conf = ev.get("confidence", 0.0)
@@ -8789,9 +8820,17 @@ class HolterEditEventPanel(QWidget):
         layout.addWidget(right, 2)
 
     def load_events(self, events: list, summary: dict):
-        self._events = events
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             source = str(ev.get("source", "analysis"))
             conf = float(ev.get("confidence", 0.0) or 0.0)
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
@@ -9268,12 +9307,20 @@ class HolterEditStripsPanel(QWidget):
                 self.seek_requested.emit(timestamp)
 
     def load_events(self, events: list, summary: dict, metrics_list: Optional[list] = None):
-        self._events = events
+        # Filter out hidden event labels from display
+        hidden_labels = ["Long QT Syndrome", "Wide QRS (non-specific)", "Frequent PVCs", "Multifocal PVCs"]
+        filtered_events = []
+        for ev in events:
+            label = str(ev.get('label', '')).lower()
+            if not any(hl.lower() in label for hl in hidden_labels):
+                filtered_events.append(ev)
+        
+        self._events = filtered_events
         self._summary = dict(summary or {})
         self._metrics_list = list(metrics_list or [])
         self._build_focus_cards()
-        self._ev_table.setRowCount(len(events))
-        for i, ev in enumerate(events):
+        self._ev_table.setRowCount(len(filtered_events))
+        for i, ev in enumerate(filtered_events):
             t_str = _format_system_time(self._session_dir, ev['timestamp'])
             for j, val in enumerate([ev['label'], t_str, "12", "7s"]):
                 item = QTableWidgetItem(val)

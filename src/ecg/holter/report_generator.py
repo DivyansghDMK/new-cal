@@ -225,14 +225,71 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     story.append(Paragraph("2. ARRHYTHMIA SUMMARY", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
 
-    if arrhy_counts:
-        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
-        total_chunks = max(1, summary.get('chunks_analyzed', 1))
-        for label, count in sorted(arrhy_counts.items(), key=lambda x: -x[1]):
-            burden = f"{count / total_chunks * 100:.1f}%"
-            arrhy_data.append([label, str(count), burden])
+    # Load manual beats and segments to include in arrhythmia summary
+    manual_beats = []
+    manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
+    if os.path.exists(manual_beats_path):
+        try:
+            with open(manual_beats_path, 'r') as _mb_f:
+                manual_beats = json.load(_mb_f)
+            print(f"[HolterReport] Loaded {len(manual_beats)} manual beats for arrhythmia summary")
+        except Exception as _mb_e:
+            print(f"[HolterReport] Could not load manual beats for arrhythmia summary: {_mb_e}")
 
-        arrhy_table = Table(arrhy_data, colWidths=[90*mm, 30*mm, 30*mm])
+    manual_segments = []
+    manual_segments_path = os.path.join(session_dir, 'manual_segments.json')
+    if os.path.exists(manual_segments_path):
+        try:
+            with open(manual_segments_path, 'r') as _ms_f:
+                manual_segments = json.load(_ms_f)
+            print(f"[HolterReport] Loaded {len(manual_segments)} manual segments for arrhythmia summary")
+        except Exception as _ms_e:
+            print(f"[HolterReport] Could not load manual segments for arrhythmia summary: {_ms_e}")
+
+    # Count manual markings by label type
+    manual_arrhy_counts = {}
+    for mb in manual_beats:
+        lbl = mb.get('label', 'N')
+        # Extract short code from full label name (e.g., "Normal(N)" -> "N")
+        short_code = lbl
+        if '(' in lbl and ')' in lbl:
+            short_code = lbl.split('(')[1].split(')')[0]
+        if short_code != 'N':
+            # Use full label as key for display
+            manual_arrhy_counts[lbl] = manual_arrhy_counts.get(lbl, 0) + 1
+
+    for seg in manual_segments:
+        lbl = seg.get('label', 'Unknown')
+        manual_arrhy_counts[lbl] = manual_arrhy_counts.get(lbl, 0) + 1
+
+    # Merge auto-detected and manual arrhythmia counts
+    combined_arrhy_counts = dict(arrhy_counts)
+    for label, count in manual_arrhy_counts.items():
+        combined_arrhy_counts[label] = combined_arrhy_counts.get(label, 0) + count
+
+    # Filter out Long QT Syndrome, Wide QRS, Frequent PVCs, and Multifocal PVCs from arrhythmia summary
+    filtered_arrhy_counts = {}
+    for label, count in combined_arrhy_counts.items():
+        label_lower = label.lower()
+        if 'long qt' in label_lower or 'wide qrs' in label_lower or 'frequent pvc' in label_lower or 'multifocal pvc' in label_lower:
+            continue
+        filtered_arrhy_counts[label] = count
+
+    if filtered_arrhy_counts:
+        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden', 'Source']]
+        total_chunks = max(1, summary.get('chunks_analyzed', 1))
+        for label, count in sorted(filtered_arrhy_counts.items(), key=lambda x: -x[1]):
+            burden = f"{count / total_chunks * 100:.1f}%"
+            # Determine source
+            source = []
+            if label in arrhy_counts:
+                source.append("Auto")
+            if label in manual_arrhy_counts:
+                source.append("Manual")
+            source_str = ", ".join(source)
+            arrhy_data.append([label, str(count), burden, source_str])
+
+        arrhy_table = Table(arrhy_data, colWidths=[80*mm, 25*mm, 25*mm, 20*mm])
         arrhy_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), RED),
             ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
@@ -272,6 +329,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     
     # Filter out auto-detected arrhythmias (except Normal Sinus Rhythm) from event timeline
     # Keep manual markings and Normal Sinus Rhythm only
+    # Also filter out Long QT Syndrome and Wide QRS (non-specific) as requested
     original_count = len(timeline_events)
     filtered_events = []
     for event in timeline_events:
@@ -280,36 +338,45 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
             filtered_events.append(event)
             continue
         
-        # Keep auto-detected Normal Sinus Rhythm events
         event_label = str(event.get('label', event.get('event_type', ''))).lower()
-        if 'normal sinus rhythm' in event_label or 'nsr' in event_label:
-            filtered_events.append(event)
+
+        # Filter out Long QT Syndrome and Wide QRS (non-specific) from report
+        if 'long qt' in event_label or 'wide qrs' in event_label:
             continue
         
-        # Filter out all other auto-detected arrhythmias
-        # Commented out: Original filtering logic for events within manual markings
-        # Check if this automated event falls within any manually marked segment
-        # event_ts = float(event.get('timestamp', 0.0))
-        # should_filter = False
-        # 
-        # # Check segment ranges
-        # for seg in manual_segments:
-        #     start_sec = float(seg.get('start_sec', 0.0))
-        #     end_sec = float(seg.get('end_sec', 0.0))
-        #     if start_sec <= event_ts <= end_sec:
-        #         should_filter = True
-        #         break
-        # 
-        # # Check parallel marking timestamps (within 0.15s tolerance)
-        # if not should_filter and manual_beats:
-        #     for mb in manual_beats:
-        #         mb_ts = float(mb.get('timestamp', 0.0))
-        #         if abs(event_ts - mb_ts) < 0.15:
-        #             should_filter = True
-        #             break
-        # 
-        # if not should_filter:
-        #     filtered_events.append(event)
+        # Filter out Frequent PVCs and Multifocal PVCs from event timeline as requested
+        if 'frequent pvc' in event_label or 'multifocal pvc' in event_label:
+            continue
+        
+        # Filter out auto-detected events - INCLUDING Normal Sinus Rhythm -
+        # if they fall within a manually marked area. Manual marks take
+        # priority and must suppress any auto label at that time, not just
+        # non-NSR ones. (This used to be split: NSR had its own "always
+        # keep" branch that returned before should_filter was even computed,
+        # which is why an auto "Normal Sinus Rhythm" row could still show up
+        # at the exact same timestamp as a manual VF mark - NSR never
+        # reached the suppression check below.)
+        event_ts = float(event.get('timestamp', 0.0))
+        should_filter = False
+        
+        # Check segment ranges
+        for seg in manual_segments:
+            start_sec = float(seg.get('start_sec', 0.0))
+            end_sec = float(seg.get('end_sec', 0.0))
+            if start_sec <= event_ts <= end_sec:
+                should_filter = True
+                break
+        
+        # Check parallel marking timestamps (within 0.15s tolerance)
+        if not should_filter and manual_beats:
+            for mb in manual_beats:
+                mb_ts = float(mb.get('timestamp', 0.0))
+                if abs(event_ts - mb_ts) < 0.15:
+                    should_filter = True
+                    break
+        
+        if not should_filter:
+            filtered_events.append(event)
     
     timeline_events = filtered_events
     print(f"[HolterReport] Filtered out {original_count - len(timeline_events)} auto-detected arrhythmias (kept Normal Sinus Rhythm and manual markings)")

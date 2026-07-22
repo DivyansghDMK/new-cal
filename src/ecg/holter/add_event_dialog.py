@@ -60,6 +60,14 @@ class AddEventDialog(QDialog):
         "Custom"
     ]
     
+    # Hidden event labels (not shown in dropdown)
+    HIDDEN_LABELS = [
+        "Long QT Syndrome",
+        "Wide QRS (non-specific)",
+        "Frequent PVCs",
+        "Multifocal PVCs"
+    ]
+    
     def __init__(self, parent=None, start_time: datetime = None, current_sec: float = 0.0, hr: float = 0.0):
         super().__init__(parent)
         self.setWindowTitle("Edit strip")

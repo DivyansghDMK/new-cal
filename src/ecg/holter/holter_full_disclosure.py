@@ -3,6 +3,20 @@ ecg/holter/holter_full_disclosure.py
 =====================================
 Full Disclosure ECG viewer - standalone dialog module.
 
+MANUAL MARKING PRIORITY SYSTEM:
+==============================
+When user manually marks events in full disclosure and then generates a report:
+  1. Manual marks (is_manual=True) always appear in the report
+  2. Auto-detected marks within 150ms of a manual mark are SUPPRESSED
+  3. This prevents duplicate/conflicting marks from confusing the clinician
+  4. Manual marks take absolute priority over auto-detection
+
+Implementation:
+  - Manual beats are stored in manual_beats.json with is_manual flag
+  - Manual segments are stored in manual_segments.json
+  - When displaying events or generating reports, use get_events_with_manual_priority()
+  - This method filters out overlapping auto marks based on temporal proximity
+
 Classes:
   - FullDisclosureOverlay         : Transparent selection-box overlay drawn over the ECG canvas
   - HolterFullDisclosureDialog    : 12-lead scrollable Full Disclosure ECG viewer dialog
@@ -30,6 +44,13 @@ except ImportError:
                                    TOOL_RULER, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_SELECT)
     from ecg.holter.holter_ui import ECGStripCanvas, MagnifierOverlay
 
+try:
+    from utils.settings_manager import SettingsManager
+except ImportError:
+    try:
+        from ecg.utils.settings_manager import SettingsManager
+    except ImportError:
+        SettingsManager = None
 
 from PyQt5.QtCore import pyqtSignal
 
@@ -331,7 +352,16 @@ class HolterFullDisclosureDialog(QDialog):
         self._multi_line2_x = None  # Second line (follows drag, fixed on release)
         
         # Selection mode: 'parallel_single' | 'parallel_multi' | 'segment'
-        self._selection_mode = 'parallel_single'
+        # CRITICAL FIX: Restore from saved settings instead of always defaulting to 'parallel_single'
+        if SettingsManager is not None:
+            try:
+                settings = SettingsManager()
+                self._selection_mode = settings.get_setting('holter_selection_mode', 'parallel_single')
+            except Exception as e:
+                print(f"[Full Disclosure] Could not restore selection mode from settings: {e}")
+                self._selection_mode = 'parallel_single'
+        else:
+            self._selection_mode = 'parallel_single'
         
         # Pending manual beats to restore after canvases are created
         self._pending_manual_beats = None
@@ -372,6 +402,15 @@ class HolterFullDisclosureDialog(QDialog):
         self._scroll_timer.timeout.connect(self._on_scroll_timer_timeout)
         self._pending_scroll_val = None
         self._last_scroll_time = 0
+
+        # True while the user is actively holding the scrollbar handle down.
+        # While scrubbing we skip the extras that don't need to update every
+        # frame (arrhythmia/event label recompute, segment-overlay reposition)
+        # and only redraw the waveforms, so each frame stays cheap and the
+        # trace tracks the mouse instead of catching up in jumps.
+        self._is_scrubbing = False
+        self._last_extras_time = 0.0
+        self._EXTRAS_MIN_INTERVAL = 0.15  # refresh labels/overlay at most ~6-7x/sec while scrubbing
 
         # Cached, timestamp-sorted beat/event index for O(log n) windowed lookups.
         # _update_canvases() used to linear-scan the FULL recording's beat list
@@ -441,6 +480,13 @@ class HolterFullDisclosureDialog(QDialog):
             print(f"[Full Disclosure] Error loading segment annotations on startup: {e}")
 
         self._update_canvases(0.0)
+        
+        # CRITICAL FIX: Apply the restored selection mode to update button text and UI state
+        # This ensures the button shows the correct mode after reopening the dialog
+        if hasattr(self, '_selection_mode'):
+            # Call _switch_selection_mode to properly initialize the UI for the restored mode
+            # But we need to do this AFTER the button is created, so use a short delay
+            QTimer.singleShot(50, lambda: self._switch_selection_mode(self._selection_mode))
 
     def showEvent(self, event):
         """Override showEvent to refresh segment overlay when dialog is shown."""
@@ -480,10 +526,17 @@ class HolterFullDisclosureDialog(QDialog):
         
         if "Full disc" in text:
             self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
+        elif "30 Sec" in text:
+            self._window_sec = 30.0
+        elif "1 Min" in text:
+            self._window_sec = 60.0
+        elif "2 Min" in text:
+            self._window_sec = 120.0
+        # elif "5 Min" in text: self._window_sec = 300.0
+        # elif "10 Min" in text: self._window_sec = 600.0
+        # elif "15 Min" in text: self._window_sec = 900.0
         else:
-            # When a specific time tab is selected, the window size remains fixed
-            # to that duration, ignoring paper speed changes.
-            pass
+            self._window_sec = self._BASE_WIN_SEC * (25.0 / self._paper_speed)
 
     def _update_scrollbar_range(self):
         total = max(0.0, self._engine.duration_sec - self._window_sec)
@@ -690,6 +743,8 @@ class HolterFullDisclosureDialog(QDialog):
         """)
         self._update_scrollbar_range()
         self.time_scrollbar.valueChanged.connect(self._on_scrollbar_moved)
+        self.time_scrollbar.sliderPressed.connect(self._on_scrollbar_pressed)
+        self.time_scrollbar.sliderReleased.connect(self._on_scrollbar_released)
         layout.addWidget(self.time_scrollbar)
 
         bot_bar = QFrame()
@@ -1146,7 +1201,7 @@ class HolterFullDisclosureDialog(QDialog):
         self._recalc_window()
         self._update_scrollbar_range()
         for c in self._canvases:
-            c.set_paper_speed(25)
+            c.set_paper_speed(int(self._paper_speed))
         self._update_canvases(self._current_start)
         # Restore selection box when speed is changed
         self._deactivate_tools()
@@ -1170,6 +1225,16 @@ class HolterFullDisclosureDialog(QDialog):
     def _switch_selection_mode(self, mode: str):
         """Switch between 'parallel_single', 'parallel_multi', and 'segment' modes."""
         self._selection_mode = mode
+        
+        # CRITICAL FIX: Save selection mode to settings so it persists after dialog close/reopen
+        if SettingsManager is not None:
+            try:
+                settings = SettingsManager()
+                settings.set_setting('holter_selection_mode', mode)
+                print(f"[Full Disclosure] Saved selection mode: {mode}")
+            except Exception as e:
+                print(f"[Full Disclosure] Could not save selection mode to settings: {e}")
+        
         if mode == 'parallel_single':
             self.btn_sel_mode.setText("▲ Parallel Single")
             # Clear any pending segment drag
@@ -1447,7 +1512,7 @@ class HolterFullDisclosureDialog(QDialog):
             "P": "#FF00FF",      # Premature - Magenta
             "V": "#FF3333",      # Ventricular - Red
             "C": "#FFA500",      # Conduction - Orange
-            "T": "#00FF00",      # TV Paced - Green
+            "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
             "A": "#FFFF00",      # ACLS - Yellow
         }
         
@@ -1700,7 +1765,7 @@ class HolterFullDisclosureDialog(QDialog):
             "Premature": "#FF00FF",         # Magenta
             "Ventricular": "#FF3333",       # Red
             "Conduction": "#FFA500",        # Orange
-            "TV Paced": "#00FF00",          # Green
+            "TV Paced": "#9932CC",          # Dark Orchid (Purple)
             "ACLS": "#FFFF00"               # Yellow
         }
         
@@ -1800,7 +1865,7 @@ class HolterFullDisclosureDialog(QDialog):
             "P": "#FF00FF",      # Premature - Magenta
             "V": "#FF3333",      # Ventricular - Red
             "C": "#FFA500",      # Conduction - Orange
-            "T": "#00FF00",      # TV Paced - Green
+            "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
             "A": "#FFFF00",      # ACLS - Yellow
             "N": "#00FF00",      # Normal - Green (legacy)
             "X": "#0000FF",      # Artifact - Blue (legacy)
@@ -1852,13 +1917,21 @@ class HolterFullDisclosureDialog(QDialog):
                             structured_event = {
                                 'timestamp': start_ts,
                                 'end_timestamp': end_ts,
-                                'label': full_label,
+                                'label': label,  # Use short code (S, V, AF, P, C, T, A) for waveform coloring
+                                'label_full': full_label,  # Store full label for reporting
                                 'color': label_colors.get(label, "#FFFF00"),
-                                'event_type': label
+                                'event_type': label,
+                                'source': 'manual_parallel_multi'  # Track source for debugging
                             }
                             self._engine._structured_events.append(structured_event)
                             self._event_index_dirty = True
-                            print(f"[Full Disclosure] Added structured event from {start_ts:.3f}s to {end_ts:.3f}s as '{label}'")
+                            
+                            print(f"[Full Disclosure] Parallel multi: Added structured event from {start_ts:.3f}s to {end_ts:.3f}s")
+                            print(f"[Full Disclosure] Event: code='{label}', label='{full_label}', color='{label_colors.get(label, '#FFFF00')}'")
+                            print(f"[Full Disclosure] Total events: {len(self._engine._structured_events)}")
+                            
+                            # Ensure events are sorted by timestamp for bisect to work correctly
+                            self._engine._structured_events.sort(key=lambda x: float(x.get('timestamp', 0.0)))
                             
                             # Refresh UI to apply waveform coloring
                             self._update_canvases(self._current_start)
@@ -2079,28 +2152,86 @@ class HolterFullDisclosureDialog(QDialog):
                     break
             
             if lead_i_canvas and hasattr(lead_i_canvas, '_beat_annotations'):
+                # Define color mapping for all label codes
+                label_colors_map = {
+                    "S": "#00FFFF",      # Supraventricular - Cyan
+                    "P": "#FF00FF",      # Premature - Magenta
+                    "V": "#FF3333",      # Ventricular - Red
+                    "C": "#FFA500",      # Conduction - Orange
+                    "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
+                    "A": "#FFFF00",      # ACLS - Yellow
+                    "N": "#00FF00",      # Normal - Green (legacy)
+                    "X": "#0000FF",      # Artifact - Blue (legacy)
+                }
+                
+                print(f"[Full Disclosure] SAVE: Lead I has {len(lead_i_canvas._beat_annotations)} beats to save")
+                
                 for b in lead_i_canvas._beat_annotations:
-                    all_beats.append({
+                    beat_entry = {
                         'timestamp': float(b.get('timestamp', 0.0)),
                         'label': str(b.get('label', 'N')),
-                        'color': str(b.get('color', '#00FF00')),
                         'is_manual': b.get('is_manual', False)
-                    })
+                    }
+                    print(f"[Full Disclosure] SAVING: beat at {beat_entry['timestamp']:.3f}s label={beat_entry['label']} is_manual={beat_entry['is_manual']}")
+                    
+                    # CRITICAL FIX: Use saved color if available, otherwise derive from label code
+                    saved_color = b.get('color', '')
+                    if saved_color:
+                        beat_entry['color'] = str(saved_color)
+                    else:
+                        # Derive color from label code
+                        lbl = str(b.get('label', 'N'))
+                        label_code = lbl
+                        if '(' in lbl and ')' in lbl:
+                            label_code = lbl.split('(')[1].split(')')[0]
+                        beat_entry['color'] = label_colors_map.get(label_code, '#FFFF00')
+                    
+                    # Also save batch_id and marking_mode if present (for parallel multi recovery)
+                    if b.get('batch_id') is not None:
+                        beat_entry['batch_id'] = b.get('batch_id')
+                    if b.get('marking_mode'):
+                        beat_entry['marking_mode'] = b.get('marking_mode')
+                    all_beats.append(beat_entry)
             else:
                 # Fallback: collect from engine._metrics all_beats
                 if hasattr(self._engine, '_metrics'):
+                    label_colors_map = {
+                        "S": "#00FFFF",      # Supraventricular - Cyan
+                        "P": "#FF00FF",      # Premature - Magenta
+                        "V": "#FF3333",      # Ventricular - Red
+                        "C": "#FFA500",      # Conduction - Orange
+                        "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
+                        "A": "#FFFF00",      # ACLS - Yellow
+                        "N": "#00FF00",      # Normal - Green (legacy)
+                        "X": "#0000FF",      # Artifact - Blue (legacy)
+                    }
+                    
                     seen = set()
                     for m in self._engine._metrics:
                         for b in m.get('all_beats', []):
                             ts = float(b.get('timestamp', 0.0))
                             if ts not in seen:
                                 seen.add(ts)
-                                all_beats.append({
+                                lbl = str(b.get('label', 'N'))
+                                
+                                # Derive color from label code
+                                label_code = lbl
+                                if '(' in lbl and ')' in lbl:
+                                    label_code = lbl.split('(')[1].split(')')[0]
+                                beat_color = label_colors_map.get(label_code, '#FFFF00')
+                                
+                                beat_entry = {
                                     'timestamp': ts,
-                                    'label': str(b.get('label', 'N')),
-                                    'color': '#00FF00',
+                                    'label': lbl,
+                                    'color': beat_color,
                                     'is_manual': b.get('is_manual', False)
-                                })
+                                }
+                                # Also save batch_id and marking_mode if present
+                                if b.get('batch_id') is not None:
+                                    beat_entry['batch_id'] = b.get('batch_id')
+                                if b.get('marking_mode'):
+                                    beat_entry['marking_mode'] = b.get('marking_mode')
+                                all_beats.append(beat_entry)
 
             
             all_beats.sort(key=lambda b: b['timestamp'])
@@ -2114,78 +2245,210 @@ class HolterFullDisclosureDialog(QDialog):
         """Delete the beat at the clicked position."""
         self._snapshot_state('delete_beat')
         
-        # Parallel multi mode: delete all beats between two vertical lines
-        if self._selection_mode == 'parallel_multi' and self._multi_line1_x is not None and self._multi_line2_x is not None:
-            # Convert line positions to timestamps
-            line1_x = self._multi_line1_x
-            line2_x = self._multi_line2_x
-            start_x = min(line1_x, line2_x)
-            end_x = max(line1_x, line2_x)
-            
-            # Get reference canvas (Lead I)
-            ref_canvas = None
-            for canvas in self._canvases:
-                if canvas.lead_name == 'I':
-                    ref_canvas = canvas
-                    break
-            
-            if ref_canvas:
-                from PyQt5.QtCore import QPoint
-                w = ref_canvas.width()
-                if w > 0:
-                    start_x_local = ref_canvas.mapFrom(self._canvas_frame, QPoint(start_x, 0)).x()
-                    end_x_local = ref_canvas.mapFrom(self._canvas_frame, QPoint(end_x, 0)).x()
-                    start_x_local = max(0, min(w, start_x_local))
-                    end_x_local = max(0, min(w, end_x_local))
-                    
-                    # Convert to timestamps
+        # Parallel multi mode: delete all beats between two vertical lines (if they exist)
+        # OR delete all manually marked beats in the current window (after dialog reopens)
+        if self._selection_mode == 'parallel_multi':
+            # Try to use existing line positions if they're set
+            if self._multi_line1_x is not None and self._multi_line2_x is not None:
+                # Lines are currently visible - use them
+                line1_x = self._multi_line1_x
+                line2_x = self._multi_line2_x
+                start_x = min(line1_x, line2_x)
+                end_x = max(line1_x, line2_x)
+                
+                # Get reference canvas (Lead I)
+                ref_canvas = None
+                for canvas in self._canvases:
+                    if canvas.lead_name == 'I':
+                        ref_canvas = canvas
+                        break
+                
+                if ref_canvas:
+                    from PyQt5.QtCore import QPoint
+                    w = ref_canvas.width()
+                    if w > 0:
+                        start_x_local = ref_canvas.mapFrom(self._canvas_frame, QPoint(start_x, 0)).x()
+                        end_x_local = ref_canvas.mapFrom(self._canvas_frame, QPoint(end_x, 0)).x()
+                        start_x_local = max(0, min(w, start_x_local))
+                        end_x_local = max(0, min(w, end_x_local))
+                        
+                        # Convert to timestamps
+                        start_sec = ref_canvas._start_sec
+                        data_len = len(ref_canvas._data) if hasattr(ref_canvas, '_data') else 0
+                        if data_len > 0:
+                            end_sec = start_sec + data_len / ref_canvas._fs
+                            start_ts = start_sec + (start_x_local / w) * (end_sec - start_sec)
+                            end_ts = start_sec + (end_x_local / w) * (end_sec - start_sec)
+                            
+                            # Delete all beats in this range for all leads
+                            snap_tolerance_sec = 0.15
+                            deleted_timestamps = set()
+                            deleted_batch_ids = set()
+                            
+                            print(f"[Full Disclosure] START DELETE: time range {start_ts:.3f}s to {end_ts:.3f}s")
+                            
+                            for canvas in self._canvases:
+                                if hasattr(canvas, '_beat_annotations') and canvas._beat_annotations:
+                                    print(f"[Full Disclosure] {canvas.lead_name}: {len(canvas._beat_annotations)} beats before delete")
+                                    
+                                    # Collect kept beats and track deleted timestamps
+                                    # For parallel multi delete: delete beats with matching batch_id OR is_manual in range
+                                    kept_beats = []
+                                    for b in canvas._beat_annotations:
+                                        ts = b.get('timestamp', 0.0)
+                                        is_manual = b.get('is_manual', False)
+                                        batch_id = b.get('batch_id')
+                                        lbl = b.get('label', 'N')
+                                        
+                                        # Delete if within range AND (manually marked OR has batch_id from parallel marking)
+                                        should_delete = start_ts <= ts <= end_ts and (is_manual or batch_id is not None)
+                                        
+                                        if should_delete:
+                                            deleted_timestamps.add(ts)
+                                            if batch_id is not None:
+                                                deleted_batch_ids.add(batch_id)
+                                            print(f"[Full Disclosure] DELETE {canvas.lead_name}: beat at {ts:.3f}s label={lbl} is_manual={is_manual} batch_id={batch_id}")
+                                        else:
+                                            kept_beats.append(b)
+                                    
+                                    canvas._beat_annotations[:] = kept_beats
+                                    print(f"[Full Disclosure] {canvas.lead_name}: {len(canvas._beat_annotations)} beats after delete")
+                                    canvas.update()
+                            
+                            # CRITICAL FIX: Also remove deleted beats from _pending_manual_beats
+                            # Otherwise _update_canvases will restore them from the pending list
+                            if hasattr(self, '_pending_manual_beats') and self._pending_manual_beats:
+                                self._pending_manual_beats[:] = [
+                                    mb for mb in self._pending_manual_beats
+                                    if not any(abs(mb.get('timestamp', 0.0) - t_ts) < snap_tolerance_sec for t_ts in deleted_timestamps)
+                                ]
+                                print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from pending manual beats")
+                            
+                            # CRITICAL FIX #2: Also remove deleted beats from self._engine._metrics
+                            # Otherwise _beats_in_window will return them from the cached beat list
+                            if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                                for m in self._engine._metrics:
+                                    if 'all_beats' in m:
+                                        m['all_beats'][:] = [
+                                            b for b in m['all_beats']
+                                            if not any(abs(b.get('timestamp', 0.0) - t_ts) < snap_tolerance_sec for t_ts in deleted_timestamps)
+                                        ]
+                                print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from engine metrics")
+                            
+                            # Mark beat index dirty so it rebuilds from updated metrics
+                            self._beat_index_dirty = True
+                            
+                            # Also remove structured events in this range (for waveform coloring)
+                            if hasattr(self._engine, '_structured_events'):
+                                self._engine._structured_events[:] = [
+                                    ev for ev in self._engine._structured_events
+                                    if not (ev.get('timestamp', 0) < end_ts and ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts)
+                                ]
+                                self._event_index_dirty = True
+                                print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
+                            
+                            print(f"[Full Disclosure] Deleted all beats between {start_ts:.3f}s and {end_ts:.3f}s")
+                            
+                            # CRITICAL FIX: Save deletions to file BEFORE refreshing UI
+                            # Otherwise _update_canvases will reload the old beats from the JSON file
+                            self._save_manual_beats()
+                            
+                            # Now refresh UI after deletions are saved
+                            self._update_canvases(self._current_start)
+                            
+                            # Clear vertical lines
+                            self._multi_line1_x = None
+                            self._multi_line2_x = None
+                            if hasattr(self, '_vertical_line_overlay'):
+                                self._vertical_line_overlay.clear_line()
+                            return
+            else:
+                # Lines are not currently visible (dialog was reopened)
+                # In this case, delete all manually marked beats in the current window
+                # by finding beats marked with the batch_id or marking_mode from parallel_multi
+                print("[Full Disclosure] Parallel multi mode delete: lines not visible, clearing manually marked beats in current window")
+                
+                ref_canvas = None
+                for canvas in self._canvases:
+                    if canvas.lead_name == 'I':
+                        ref_canvas = canvas
+                        break
+                
+                if ref_canvas and hasattr(ref_canvas, '_start_sec') and hasattr(ref_canvas, '_data') and hasattr(ref_canvas, '_fs'):
                     start_sec = ref_canvas._start_sec
                     data_len = len(ref_canvas._data) if hasattr(ref_canvas, '_data') else 0
                     if data_len > 0:
                         end_sec = start_sec + data_len / ref_canvas._fs
-                        start_ts = start_sec + (start_x_local / w) * (end_sec - start_sec)
-                        end_ts = start_sec + (end_x_local / w) * (end_sec - start_sec)
                         
-                        # Delete all beats in this range for all leads
+                        # Delete all manually marked beats in current window
+                        deleted_timestamps = set()
+                        
                         for canvas in self._canvases:
                             if hasattr(canvas, '_beat_annotations') and canvas._beat_annotations:
-                                # Find all detected beats in the time range
-                                beats_in_range = []
-                                if hasattr(self, '_detected_r_peaks') and self._detected_r_peaks:
-                                    for peak_ts in self._detected_r_peaks:
-                                        if start_ts <= peak_ts <= end_ts:
-                                            beats_in_range.append(peak_ts)
+                                # Find all manually marked beats (marked with is_manual=True)
+                                beats_to_delete = []
+                                for beat in canvas._beat_annotations:
+                                    ts = float(beat.get('timestamp', 0.0))
+                                    is_manual = beat.get('is_manual', False)
+                                    marking_mode = beat.get('marking_mode', '')
+                                    
+                                    # Delete if:
+                                    # 1. It's in the current visible window
+                                    # 2. It was manually marked (is_manual=True)
+                                    # 3. It was marked with parallel_multi mode (has batch_id or marking_mode)
+                                    if (start_sec <= ts <= end_sec and is_manual and 
+                                        (beat.get('batch_id') is not None or marking_mode == 'parallel_multi')):
+                                        beats_to_delete.append(ts)
+                                        deleted_timestamps.add(ts)
                                 
-                                # Remove beats that match timestamps in range
+                                # Remove marked beats
                                 snap_tolerance_sec = 0.15
                                 canvas._beat_annotations[:] = [
                                     b for b in canvas._beat_annotations 
-                                    if not any(abs(b['timestamp'] - t_ts) < snap_tolerance_sec for t_ts in beats_in_range)
+                                    if not any(abs(b['timestamp'] - t_ts) < snap_tolerance_sec for t_ts in beats_to_delete)
                                 ]
                                 canvas.update()
                         
-                        # Also remove structured events in this range (for waveform coloring)
-                        if hasattr(self._engine, '_structured_events'):
+                        # CRITICAL FIX: Also remove deleted beats from _pending_manual_beats
+                        if hasattr(self, '_pending_manual_beats') and self._pending_manual_beats:
+                            self._pending_manual_beats[:] = [
+                                mb for mb in self._pending_manual_beats
+                                if not any(abs(mb.get('timestamp', 0.0) - t_ts) < 0.15 for t_ts in deleted_timestamps)
+                            ]
+                            print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from pending manual beats")
+                        
+                        # CRITICAL FIX #2: Also remove deleted beats from self._engine._metrics
+                        # Otherwise _beats_in_window will return them from the cached beat list
+                        if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                            for m in self._engine._metrics:
+                                if 'all_beats' in m:
+                                    m['all_beats'][:] = [
+                                        b for b in m['all_beats']
+                                        if not any(abs(b.get('timestamp', 0.0) - t_ts) < 0.15 for t_ts in deleted_timestamps)
+                                    ]
+                            print(f"[Full Disclosure] Removed {len(deleted_timestamps)} deleted beats from engine metrics")
+                        
+                        # Mark beat index dirty so it rebuilds from updated metrics
+                        self._beat_index_dirty = True
+                        
+                        # Also remove corresponding structured events
+                        if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
+                            # Remove structured events in this range
                             self._engine._structured_events[:] = [
                                 ev for ev in self._engine._structured_events
-                                if not (ev.get('timestamp', 0) < end_ts and ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts)
+                                if not (ev.get('timestamp', 0) >= start_sec and ev.get('timestamp', 0) <= end_sec)
                             ]
                             self._event_index_dirty = True
-                            print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
-                            
-                            # Refresh UI to remove waveform coloring
-                            self._update_canvases(self._current_start)
+                            print(f"[Full Disclosure] Removed structured events in window {start_sec:.3f}s to {end_sec:.3f}s")
                         
-                        print(f"[Full Disclosure] Deleted all beats between {start_ts:.3f}s and {end_ts:.3f}s")
+                        print(f"[Full Disclosure] Deleted manually marked beats in window {start_sec:.3f}s to {end_sec:.3f}s")
                         
-                        # Clear vertical lines
-                        self._multi_line1_x = None
-                        self._multi_line2_x = None
-                        if hasattr(self, '_vertical_line_overlay'):
-                            self._vertical_line_overlay.clear_line()
-                        
-                        # Save manual beats
+                        # CRITICAL FIX: Save BEFORE refreshing UI (same as first delete path)
                         self._save_manual_beats()
+                        
+                        # Now refresh UI after deletions are saved
+                        if hasattr(self._engine, '_structured_events'):
+                            self._update_canvases(self._current_start)
                         return
         
         # Original single beat deletion logic
@@ -2317,6 +2580,93 @@ class HolterFullDisclosureDialog(QDialog):
         hi = bisect.bisect_right(self._cached_event_ts, end_sec)
         return self._cached_event_list[lo:hi]
 
+    def get_events_with_manual_priority(self, start_sec, end_sec):
+        """
+        Get all events in the window with MANUAL PRIORITY over AUTO-DETECTION.
+        
+        This method:
+        1. Collects all manually marked beats (is_manual=True) in the time window
+        2. Filters out any auto-detected events that overlap with manual marks (150ms tolerance)
+        3. Returns combined list with manual marks taking precedence
+        
+        Returns:
+            List[dict]: Combined events with manual marks suppressing overlapping auto marks
+        """
+        SUPPRESS_TOLERANCE_SEC = 0.15
+        
+        # 1. Collect manually marked beats
+        manual_events = []
+        manual_timestamps = set()
+        lead_i_canvas = None
+        if hasattr(self, '_canvases'):
+            for c in self._canvases:
+                if c.lead_name == 'I':
+                    lead_i_canvas = c
+                    break
+        
+        if lead_i_canvas and hasattr(lead_i_canvas, '_beat_annotations') and lead_i_canvas._beat_annotations:
+            for b in lead_i_canvas._beat_annotations:
+                ts = float(b.get('timestamp', 0.0))
+                lbl = b.get('label', 'N')
+                is_manual = b.get('is_manual', False)
+                if lbl != 'N' and start_sec <= ts <= end_sec and is_manual:
+                    manual_events.append({
+                        'timestamp': ts,
+                        'label': lbl,
+                        'source': 'Manual',
+                        'is_manual': True
+                    })
+                    manual_timestamps.add(round(ts, 2))
+        
+        # 2. Collect auto-detected events, suppressing those that overlap with manual marks
+        auto_events = []
+        for ev in self._events_in_window(start_sec, end_sec):
+            ts = float(ev.get('timestamp', 0.0) or 0.0)
+            
+            # Check if this auto event falls within tolerance of any manual mark
+            is_suppressed = False
+            for manual_ts in manual_timestamps:
+                if abs(ts - manual_ts) < SUPPRESS_TOLERANCE_SEC:
+                    is_suppressed = True
+                    break
+            
+            if not is_suppressed:
+                auto_events.append({
+                    'timestamp': ts,
+                    'label': ev.get('label', 'Event'),
+                    'source': 'Auto',
+                    'is_manual': False
+                })
+        
+        # Combine and return sorted by timestamp
+        return sorted(manual_events + auto_events, key=lambda x: x['timestamp'])
+
+    # Max plausible duration of a single colored arrhythmia region. Padding the
+    # window query backward by this much catches events that *started* just
+    # before the visible range but still extend into it, without falling back
+    # to scanning the whole recording's event list (which is what previously
+    # made ECGStripCanvas.paintEvent's structured-event loop scale with total
+    # recording length instead of window size - the actual cause of drag lag
+    # on large recordings).
+    _EVENT_REGION_PAD_SEC = 600.0
+
+    def _structured_events_for_canvas(self, start_sec, end_sec):
+        """Structured events to hand to the canvases for this window only.
+
+        Reuses the same sorted/cached index as _events_in_window but pads the
+        lower bound so a long-running event that started slightly earlier
+        still gets colored in, while still being bounded (not the full
+        recording's event list) for large Holter recordings.
+        """
+        if self._event_index_dirty:
+            self._rebuild_event_index()
+        if len(self._cached_event_ts) == 0:
+            return []
+        import bisect
+        lo = bisect.bisect_left(self._cached_event_ts, start_sec - self._EVENT_REGION_PAD_SEC)
+        hi = bisect.bisect_right(self._cached_event_ts, end_sec)
+        return self._cached_event_list[lo:hi]
+
     def _scroll_throttle_interval(self):
         """Minimum seconds between live redraws while dragging, scaled to window size."""
         win = getattr(self, '_window_sec', self._BASE_WIN_SEC)
@@ -2327,41 +2677,60 @@ class HolterFullDisclosureDialog(QDialog):
         else:
             return 0.060   # 2 Min — heaviest window, throttle a little more
 
+    def _on_scrollbar_pressed(self):
+        self._is_scrubbing = True
+
+    def _on_scrollbar_released(self):
+        self._is_scrubbing = False
+        # Do one full-detail, un-throttled pass at the final position so the
+        # arrhythmia label / segment overlay are guaranteed accurate once the
+        # user lets go, even if a scrub frame was skipped right before release.
+        self._pending_scroll_val = self.time_scrollbar.value()
+        self._process_scroll_update(force_extras=True)
+
     def _on_scrollbar_moved(self, val):
         self._pending_scroll_val = val
-        if not self._scroll_timer.isActive():
-            import time
-            now = time.time()
-            interval = self._scroll_throttle_interval()
-            if now - self._last_scroll_time > interval:
-                self._process_scroll_update()
-            else:
-                delay = int((interval - (now - self._last_scroll_time)) * 1000)
-                self._scroll_timer.start(max(1, delay))
+        if self._scroll_timer.isActive():
+            return  # a frame is already queued - it will pick up the latest value
+        import time
+        now = time.time()
+        interval = self._scroll_throttle_interval()
+        remaining = interval - (now - self._last_scroll_time)
+        # Always hand off to the event loop via singleShot(0, ...) instead of
+        # calling _process_scroll_update() directly here. Direct calls run
+        # inside QScrollBar's own mouse-move handling, so a slow frame blocks
+        # the same call stack that's supposed to move the handle - that's
+        # what causes the wave redraw to fall behind the mouse and jump/catch
+        # up instead of tracking it smoothly. Deferring by 0ms still runs
+        # essentially immediately when we're not throttling, but lets Qt
+        # process the pending mouse-move/paint events first.
+        delay_ms = 0 if remaining <= 0 else int(remaining * 1000)
+        self._scroll_timer.start(max(0, delay_ms))
 
     def _on_scroll_timer_timeout(self):
         self._process_scroll_update()
 
-    def _process_scroll_update(self):
+    def _process_scroll_update(self, force_extras=False):
         if self._pending_scroll_val is None:
             return
         val = self._pending_scroll_val
         self._pending_scroll_val = None
         import time
-        self._last_scroll_time = time.time()
+        now = time.time()
+        self._last_scroll_time = now
 
         start_sec = float(val) / 100.0
-        
+
         # Clear any selected beats and vertical lines when scrolling
         self._drag_start_x = None
         self._drag_current_x = None
         self._is_dragging = False
         self._drag_start_timestamp = None
-        
+
         # Clear vertical lines from overlay
         if hasattr(self, '_vertical_line_overlay'):
             self._vertical_line_overlay.clear_line()
-            
+
         # Clear beat selection from all canvases
         for canvas in self._canvases:
             canvas._clicked_beat_timestamp = None
@@ -2369,13 +2738,21 @@ class HolterFullDisclosureDialog(QDialog):
             canvas._clicked_beat_x_pos = None
             canvas._selected_beats = []
             canvas.update()
-            
-        self._update_canvases(start_sec)
-        
-        # Ensure segment overlay is visible and on top after scrolling
-        if hasattr(self, '_segment_overlay') and hasattr(self, '_canvas_frame'):
-            self._segment_overlay.setGeometry(self._canvas_frame.rect())
-            self._segment_overlay.raise_()
+
+        # While actively scrubbing, only recompute the arrhythmia/event label
+        # and reposition the segment overlay at a reduced cadence - both do
+        # extra list building/sorting on top of the waveform redraw, and
+        # skipping them on in-between frames keeps each frame cheap so the
+        # wave itself stays in sync with the handle. They're always brought
+        # up to date on release (see _on_scrollbar_released) and whenever
+        # we're not scrubbing (tab change, programmatic seek, etc).
+        do_extras = force_extras or (not self._is_scrubbing) or \
+            (now - self._last_extras_time >= self._EXTRAS_MIN_INTERVAL)
+
+        self._update_canvases(start_sec, update_extras=do_extras)
+
+        if do_extras:
+            self._last_extras_time = now
 
     def _on_time_tab_changed(self, index):
         text = self.time_tabs.tabText(index)
@@ -2426,19 +2803,10 @@ class HolterFullDisclosureDialog(QDialog):
             end_real = datetime.fromtimestamp(self._engine._reader.start_time + end_sec)
             self.lbl_real_time.setText(f"Real Time: {start_real.strftime('%H:%M:%S')} - {end_real.strftime('%H:%M:%S')}")
         
-        # Update arrhythmia indicator
-        # 1. Collect automatic events (windowed lookup via cached sorted index)
-        auto_events = []
-        for ev in self._events_in_window(start_sec, end_sec):
-            ts = float(ev.get('timestamp', 0.0) or 0.0)
-            auto_events.append({
-                'timestamp': ts,
-                'label': ev.get('label', 'Event'),
-                'source': 'Auto'
-            })
-                    
-        # 2. Collect manually annotated beats (non-N) in the current window
+        # Update arrhythmia indicator with MANUAL PRIORITY LOGIC
+        # 1. Collect manually annotated beats (non-N) in the current window FIRST
         manual_events = []
+        manual_timestamps = set()  # Track which timestamps have manual marks
         lead_i_canvas = None
         if hasattr(self, '_canvases'):
             for c in self._canvases:
@@ -2450,15 +2818,39 @@ class HolterFullDisclosureDialog(QDialog):
             for b in lead_i_canvas._beat_annotations:
                 ts = float(b.get('timestamp', 0.0))
                 lbl = b.get('label', 'N')
-                if lbl != 'N' and start_sec <= ts <= end_sec:
+                is_manual = b.get('is_manual', False)
+                if lbl != 'N' and start_sec <= ts <= end_sec and is_manual:
                     manual_events.append({
                         'timestamp': ts,
                         'label': lbl,
                         'source': 'Manual'
                     })
+                    # Track this timestamp to suppress overlapping auto marks
+                    manual_timestamps.add(round(ts, 2))  # Round for fuzzy matching
+        
+        # 2. Collect automatic events ONLY if they don't overlap with manual marks
+        # Apply 150ms tolerance window for matching
+        auto_events = []
+        SUPPRESS_TOLERANCE_SEC = 0.15
+        for ev in self._events_in_window(start_sec, end_sec):
+            ts = float(ev.get('timestamp', 0.0) or 0.0)
+            
+            # Check if this auto event falls within tolerance of any manual mark
+            is_suppressed = False
+            for manual_ts in manual_timestamps:
+                if abs(ts - manual_ts) < SUPPRESS_TOLERANCE_SEC:
+                    is_suppressed = True
+                    break
+            
+            if not is_suppressed:
+                auto_events.append({
+                    'timestamp': ts,
+                    'label': ev.get('label', 'Event'),
+                    'source': 'Auto'
+                })
                     
-        # Combine and sort all events by timestamp
-        all_events = sorted(auto_events + manual_events, key=lambda x: x['timestamp'])
+        # Combine and sort all events by timestamp (manual first, then auto)
+        all_events = sorted(manual_events + auto_events, key=lambda x: x['timestamp'])
         
         arrhythmia_label = ""
         if all_events:
@@ -2469,14 +2861,18 @@ class HolterFullDisclosureDialog(QDialog):
                 
         self.lbl_arrhythmia.setText(arrhythmia_label)
 
-    def _update_canvases(self, start_sec: float):
+    def _update_canvases(self, start_sec: float, update_extras: bool = True):
         eff_dur = self._engine.duration_sec
         start_sec = max(0.0, min(start_sec, max(0.0, eff_dur - self._window_sec)))
         self._current_start = start_sec
         end_sec = start_sec + self._window_sec
 
+        # The time label is cheap (string format only) so keep it live every
+        # frame; the arrhythmia/event label rebuild involves gathering and
+        # sorting events and is gated by update_extras (see _process_scroll_update).
         self.lbl_time.setText(f"Time:  {self._engine._sec_to_hms(start_sec)}")
-        self._update_time_and_arrhythmia_labels(start_sec, end_sec)
+        if update_extras:
+            self._update_time_and_arrhythmia_labels(start_sec, end_sec)
 
         read_end_sec = min(end_sec, eff_dur)
         
@@ -2489,12 +2885,15 @@ class HolterFullDisclosureDialog(QDialog):
         # Define color mapping for beat types
         label_colors = {
             "N": "#00FF00",      # Normal - Green
-            "S": "#00FFFF",      # Atrial Premature - Cyan
-            "V": "#FF3333",      # Ventricular Premature - Red
-            "P": "#FF00FF",      # Paced - Magenta
-            "AF": "#FFA500",     # Atrial Fibrillation - Orange
+            "S": "#00FFFF",      # Supraventricular - Cyan
+            "P": "#FF00FF",      # Premature - Magenta
+            "V": "#FF3333",      # Ventricular - Red
+            "C": "#FFA500",      # Conduction - Orange
+            "T": "#9932CC",      # TV Paced - Purple
+            "A": "#FFFF00",      # ACLS - Yellow
             "X": "#0000FF",      # Artifact - Blue
-            "Other": "#FFFF00"   # Other - Yellow
+            "AF": "#FFA500",     # Atrial Fibrillation - Orange (legacy)
+            "Other": "#FFFF00"   # Other - Yellow (legacy)
         }
         
         try:
@@ -2507,7 +2906,7 @@ class HolterFullDisclosureDialog(QDialog):
                 short_code = lbl
                 if '(' in lbl and ')' in lbl:
                     short_code = lbl.split('(')[1].split(')')[0]
-                color = label_colors.get(short_code, "#00FF00")
+                color = label_colors.get(short_code, "#FFFF00")
                 beat_annotations.append({
                     'timestamp': ts,
                     'label': lbl,
@@ -2520,13 +2919,35 @@ class HolterFullDisclosureDialog(QDialog):
         
         # Restore manual beats to canvas annotations if pending (on first load)
         if hasattr(self, '_pending_manual_beats') and self._pending_manual_beats:
+            # Define color mapping for label codes (same as in _label_beat)
+            beat_label_colors = {
+                "S": "#00FFFF",      # Supraventricular - Cyan
+                "P": "#FF00FF",      # Premature - Magenta
+                "V": "#FF3333",      # Ventricular - Red
+                "C": "#FFA500",      # Conduction - Orange
+                "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
+                "A": "#FFFF00",      # ACLS - Yellow
+                "N": "#00FF00",      # Normal - Green (legacy)
+                "X": "#0000FF",      # Artifact - Blue (legacy)
+            }
+            
             for c in self._canvases:
                 if not hasattr(c, '_beat_annotations') or c._beat_annotations is None:
                     c._beat_annotations = []
                 for mb in self._pending_manual_beats:
                     ts = float(mb.get('timestamp', 0.0))
                     lbl = str(mb.get('label', 'N'))
-                    color = mb.get('color', label_colors.get(lbl, '#FFFF00'))
+                    # Use saved color if available, otherwise derive from label
+                    if mb.get('color'):
+                        color = str(mb.get('color'))
+                    else:
+                        # Fallback: extract color from label code
+                        # Label might be full like "Atrial Fibrillation 1(S)" or short like "S"
+                        label_code = lbl
+                        if '(' in lbl and ')' in lbl:
+                            label_code = lbl.split('(')[1].split(')')[0]
+                        color = beat_label_colors.get(label_code, '#FFFF00')
+                    
                     # Check if beat already exists in canvas annotations
                     found = False
                     for b in c._beat_annotations:
@@ -2544,12 +2965,157 @@ class HolterFullDisclosureDialog(QDialog):
                             'is_manual': True
                         })
                 c._beat_annotations.sort(key=lambda b: b['timestamp'])
+            
+            # Also restore structured events (for waveform coloring)
+            # Group beats by batch_id to create structured events for parallel multi markings
+            if not hasattr(self._engine, '_structured_events'):
+                self._engine._structured_events = []
+            
+            batch_groups = {}  # batch_id -> list of beats
+            for mb in self._pending_manual_beats:
+                if mb.get('batch_id'):  # Changed: only check batch_id, not marking_mode
+                    batch_id = mb.get('batch_id')
+                    if batch_id not in batch_groups:
+                        batch_groups[batch_id] = []
+                    batch_groups[batch_id].append(mb)
+            
+            # CRITICAL FIX: Clear _pending_manual_beats after restoration
+            # Otherwise _update_canvases will re-apply them on every refresh, causing deleted beats to reappear!
+            self._pending_manual_beats = []
+            
+            # Define color mapping for all label codes (matching canvas rendering)
+            beat_label_colors = {
+                "S": "#00FFFF",      # Supraventricular - Cyan
+                "P": "#FF00FF",      # Premature - Magenta
+                "V": "#FF3333",      # Ventricular - Red
+                "C": "#FFA500",      # Conduction - Orange
+                "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
+                "A": "#FFFF00",      # ACLS - Yellow
+                "N": "#00FF00",      # Normal - Green (legacy)
+                "X": "#0000FF",      # Artifact - Blue (legacy)
+            }
+            
+            # Create structured events from batch groups
+            for batch_id, beats in batch_groups.items():
+                if beats:
+                    timestamps = [float(b.get('timestamp', 0.0)) for b in beats]
+                    start_ts = min(timestamps)
+                    end_ts = max(timestamps)
+                    lbl = beats[0].get('label', 'N')
+                    color = beats[0].get('color', '')
+                    
+                    # Extract short code for structured event
+                    label_code = lbl
+                    if '(' in lbl and ')' in lbl:
+                        label_code = lbl.split('(')[1].split(')')[0]
+                    
+                    # CRITICAL FIX: Ensure color is correct for C, T, A
+                    # If color is not saved or is default/invalid color, use the correct color for the label code
+                    # Check for empty, default yellow, magenta, or green (legacy defaults)
+                    if not color or color == '#FFFF00' or color == '#FF00FF' or color == '#00FF00':
+                        color = beat_label_colors.get(label_code, '#FFFF00')
+                    
+                    # Create structured event for waveform coloring
+                    structured_event = {
+                        'timestamp': start_ts,
+                        'end_timestamp': end_ts,
+                        'label': label_code,
+                        'label_full': lbl,
+                        'color': color,
+                        'event_type': label_code,
+                        'source': 'restored_parallel_multi'
+                    }
+                    
+                    # Check if this event already exists
+                    event_exists = False
+                    for ev in self._engine._structured_events:
+                        if (abs(float(ev.get('timestamp', 0.0)) - start_ts) < 0.5 and
+                            abs(float(ev.get('end_timestamp', 0.0)) - end_ts) < 0.5):
+                            event_exists = True
+                            break
+                    
+                    if not event_exists:
+                        self._engine._structured_events.append(structured_event)
+            
+            # Sort structured events by timestamp
+            self._engine._structured_events.sort(key=lambda x: float(x.get('timestamp', 0.0)))
+            self._event_index_dirty = True
+            
+            # Restore vertical lines for ALL parallel multi markings (not just the first)
+            # Process all batches to restore all parallel multi selections
+            for batch_id, first_batch_beats in batch_groups.items():
+                if first_batch_beats:
+                    timestamps = [float(b.get('timestamp', 0.0)) for b in first_batch_beats]
+                    min_ts = min(timestamps)
+                    max_ts = max(timestamps)
+                    
+                    # Convert timestamps back to pixel positions
+                    ref_canvas = None
+                    for canvas in self._canvases:
+                        if canvas.lead_name == 'I':
+                            ref_canvas = canvas
+                            break
+                    
+                    if ref_canvas and hasattr(ref_canvas, '_start_sec') and hasattr(ref_canvas, '_data') and hasattr(ref_canvas, '_fs'):
+                        w = ref_canvas.width()
+                        data_len = len(ref_canvas._data) if hasattr(ref_canvas, '_data') else 0
+                        if w > 0 and data_len > 0:
+                            end_sec = ref_canvas._start_sec + data_len / ref_canvas._fs
+                            span = end_sec - ref_canvas._start_sec
+                            
+                            if span > 0:
+                                from PyQt5.QtCore import QPoint
+                                # Convert timestamps to pixel positions in canvas frame
+                                min_pct = (min_ts - ref_canvas._start_sec) / span
+                                max_pct = (max_ts - ref_canvas._start_sec) / span
+                                
+                                min_x_local = int(min_pct * w)
+                                max_x_local = int(max_pct * w)
+                                
+                                # Convert to global frame coordinates
+                                min_x_global = ref_canvas.mapTo(self._canvas_frame, QPoint(min_x_local, 0)).x()
+                                max_x_global = ref_canvas.mapTo(self._canvas_frame, QPoint(max_x_local, 0)).x()
+                                
+                                # Restore the line positions (use the latest batch, which is typically the most relevant)
+                                # For the UI, we'll show the lines of the first/most recent batch found
+                                if self._multi_line1_x is None:  # Only set if not already set
+                                    self._multi_line1_x = min_x_global
+                                    self._multi_line2_x = max_x_global
+                                    
+                                    # Show the vertical lines
+                                    if hasattr(self, '_vertical_line_overlay'):
+                                        self._vertical_line_overlay.set_line_positions([min_x_global, max_x_global])
+                                    
+                                    lbl = first_batch_beats[0].get('label', 'N')
+                                    print(f"[Full Disclosure] Restored parallel multi vertical lines for {lbl} at x={min_x_global}, x={max_x_global}")
+            
+            # CRITICAL FIX #2: Set selection mode to parallel_multi so delete works after reopening
+            if batch_groups:
+                self._selection_mode = 'parallel_multi'
+                print(f"[Full Disclosure] Set _selection_mode to 'parallel_multi' for delete functionality")
+                
+                # Trigger canvas refresh to show all restored markings
+                for canvas in self._canvases:
+                    canvas.update()
+                if hasattr(self, '_vertical_line_overlay'):
+                    self._vertical_line_overlay.update()
+            
             print(f"[Full Disclosure] Restored {len(self._pending_manual_beats)} manual beats to canvas annotations")
+            print(f"[Full Disclosure] Restored {len(batch_groups)} structured events for parallel multi markings")
             self._pending_manual_beats = None  # Clear after restoration
 
         
         # Generate time array for ECG strips
         x = np.linspace(0, self._window_sec, expected_len)
+
+        # Was: getattr(self._engine, '_structured_events', []) — the FULL
+        # recording's event list handed to every one of the 12 canvases.
+        # ECGStripCanvas.paintEvent() loops over every item in this list on
+        # every repaint; passing the whole recording made that loop (and the
+        # scrub redraw) scale with total recording length instead of the
+        # visible window. Windowing it here is the actual fix for the lag
+        # on large recordings.
+        visible_structured_events = self._structured_events_for_canvas(start_sec, end_sec)
 
         # Optimization: Process data in parallel using numpy vectorization
         for i, c in enumerate(self._canvases):
@@ -2566,11 +3132,13 @@ class HolterFullDisclosureDialog(QDialog):
                         padded[len(d_i):] = d_i[-1] if len(d_i) > 0 else 0
                         d_i = padded
                 # Convert to float32 for faster rendering and pass beat annotations
-                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=getattr(self._engine, '_structured_events', []))
+                c.set_data(x, np.asarray(d_i, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=visible_structured_events, fast_preview=not update_extras)
             else:
-                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=getattr(self._engine, '_structured_events', []))
+                c.set_data(x, np.zeros(expected_len, dtype=np.float32), beat_annotations=beat_annotations, start_sec=start_sec, structured_events=visible_structured_events, fast_preview=not update_extras)
 
-        # Clear and repopulate segment overlay with only visible segments
+        # Clear and repopulate segment overlay with only visible segments.
+        # CRITICAL FIX: ALWAYS update segment positions on scroll, not just when update_extras=True
+        # Otherwise segments appear to move with scrolling instead of staying anchored to timestamps
         if hasattr(self, '_segment_overlay') and hasattr(self, '_segment_annotations'):
             self._segment_overlay.clear_segments()
             ref = self._canvases[0] if self._canvases else None
@@ -2599,7 +3167,7 @@ class HolterFullDisclosureDialog(QDialog):
                                     sx_global, ex_global, s_sec, e_sec,
                                     seg['label'], seg['color'], seg.get('start_time_str', ''), seg.get('end_time_str', '')
                                 )
-            # Ensure overlay is updated after segments are added (moved outside inner condition)
+            # Ensure overlay is updated after segments are added
             self._segment_overlay.update()
             # Raise overlay to ensure it's visible on top of canvases
             self._segment_overlay.raise_()
