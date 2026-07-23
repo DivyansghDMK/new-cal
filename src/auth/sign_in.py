@@ -246,13 +246,13 @@ class SignIn:
         # If username already exists, allow update (overwrite) instead of blocking
         is_update = username in self.users
         if not is_update:
-            # Only enforce uniqueness checks for brand-new registrations
-            if serial_id and not self._is_unique("serial_id", serial_id):
-                return False, "Machine Serial ID already registered."
+            # NOTE: serial_id and phone uniqueness are enforced on the server side
+            # (via hardware fingerprint + RhythmUltra serial checks). We do NOT
+            # enforce them locally because the same setup installer (including
+            # users.json) may be installed on multiple machines — a local
+            # duplicate-serial check would incorrectly block the 2nd machine.
             if full_name and not self._is_unique("full_name", full_name):
-                return False, "Full Name already registered."
-            if phone and not self._is_unique("phone", phone):
-                return False, "Phone number already registered."
+                return False, "Full Name already registered on this machine."
 
         from datetime import datetime
         login_id = str(phone or username).strip()

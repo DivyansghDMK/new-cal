@@ -785,13 +785,13 @@ class RegistrationDialog(QDialog):
             err = str(result.get("error", "")).strip().upper()
             if err == "DEVICE_ALREADY_REGISTERED":
                 self._set_status(
-                    "This RhythmUltra device has reached the maximum limit of 5 registrations.\n\nPlease deactivate an existing installation or contact Deckmount Support.",
+                    "Device limit reached (5/5 machines active). Please contact Deckmount support to free up a slot.",
                     "#c0392b",
                 )
                 QMessageBox.critical(
                     self,
-                    "Maximum Registrations Reached",
-                    "This RhythmUltra device has reached the maximum limit of 5 registrations.\n\nPlease deactivate an existing installation or contact Deckmount Support.",
+                    "Device Limit Reached",
+                    "Device limit reached (5/5 machines active). Please contact Deckmount support to free up a slot.",
                 )
                 self._register_btn.setEnabled(True)
                 return
@@ -1241,8 +1241,8 @@ class LicenseDialog(QDialog):
             if err == "DEVICE_ALREADY_REGISTERED":
                 QMessageBox.critical(
                     self,
-                    "Maximum Registrations Reached",
-                    "This RhythmUltra device has reached the maximum limit of 5 registrations.\n\nPlease deactivate an existing installation or contact Deckmount Support.",
+                    "Device Limit Reached",
+                    "Device limit reached (5/5 machines active). Please contact Deckmount support to free up a slot.",
                 )
                 self.reject()
                 return

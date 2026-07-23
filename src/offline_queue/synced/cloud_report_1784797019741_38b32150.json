@@ -1,0 +1,21 @@
+{
+  "id": "cloud_report_1784797019741_38b32150",
+  "type": "cloud_report",
+  "data": {
+    "file_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ECG_Report_12_1_20260519_115956.pdf",
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260519_115956.pdf",
+      "uploaded_at": "2026-07-23T14:26:59.737806",
+      "file_size": "70630",
+      "file_type": "pdf",
+      "report_type": "12_lead_ecg",
+      "machine_serial": "DM ECG V1.0 A999",
+      "device_id": "DM ECG V1.0 A999"
+    },
+    "cloud_service": "s3"
+  },
+  "priority": 2,
+  "queued_at": "2026-07-23T08:56:59.741815Z",
+  "retry_count": 0,
+  "status": "pending"
+}

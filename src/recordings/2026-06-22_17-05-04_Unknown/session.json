@@ -1,0 +1,23 @@
+{
+  "chunk_seconds": 5,
+  "ecgh_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\recording.ecgh",
+  "events_db_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\events.db",
+  "fs": 500,
+  "jsonl_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\metrics.jsonl",
+  "output_dir": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings",
+  "patient_info": {},
+  "schema_version": 1,
+  "session_dir": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown",
+  "status": "stopped",
+  "summary": {
+    "duration_sec": 459.896,
+    "events_db_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\events.db",
+    "frames": 229948,
+    "index_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\recording_index.json",
+    "jsonl_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\metrics.jsonl",
+    "path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\recording.ecgh",
+    "session_dir": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown",
+    "session_json_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\src\\recordings\\2026-06-22_17-05-04_Unknown\\session.json"
+  },
+  "updated_at": "2026-06-22T11:42:53.087437Z"
+}

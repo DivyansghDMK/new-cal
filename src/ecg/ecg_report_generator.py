@@ -81,14 +81,25 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     qtcf_display = f"{int(round(float(_qtcf_val)))} ms" if _qtcf_val and float(_qtcf_val) > 0 else "-- ms"
     
     # RV5/SV1
-    rv5_mv = data.get('rv5_mv')
-    sv1_mv = data.get('sv1_mv')
-    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
-    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
+    raw_hr_check = data.get('HR_avg') or data.get('HR') or data.get('HR_bpm') or 0
+    try:
+        hr_val_check = float(str(raw_hr_check).replace("bpm","").strip())
+    except Exception:
+        hr_val_check = 0.0
+
+    if hr_val_check <= 0:
+        rv5_mv = 0.0
+        sv1_mv = 0.0
+    else:
+        rv5_mv = data.get('rv5_mv') if data.get('rv5_mv') is not None else data.get('rv5')
+        sv1_mv = data.get('sv1_mv') if data.get('sv1_mv') is not None else data.get('sv1')
+
+    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "0.000 mV"
+    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "0.000 mV"
     
     # RV5+SV1
-    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
-    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
+    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if (rv5_mv is not None and sv1_mv is not None and hr_val_check > 0) else 0.0
+    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV"
     
     # P/QRS/T Axis
     p_axis = data.get('p_axis', '--')
@@ -1504,7 +1515,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     if not conclusions:
         conclusions = [
             "No ECG data available",
-            "Please connect device or enable demo ",
+            "Please connect device",
            
             
         ]
@@ -1652,6 +1663,12 @@ def _normalize_report_conclusions(conclusions):
         "Third-degree AV Block",
         "Second-degree AV Block (Mobitz II)",
         "Second-degree AV Block (Mobitz I)",
+        "Sinus Bradycardia",
+        "Bradycardia (non-sinus)",
+        "Bradycardia",
+        "Sinus Tachycardia",
+        "Tachycardia (non-sinus)",
+        "Tachycardia",
         "Complete Left Bundle Branch Block",
         "Complete Right Bundle Branch Block",
         "Left Bundle Branch Block",
@@ -1737,12 +1754,14 @@ def _build_metric_conclusions(data):
             try:
                 value = data.get(key)
                 if value is not None and value != "":
-                    return float(value)
+                    s = str(value).strip().lower()
+                    clean = s.replace("bpm", "").replace("ms", "").replace("mv", "").replace("deg", "").replace("°", "").strip()
+                    return float(clean)
             except Exception:
                 continue
         return 0.0
 
-    hr = _num("HR_bpm", "Heart_Rate", "HR", "beat")
+    hr = _num("HR_bpm", "Heart_Rate", "HR", "beat", "HR_avg")
     pr = _num("PR", "PR_ms", "pr_ms")
     qrs = _num("QRS", "QRS_ms", "qrs_ms")
     qtc = _num("QTc", "QTc_ms", "qtc_bazett")
@@ -1761,7 +1780,7 @@ def _build_metric_conclusions(data):
         findings.append("Sinus Bradycardia")
     elif hr > 100:
         findings.append("Sinus Tachycardia")
-    elif hr:
+    elif hr >= 60:
         findings.append("Normal Sinus Rhythm")
 
     if pr > 200:
@@ -2188,6 +2207,7 @@ def generate_ecg_report(
     # Prefer expanded-view / ECG test page conclusions when available (more detailed, updated form)
     dashboard_conclusions = _normalize_report_conclusions(conclusions or [])
     try:
+        dashboard_conclusions = _normalize_report_conclusions(dashboard_conclusions)
         if not dashboard_conclusions and ecg_test_page:
             dashboard_conclusions = get_conclusions_from_ecg_test_page(ecg_test_page, data)
             if dashboard_conclusions:
@@ -2198,49 +2218,47 @@ def generate_ecg_report(
     if not dashboard_conclusions:
         dashboard_conclusions = get_dashboard_conclusions_from_image(dashboard_instance)
 
-    dashboard_conclusions = _normalize_report_conclusions(dashboard_conclusions)
+    # SAFEGUARD: If there is no real data (HR <= 0 or all core metrics are zero), ignore any
+    # persisted conclusions from last_conclusions.json and show explicit "No ECG data available" instead.
     try:
-        if not _has_abnormal_conclusion(dashboard_conclusions):
-            for metric_conclusion in _build_metric_conclusions(data):
-                if metric_conclusion not in dashboard_conclusions:
-                    dashboard_conclusions.append(metric_conclusion)
-    except Exception:
-        pass
-    dashboard_conclusions = _normalize_report_conclusions(dashboard_conclusions)
-
-    # SAFEGUARD: If there is no real data (all core metrics are zero), ignore any
-    # persisted conclusions and use the explicit "no data" conclusions instead.
-    try:
-        core_keys = ["HR", "PR", "QRS", "QT", "QTc", "ST"]
-        all_zero = True
-        for k in core_keys:
-            v = data.get(k, 0)
+        def _parse_val(val):
+            if val is None:
+                return 0.0
+            s = str(val).strip().lower()
+            if s in ("", "--", "none", "null", "0", "0.0"):
+                return 0.0
+            clean = s.replace("bpm", "").replace("ms", "").replace("mv", "").replace("deg", "").replace("°", "").strip()
             try:
-                all_zero = all_zero and (float(v) == 0.0)
+                return float(clean)
             except Exception:
-                all_zero = all_zero and (str(v).strip() in ["0", "--", "", "None"])
-        if all_zero:
+                return 0.0
+
+        hr_val = _parse_val(data.get("HR") or data.get("HR_bpm") or data.get("Heart_Rate") or data.get("HR_avg") or 0)
+        pr_val = _parse_val(data.get("PR") or data.get("PR_ms") or 0)
+        qrs_val = _parse_val(data.get("QRS") or data.get("QRS_ms") or 0)
+        qt_val = _parse_val(data.get("QT") or data.get("QT_ms") or 0)
+        qtc_val = _parse_val(data.get("QTc") or data.get("QTc_ms") or 0)
+
+        is_no_data = (hr_val <= 0) or (hr_val == 0 and pr_val == 0 and qrs_val == 0 and qt_val == 0 and qtc_val == 0)
+
+        if is_no_data:
             dashboard_conclusions = [
-                " No ECG data available",
-                "Please connect device or enable demo ",
-           
-                
-                
-                
-                
-
-                
-
-                
-
-
-               
-
-                
+                "No ECG data available",
+                "Please connect device"
             ]
-            print(" Overriding conclusions because all core metrics are zero (no data)")
-    except Exception:
-        pass
+            print(" Overriding conclusions because HR is 0 or all core metrics are zero (no data)")
+        else:
+            dashboard_conclusions = [c for c in dashboard_conclusions if "No ECG data available" not in c and "Please connect device" not in c]
+            if hr_val <= 0:
+                dashboard_conclusions = [c for c in dashboard_conclusions if "Normal Sinus Rhythm" not in c and "Normal sinus rhythm" not in c]
+            
+            # Merge value-based metric conclusions (BPM, PR, QRS, QTc, LVH) derived directly from data
+            metric_conclusions = _build_metric_conclusions(data)
+            for mc in metric_conclusions:
+                if mc not in dashboard_conclusions:
+                    dashboard_conclusions.append(mc)
+    except Exception as e:
+        print(f" Safeguard check error: {e}")
 
     # Use ONLY conclusions from last_conclusions.json (loaded above)
     # Strip placeholders so only real conclusions appear in report

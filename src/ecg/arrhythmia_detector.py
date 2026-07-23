@@ -311,7 +311,10 @@ def _detect_p_wave(signal: np.ndarray, r_idx: int, baseline: float, fs: float) -
 
     p_peak = p_start + peak_rel
     amplitude = float(signal[p_peak] - baseline)
-    if amplitude < 0.08:
+    # Threshold lowered from 0.08 → 0.04 mV: small but real P waves (common in
+    # standard single-lead recordings) were being rejected, causing NSR to be
+    # misclassified as "Rhythm Undetermined".
+    if amplitude < 0.04:
         return result
     boundary_threshold = max(0.02, 0.2 * abs(amplitude))
 
@@ -887,7 +890,15 @@ def detect_primary_rhythm(
     ref_beats = clean_beats if clean_beats else list(beats_list)
     qrs_ms_vals = [float(b.get("qrs_ms") or 0.0) for b in ref_beats if b.get("qrs_ms")]
     mean_qrs_ms: Optional[float] = float(np.mean(qrs_ms_vals)) if qrs_ms_vals else None
-    p_present_ratio = float(np.mean([bool(b.get("p_present")) for b in ref_beats])) if ref_beats else 0.0
+    # p_present_majority: use p_present flag OR infer from pr_ms being available.
+    # If the beat analyser computed a valid PR interval it means a P wave existed
+    # even if the p_present boolean was not set (e.g. amplitude below old threshold).
+    def _beat_has_p(b: Dict[str, object]) -> bool:
+        if bool(b.get("p_present")):
+            return True
+        pr = b.get("pr_ms")
+        return pr is not None and float(pr) > 0
+    p_present_ratio = float(np.mean([_beat_has_p(b) for b in ref_beats])) if ref_beats else 0.0
     p_present_majority = p_present_ratio > 0.5
 
     # ─── 3. VT ──────────────────────────────────────────────────────────────
@@ -896,7 +907,14 @@ def detect_primary_rhythm(
 
     # ─── 4–6. Sinus rhythms (require P wave present) ────────────────────────
     pr_vals = [float(b.get("pr_ms") or 0.0) for b in ref_beats if b.get("pr_ms")]
-    pr_ok = bool(pr_vals) and 120.0 <= float(np.mean(pr_vals)) <= 200.0
+    # pr_ok: if PR values are available, they must be in normal range (120–200ms).
+    # If pr_ms was not computed for any beat (common in some ECG configs), we do
+    # NOT block NSR — we fall back to P-wave presence + rate + regularity alone.
+    if pr_vals:
+        pr_ok = 120.0 <= float(np.mean(pr_vals)) <= 200.0
+    else:
+        pr_ok = True  # No PR data: let p_present + rr_regular + narrow_qrs decide
+
     rr_regular = rr_variability < 120.0
     narrow_qrs = mean_qrs_ms is not None and mean_qrs_ms < 120.0
 

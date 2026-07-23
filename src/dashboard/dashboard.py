@@ -3417,19 +3417,18 @@ class Dashboard(QWidget):
             return self._fallback_wave_update(frame)
     
     def _fallback_wave_update(self, frame):
-        """Fallback wave generation when ECG data is not available"""
+        """Fallback wave display (flat baseline) when live ECG data is not active"""
         try:
-            self.ecg_y = np.roll(self.ecg_y, -1)
-            # Generate demo wave scaled to fit 0-4096 range (centered around 2048)
-            y_center = 2048
-            amplitude = 800  # Amplitude for demo wave
-            demo_value = y_center + amplitude * np.sin(2 * np.pi * 2 * self.ecg_x[-1] + frame/10) + 50 * np.random.randn()
-            # Clamp to 0-4096 range
-            self.ecg_y[-1] = np.clip(demo_value, 0, 4096)
-            self.ecg_line.set_ydata(self.ecg_y)
-            # Ensure y-axis is locked to 0-4096 range
+            # Show a clean flat baseline at 2048 (isoelectric line) when no live test is running
+            self.ecg_y.fill(2048.0)
+            self.ecg_line.set_data(self.ecg_x, self.ecg_y)
+            # Ensure axes limits match fallback ranges
+            self.ecg_canvas.axes.set_autoscale_on(False)
+            new_xlim = (0.0, 2.0)
+            if not hasattr(self, '_prev_xlim') or self._prev_xlim != new_xlim:
+                self.ecg_canvas.axes.set_xlim(*new_xlim)
+                self._prev_xlim = new_xlim
             self.ecg_canvas.axes.set_ylim(0, 4096)
-            # Do not compute/update metrics from mock wave; keep zeros until user starts
             return [self.ecg_line]
         except Exception as e:
             print(f" Error in fallback wave update: {e}")
@@ -4394,7 +4393,7 @@ class Dashboard(QWidget):
                 last_refresh = getattr(self, "_last_dashboard_rhythm_refresh_ts", 0.0) or 0.0
                 cached = getattr(ecg_page, "_latest_rhythm_interpretation", None) if ecg_page else None
                 needs_refresh = cached in (None, "", "Analyzing Rhythm...", "Detecting...")
-                refresh_due = (now - last_refresh) >= 6.0  # keep dashboard interpretation live without overloading CPU
+                refresh_due = (now - last_refresh) >= 1.0  # sync with metrics_timer (1 sec)
 
                 ecg_active = True
                 try:
@@ -4403,7 +4402,7 @@ class Dashboard(QWidget):
                 except Exception:
                     ecg_active = True
 
-                if ecg_page and ecg_active and (needs_refresh or refresh_due) and (now - last_refresh) >= 2.5 and hasattr(ecg_page, "update_latest_rhythm_interpretation"):
+                if ecg_page and ecg_active and (needs_refresh or refresh_due) and (now - last_refresh) >= 1.0 and hasattr(ecg_page, "update_latest_rhythm_interpretation"):
                     self._last_dashboard_rhythm_refresh_ts = now
                     ecg_page.update_latest_rhythm_interpretation()
             except Exception:

@@ -838,7 +838,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     if not conclusions:
         conclusions = [
             "No ECG data available",
-            "Please connect device or enable demo ",
+            "Please connect device",
            
             
         ]
@@ -1027,7 +1027,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         if all_zero:
             dashboard_conclusions = [
                 " No ECG data available",
-                "Please connect device or enable demo ",
+                "Please connect device",
            
                 
                 

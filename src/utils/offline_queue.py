@@ -212,10 +212,19 @@ class OfflineQueue:
                 if filename.endswith('.json'):
                     file_path = os.path.join(directory, filename)
                     try:
+                        if os.path.getsize(file_path) == 0:
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
+                            continue
                         with open(file_path, 'r') as f:
                             items.append(json.load(f))
                     except Exception as e:
-                        print(f"[WARN] Failed to load {filename}: {e}")
+                        try:
+                            os.remove(file_path)
+                        except Exception:
+                            pass
         except Exception as e:
             print(f"[WARN] Failed to read queue directory: {e}")
         return items

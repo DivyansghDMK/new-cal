@@ -41,7 +41,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.deckmount.ecgapp.presentation.ui.screen.hrv.HRVAnalysisResult
+import com.deckmount.ecgapp.presentation.ui.screen.hrv.HRVReportRenderer
+import com.deckmount.ecgapp.util.EcgPdfGenerator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -49,9 +53,11 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.deckmount.ecgapp.presentation.ui.screen.livemonitorecg.ALL_LEADS
-import com.deckmount.ecgapp.presentation.ui.screen.livemonitorecg.ECGReportRenderData
 import kotlinx.coroutines.sync.Mutex
+
+/**
+ * Created by Amarjeet Kumar
+ */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page dimension constants (mm)
@@ -62,20 +68,31 @@ private const val A4_P_H = 297f    // Portrait height
 private const val A4_L_W = 297f    // Landscape width
 private const val A4_L_H = 210f    // Landscape height
 
+// PDF margins — 0mm (printer will add its own 5mm hardware margin)
+private const val MARGIN_PDF = 0f
+
 // Printer margins - safe printable area
-private const val MARGIN_TOP = 10f     // 10mm top margin
-private const val MARGIN_BOTTOM = 10f  // 10mm bottom margin
-private const val MARGIN_LEFT = 10f    // 10mm left margin (for landscape)
-private const val MARGIN_RIGHT = 10f   // 10mm right margin
+private const val MARGIN_TOP = 5f     // 10mm top margin
+private const val MARGIN_BOTTOM = 5f  // 10mm bottom margin
+private const val MARGIN_LEFT = 5f    // 10mm left margin (for landscape)
+private const val MARGIN_RIGHT = 5f   // 10mm right margin
+
+private const val ADC_PER_MV = 1.8f
+
+
 
 // ECG capture constants
 private const val ECG_FS = 500f    // Hz
 private const val TAG_R = "ECGReportScreen"
-private const val ADC_PER_MM = 2.75f  // ← ADD THIS: 640 ADC units per 5mm grid box
 
 // Fixed wave parameters
 private const val FIXED_WAVE_SPEED = 25f  // mm/s
 private const val FIXED_WAVE_GAIN = 10f   // mm/mV
+
+private const val GRID_W_PORTRAIT = 210f   // 40 boxes × 5mm
+private const val GRID_H_PORTRAIT = 297f   // 57 boxes × 5mm
+private const val GRID_W_LANDSCAPE = 297f
+private const val GRID_H_LANDSCAPE = 210f  // 40 boxes × 5mm
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ECGReportScreen  – main entry composable
@@ -131,7 +148,7 @@ fun ECGReportScreen(
                 }
             }
         } ?: run {
-            // User cancelled the file picker
+            // User canceled the file picker
             isExporting = false
             tempPdfFile?.delete()
             tempPdfFile = null
@@ -432,7 +449,7 @@ private fun ECGReportCanvas(
 internal class ECGReportRenderer(
     private val data: ECGReportRenderData,
     val pxPerMm: Float,
-    private val context: Context
+    private val context: Context,
 ) {
     private val isPortrait = data.layout == "1x12"
     val pageW = if (isPortrait) A4_P_W else A4_L_W
@@ -445,7 +462,7 @@ internal class ECGReportRenderer(
     // Whether we are generating a PDF (pxPerMm ≈ 2.83 pt/mm) or rendering for screen (~5+)
     private val isForPdf = pxPerMm < 3.5f
 
-    // ✅ ADD THIS: Scale ADC conversion based on rendering context
+    // Scale ADC conversion based on rendering context
     private val adcScaleFactor = if (isForPdf) {
         1.36f  // Base calibration for PDF
     } else {
@@ -491,7 +508,8 @@ internal class ECGReportRenderer(
         style = Paint.Style.STROKE
         color = GColor.BLACK
         // Guarantee waveform is always visible; PDF can be thinner
-        strokeWidth = if (isForPdf) p(0.12f) else p(0.15f).coerceAtLeast(1.0f)
+        //strokeWidth = if (isForPdf) p(0.12f) else p(0.15f).coerceAtLeast(1.0f)
+        strokeWidth = if (isForPdf) p(0.20f) else p(0.25f).coerceAtLeast(1.5f)
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
     }
@@ -515,7 +533,8 @@ internal class ECGReportRenderer(
     }
 
     // Text paints – sizes match SetFont calls
-    private val tp9 = mkText(9f)
+    private val tp9 = mkText(9f )
+    private val tp9bold = mkText(9f , bold = true)
     private val tp8 = mkText(8f)
     private val tp7 = mkText(7f)
     private val tp6 = mkText(6f)
@@ -526,6 +545,8 @@ internal class ECGReportRenderer(
     private val tp10_5B = mkText(10.5f, bold = true)
     private val tp12B = mkText(12f, bold = true)
     private val tp12_5B = mkText(12.5f, bold = true)
+
+    private val tp20_5B = mkText(20f, bold = true)
 
     // ── Text helper: position like TCPDF Text(x, y, …) top-left ──────────
     /**
@@ -544,7 +565,7 @@ internal class ECGReportRenderer(
     // PUBLIC – draw everything to [canvas]
     // ─────────────────────────────────────────────────────────────────────
 
-    fun draw(canvas: Canvas) {
+    /*fun draw(canvas: Canvas) {
         canvas.drawColor(GColor.WHITE)
         drawGrid(canvas, 0f, 0f, pageW, pageH)
         drawHeader(canvas)
@@ -552,6 +573,23 @@ internal class ECGReportRenderer(
             "1x12" -> draw1x12(canvas)
             "3x4" -> draw3x4(canvas)
             else -> draw2x6(canvas)   // default / "2x6"
+        }
+        drawFooter(canvas)
+    }*/
+
+    fun draw(canvas: Canvas) {
+        canvas.drawColor(GColor.WHITE)
+
+        // Grid sirf content area mein — 5mm margin se start
+        val gridW = if (isPortrait) GRID_W_PORTRAIT else GRID_W_LANDSCAPE
+        val gridH = if (isPortrait) GRID_H_PORTRAIT else GRID_H_LANDSCAPE
+        drawGrid(canvas, 0f, 0f, gridW, gridH)
+
+        drawHeader(canvas)
+        when (data.layout) {
+            "1x12" -> draw1x12(canvas)
+            "3x4" -> draw3x4(canvas)
+            else -> draw2x6(canvas)
         }
         drawFooter(canvas)
     }
@@ -584,17 +622,22 @@ internal class ECGReportRenderer(
     // ─────────────────────────────────────────────────────────────────────
 
     private fun drawHeader(canvas: Canvas) {
-        val yBase = MARGIN_TOP     // Changed from 5f - 3f (= 2mm) to 10mm
+        val yBase = MARGIN_TOP -3f    // Changed from 5f - 3f (= 2mm) to 10mm
         val lh = 5f          // line height mm
-        val leftX = if (isPortrait) 10f else (MARGIN_LEFT + 15f)   // Added margin for landscape
+        val leftX = if (isPortrait) 5f else (MARGIN_LEFT + 5f)   // Added margin for landscape
 
         // ── Column 1: patient ─────────────────────────────────────────────
         var x = leftX
         drawTxt(canvas, "Name: ${data.patientName.ifBlank { "-" }}", x, yBase, tp9)
         drawTxt(canvas, "Age: ${data.patientAge.ifBlank { "-" }}", x, yBase + lh, tp9)
         drawTxt(canvas, "Gender: ${data.patientGender.ifBlank { "-" }}", x, yBase + lh * 2, tp9)
-        //drawTxt(canvas, "Weight: ${data.patientWeight.ifBlank { "-" }}", x, yBase + lh * 3, tp9)
-        //drawTxt(canvas, "Height: ${data.patientHeight.ifBlank { "-" }}", x, yBase + lh * 4, tp9)
+        drawTxt(canvas, "ECG Type: Standard", x, yBase + lh * 3, tp9)
+        //drawTxt(canvas, "ECG Type: Standard", x, yBase + lh * 4, tp9)
+        // ── Date / Time ───────────────────────────────────────────────────
+        drawTxt(canvas, "Date & Time: ${data.reportDate} ${data.reportTime}", x, yBase + lh * 4, tp9)
+        val specTxt =
+            "$FIXED_WAVE_SPEED mm/s   0.5-25 Hz   AC:${data.acFilter}Hz   $FIXED_WAVE_GAIN mm/mV"
+        drawTxt(canvas, specTxt, x, yBase + lh * 5, tp9)
 
         /*x += 12 * 5f + 2 * 5f   // += 70 mm
 
@@ -607,26 +650,27 @@ internal class ECGReportRenderer(
 
         x += 5 * 5f + 2 * 5f    // += 35 mm*/
 
-        x += if (isPortrait) 40f else (12 * 5f + 2 * 5f)   // Portrait: 50mm spacing, Landscape: 70mm
+        //x += if (isPortrait) 40f else (12 * 5f + 2 * 5f)   // Portrait: 50mm spacing, Landscape: 70mm
+        x += if (isPortrait) 50f else (12 * 5f + 2 * 5f + 10f)
 
         // ── Column 2: ECG measurements ────────────────────────────────────
-        drawTxt(canvas, "HR: ${data.hr} bpm", x, yBase, tp9)
-        drawTxt(canvas, "PR: ${data.pr} ms", x, yBase + lh, tp9)
-        drawTxt(canvas, "QRS: ${data.qrs} ms", x, yBase + lh * 2, tp9)
-        drawTxt(canvas, "QT: ${data.qt} ms", x, yBase + lh * 3, tp9)
-        drawTxt(canvas, "QTc: ${data.qtc} ms", x, yBase + lh * 4, tp9)
+        drawTxt(canvas, "HR: ${data.hr} bpm", x+5f, yBase, tp9)
+        drawTxt(canvas, "RR: ${data.rr} ms", x+5f, yBase + lh, tp9)
+        drawTxt(canvas, "PR: ${data.pr} ms", x+5f, yBase + lh * 2, tp9)
+        drawTxt(canvas, "QRS: ${data.qrs} ms", x+5f, yBase + lh * 3, tp9)
+        drawTxt(canvas, "QT: ${data.qt} ms", x+5f, yBase + lh * 4, tp9)
 
         x += if (isPortrait) 35f else (5 * 5f + 2 * 5f)    // Portrait: 40mm spacing, Landscape: 35mm
 
         // ── Column 3: extra measurements ──────────────────────────────────
-        drawTxt(canvas, "RR: ${data.rr} ms", x, yBase, tp9)
+        drawTxt(canvas, "QTc: ${data.qtc} ms", x, yBase, tp9)
 
         // Format RV5/SV1 to 2 decimal places for precision
         val rv5Str = String.format("%.3f", data.rv5)
         val sv1Str = String.format("%.3f", data.sv1)
         val indexStr = String.format("%.3f", data.rv5 + data.sv1)
 
-        drawTxt(canvas, "RV5/SV1: $rv5Str/$sv1Str mV", x, yBase + lh, tp9)
+        drawTxt(canvas, "QTcF: ${data.qtcf} ms", x, yBase + lh, tp9)
 
         // Sokolow-Lyon Index with clinical interpretation
         val indexText = "RV5+SV1: $indexStr mV"
@@ -637,38 +681,43 @@ internal class ECGReportRenderer(
             indexText
         }
 
-        // ★ DISPLAY the Sokolow-Lyon Index (was missing before!)
-        drawTxt(canvas, indexDisplay, x, yBase + lh * 2, tp9)
-        drawTxt(canvas, "QTcF: ${data.qtcf} ms", x, yBase + lh * 3, tp9)
+        // DISPLAY the Sokolow-Lyon Index (was missing before!)
+        drawTxt(canvas, "RV5/SV1: $rv5Str/$sv1Str mV", x, yBase + lh * 2, tp9)
+        drawTxt(canvas, indexDisplay, x, yBase + lh * 3, tp9)
+        //drawTxt(canvas, "P/QRS/T: ${data.pqrstAxis}", x, yBase + lh * 4, tp9)
 
         // ── Logo (right-aligned, with margin from right edge) ────────────────────
         val logoW = 60f
-        val logoH = 10f
-        val logoX = pageW - MARGIN_RIGHT - logoW  // Changed from 5f to MARGIN_RIGHT
+        val logoH = 15f
+        val logoX = if(isPortrait) pageW - 10f - logoW else  pageW - 17f - logoW  // Changed from 5f to MARGIN_RIGHT
         val logoY = yBase
 
-        try {
-            val bmp = BitmapFactory.decodeResource(context.resources, R.drawable.deck_mount)
+        /*try {
+            val bmp = BitmapFactory.decodeResource(context.resources, R.drawable.deck_mount_electronics_logo)
             if (bmp != null) {
-                val dst = RectF(p(logoX), p(logoY), p(logoX + logoW), p(logoY + logoH))
+                val dst = RectF(p(logoX), p(0f), p(logoX + logoW), p(logoY + logoH))
                 canvas.drawBitmap(bmp, Rect(0, 0, bmp.width, bmp.height), dst, null)
             }
         } catch (e: Exception) {
             Log.w(TAG_R, "Logo load failed: ${e.message}")
             // Fallback: draw org name text
             drawTxt(canvas, data.orgName.ifBlank { "Deckmount" }, logoX, logoY + 3f, tp8B)
-        }
+        }*/
+        //drawTxt(canvas, "Organization : " , logoX, logoY-1f, tp9bold)
+        drawTxt(canvas, data.orgName , logoX, logoY, tp9bold)
+        drawTxt(canvas, data.orgAddress , logoX, logoY + lh * 1, tp9bold)
+        drawTxt(canvas, if (data.orgPhoneNo.isNotBlank()) "+91 ${data.orgPhoneNo}" else "", logoX, logoY + lh * 2, tp9bold)
 
         // ── Specs row ─────────────────────────────────────────────────────
         val specY = logoY + logoH + 2f
-        val specTxt =
+        /*val specTxt =
             "$FIXED_WAVE_SPEED mm/s   0.5-25 Hz   AC:${data.acFilter}Hz   $FIXED_WAVE_GAIN mm/mV"
         drawTxt(canvas, specTxt, logoX, specY, tp8)
 
         // ── Date / Time ───────────────────────────────────────────────────
         drawTxt(
             canvas, "Date & Time: ${data.reportDate} ${data.reportTime}", logoX, specY + 4f, tp8
-        )
+        )*/
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -717,7 +766,7 @@ internal class ECGReportRenderer(
     private fun draw2x6(canvas: Canvas) {
         val startY = MARGIN_TOP + 25f   // 10mm margin + 25mm for header = 35mm
         val rowH = 22f
-        val leadW = 125f  // Slightly reduced to fit with margins
+        val leadW = 123f  // Slightly reduced to fit with margins
         val divPad = 5f
         val leftMargin = MARGIN_LEFT + 8f  // Add left margin
 
@@ -759,11 +808,11 @@ internal class ECGReportRenderer(
         // ── Rhythm strip ──────────────────────────────────────────────────
         val rhythmMidY = startY + 6f * rowH + 2f + 7.5f
         drawCalibrationPad(canvas, leftMargin - 4f, rhythmMidY, FIXED_WAVE_GAIN)
-        drawTxt(canvas, "II", leftMargin + 10f, rhythmMidY - 3f, tp12B)
+        drawTxt(canvas, "II", leftMargin + 10f, rhythmMidY - 11f, tp12B)
         drawWaveform(
             canvas = canvas,
             samples = data.leadData5000["II"] ?: emptyList(),
-            x0Mm = leftMargin + 21f,
+            x0Mm = leftMargin + 14f,
             y0Mm = rhythmMidY,
             widthMm = pageW - leftMargin - MARGIN_RIGHT - 25f,  // Adjust for margins
             gainMmPerMv = FIXED_WAVE_GAIN
@@ -824,11 +873,11 @@ internal class ECGReportRenderer(
         // ── Rhythm strip ─────────────────────────────────────────────────
         val rhythmMidY = startY + 4f * rowH + 3f + 7.5f
         drawCalibrationPad(canvas, leftMargin - 4f, rhythmMidY, FIXED_WAVE_GAIN)
-        drawTxt(canvas, "II", leftMargin + 10f, rhythmMidY - 3f, tp12_5B)
+        drawTxt(canvas, "II", leftMargin + 10f, rhythmMidY - 11f, tp12_5B)
         drawWaveform(
             canvas = canvas,
             samples = data.leadData5000["II"] ?: emptyList(),
-            x0Mm = leftMargin + 21f,
+            x0Mm = leftMargin + 14f,
             y0Mm = rhythmMidY,
             widthMm = pageW - leftMargin - MARGIN_RIGHT - 25f,
             gainMmPerMv = FIXED_WAVE_GAIN
@@ -849,21 +898,21 @@ internal class ECGReportRenderer(
     //       footer text centred at y=292
 
     private fun drawFooterPortrait(canvas: Canvas) {
-        val footerY = A4_P_H - MARGIN_BOTTOM - 20f  // 10mm margin from bottom
-
+        val footerY = A4_P_H - MARGIN_BOTTOM - 25f  // 10mm margin from bottom
+        drawTxt(canvas, "Reference Report Confirmed by:", MARGIN_LEFT, footerY + 10f, tp8)
         drawTxt(canvas, "Doctor Name: ", MARGIN_LEFT, footerY + 15f, tp8)
         drawTxt(canvas, "Doctor Sign: ", MARGIN_LEFT, footerY + 20f, tp8)
 
         // Conclusion box
         val boxX = 95f
-        val boxY = footerY + 3f
+        val boxY = footerY + 5f
         val boxW = pageW - boxX - MARGIN_RIGHT - 5f  // Adjust for right margin
         val boxH = 18f
         canvas.drawRect(p(boxX), p(boxY), p(boxX + boxW), p(boxY + boxH), boxP)
 
         // Title – centred in box
         val titleX = boxX + (boxW - tp7B.measureText("CONCLUSION") / pxPerMm) / 2f
-        drawTxt(canvas, "CONCLUSION", titleX, boxY + 1f, tp7B)
+        drawTxt(canvas, "CONCLUSION", titleX, boxY, tp7B)
 
         // Conclusion items: 3 columns
         val cols = 3
@@ -872,38 +921,46 @@ internal class ECGReportRenderer(
         val startX = boxX + 2f
         val startY = boxY + 6f
 
-        data.conclusions.forEachIndexed { i, line ->
+        val effectiveConclusions = if (data.hr <= 0) {
+            listOf("No ECG data available")
+        } else {
+            data.conclusions.filter { it.isNotBlank() && it != "---" }
+        }
+
+        effectiveConclusions.forEachIndexed { i, line ->
             val row = i / cols
             val col = i % cols
             val tx = startX + col * colW
             val ty = startY + row * rowH
             if (ty + rowH > boxY + boxH) return@forEachIndexed
-            drawTxt(canvas, "${i + 1}. $line", tx, ty, tp6)
+            drawTxt(canvas, "${i + 1}. $line", tx, ty-1f, tp9)
         }
 
+        val machineSerialNo = data.machineSerial.takeLast(4)
+
         // Footer text centred
-        val fTxt = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
+        val fTxt = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | $machineSerialNo | Made in India"
         val fW = tp7.measureText(fTxt) / pxPerMm
-        drawTxt(canvas, fTxt, (pageW - fW) / 2f, A4_P_H - MARGIN_BOTTOM + 2f, tp7)
+        drawTxt(canvas, fTxt, (pageW - fW) / 2f, A4_P_H - MARGIN_BOTTOM + 0.5f, tp7)
     }
 
     private fun drawFooterLandscape(canvas: Canvas) {
-        val footerTopY = A4_L_H - MARGIN_BOTTOM - 12f
-
-        drawTxt(canvas, "Doctor Name: ", MARGIN_LEFT + 3f, footerTopY + 5f, tp8)
-        drawTxt(canvas, "Doctor Sign: ", MARGIN_LEFT + 3f, footerTopY + 10f, tp8)
+        val footerTopY = A4_L_H - MARGIN_BOTTOM - 15f
+        drawTxt(canvas, "Reference Report Confirmed by:", MARGIN_LEFT + 5f, footerTopY + 2f, tp8)
+        drawTxt(canvas, "Doctor Name: ", MARGIN_LEFT + 5f, footerTopY + 5f + 2f, tp8)
+        drawTxt(canvas, "Doctor Sign: ", MARGIN_LEFT + 5f, footerTopY + 10f + 2f, tp8)
 
         // Conclusion box (right side of page with margin)
         val boxW = 145f
         val boxH = 20f
-        val boxX = A4_L_W - boxW - MARGIN_RIGHT
+        val boxX = A4_L_W - boxW - MARGIN_RIGHT - 7f
         val boxY = footerTopY - 5f
         canvas.drawRect(p(boxX), p(boxY), p(boxX + boxW), p(boxY + boxH), boxP)
 
         // Title – centred in box
-        val titlePaint = mkText(8f, bold = true)
+        val titlePaint = mkText(9f, bold = true)
         val titleX = boxX + (boxW - titlePaint.measureText("CONCLUSION") / pxPerMm) / 2f
-        drawTxt(canvas, "CONCLUSION", titleX, boxY + 2f - 2f, titlePaint)
+        drawTxt(canvas, "CONCLUSION", titleX, boxY + 1.8f, titlePaint)
 
         // Conclusion items: 3 columns
         val cols = 3
@@ -913,21 +970,27 @@ internal class ECGReportRenderer(
         val startX = boxX + 5f
         val startY = boxY + 8f - 3f
 
+        val effectiveConclusionsLandscape = if (data.hr <= 0) {
+            listOf("No ECG data available")
+        } else {
+            data.conclusions.filter { it.isNotBlank() && it != "---" }
+        }
+
         var sr = 1
-        data.conclusions.forEachIndexed { i, txt ->
+        effectiveConclusionsLandscape.forEachIndexed { i, txt ->
             val row = i / cols
             val col = i % cols
             val tx = startX + col * (colW + colGap)
             val ty = startY + row * rowGap
             if (ty + rowGap > boxY + boxH - 1f) return@forEachIndexed
-            drawTxt(canvas, "$sr. $txt", tx, ty, tp6)
+            drawTxt(canvas, "$sr. $txt", tx, ty+2f, tp9)
             sr++
         }
-
+        val machineSerialNo = data.machineSerial.takeLast(4)
         // Footer text centred
-        val fTxt = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
+        val fTxt = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | $machineSerialNo | Made in India"
         val fW = tp8.measureText(fTxt) / pxPerMm
-        drawTxt(canvas, fTxt, (pageW - fW) / 2f, A4_L_H - MARGIN_BOTTOM + 4f, tp8)
+        drawTxt(canvas, fTxt, (pageW - fW) / 2f, A4_L_H - MARGIN_BOTTOM + 0.5f, tp8)
     }
 
     // ── Landscape footer ──────────────────────────────────────────────────
@@ -997,6 +1060,39 @@ internal class ECGReportRenderer(
     //     yPx = p(y0) - sample_mV * gainMmPerMv * pxPerMm
     // ─────────────────────────────────────────────────────────────────────
 
+    /*private fun drawWaveform(
+        canvas: Canvas,
+        samples: List<Float>,
+        x0Mm: Float,
+        y0Mm: Float,
+        widthMm: Float,
+        gainMmPerMv: Float
+    ) {
+        if (samples.size < 2) return
+
+        val maxXMm = x0Mm + widthMm
+        val y0Px = p(y0Mm)
+
+
+        val scaleFactor = (1f / ADC_PER_MV) * gainMmPerMv * pxPerMm
+
+        var prevXPx = p(x0Mm)
+        var prevYPx = y0Px - samples[0] * scaleFactor
+
+        for (i in 1 until samples.size) {
+            val xMm = x0Mm + i * mmPerSample
+            if (xMm > maxXMm) break
+
+            val xPx = p(xMm)
+            val yPx = y0Px - samples[i] * scaleFactor
+
+            canvas.drawLine(prevXPx, prevYPx, xPx, yPx, waveP)
+            prevXPx = xPx
+            prevYPx = yPx
+        }
+    }*/
+
+
     private fun drawWaveform(
         canvas: Canvas,
         samples: List<Float>,
@@ -1010,15 +1106,21 @@ internal class ECGReportRenderer(
         val maxXMm = x0Mm + widthMm
         val y0Px = p(y0Mm)
 
+        // DC offset remove — median baseline subtract
+        val sorted = samples.sorted()
+        val baseline = sorted[sorted.size / 2]  // median = robust baseline
+
+        val scaleFactor = (1f / ADC_PER_MV) * gainMmPerMv * pxPerMm
+
         var prevXPx = p(x0Mm)
-        var prevYPx = y0Px - samples[0] * gainMmPerMv * adcScaleFactor  // Use scaled factor
+        var prevYPx = y0Px - (samples[0] - baseline) * scaleFactor
 
         for (i in 1 until samples.size) {
             val xMm = x0Mm + i * mmPerSample
             if (xMm > maxXMm) break
 
             val xPx = p(xMm)
-            val yPx = y0Px - samples[i] * gainMmPerMv * adcScaleFactor  // Use scaled factor
+            val yPx = y0Px - (samples[i] - baseline) * scaleFactor
 
             canvas.drawLine(prevXPx, prevYPx, xPx, yPx, waveP)
             prevXPx = xPx
@@ -1075,4 +1177,6 @@ fun generateECGPdf(context: Context, data: ECGReportRenderData): File? {
         Log.e(TAG_R, "PDF generation failed: ${e.message}", e)
         null
     }
+
+
 }

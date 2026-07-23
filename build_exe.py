@@ -117,7 +117,14 @@ def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
     # Config containing clinical_config.yaml
     pairs.append((project_root / "config", "config"))
 
-    # Runtime config/demo files often expected in working directory
+    # Runtime config/demo files often expected in working directory.
+    # IMPORTANT: Machine-specific data files (users.json, ecg_auth_session.json,
+    # ecg_settings.json) must NEVER be bundled from the dev machine into the
+    # distributed installer — doing so copies registration records from one machine
+    # into every new installation, causing "Machine already registered" errors on
+    # the second device that tries to sign up with the same setup file.
+    # Always use clean empty placeholders for these files.
+    MACHINE_SPECIFIC_FILES = {"users.json", "ecg_auth_session.json"}
     for filename in [
         ".env",
         "customer_channels.json",
@@ -128,26 +135,37 @@ def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
         "ecg_auth_session.json",
         "Animation - 1777012518993.gif",
     ]:
-        file_path = project_root / filename
         if filename == ".env":
+            file_path = project_root / filename
             staged = _stage_env_for_distribution(file_path, staging_dir)
+        elif filename in MACHINE_SPECIFIC_FILES:
+            # Always create a clean empty placeholder — never copy real data from dev machine
+            staged = _stage_json_placeholder(staging_dir, filename)
         else:
+            file_path = project_root / filename
             staged = _stage_runtime_file(file_path, staging_dir)
         if staged is None and filename.endswith(".json"):
             staged = _stage_json_placeholder(staging_dir, filename)
         if staged is not None:
             pairs.append((staged, "."))
 
-    # Some deployments use src-side settings files as fallbacks
+    # Some deployments use src-side settings files as fallbacks.
+    # Same rule: ecg_auth_session.json and users.json must always be empty placeholders.
+    SRC_MACHINE_SPECIFIC = {"ecg_auth_session.json", "users.json"}
     for filename in [
         "src/ecg_settings.json",
         "src/users.json",
         "src/ecg_auth_session.json",
     ]:
-        file_path = project_root / filename
-        staged = _stage_runtime_file(file_path, staging_dir, Path(filename).name)
-        if staged is None:
-            staged = _stage_json_placeholder(staging_dir, Path(filename).name)
+        base_name = Path(filename).name
+        if base_name in SRC_MACHINE_SPECIFIC:
+            # Always clean placeholder — no real session/user data in installer
+            staged = _stage_json_placeholder(staging_dir, base_name)
+        else:
+            file_path = project_root / filename
+            staged = _stage_runtime_file(file_path, staging_dir, base_name)
+            if staged is None:
+                staged = _stage_json_placeholder(staging_dir, base_name)
         if staged is not None:
             pairs.append((staged, "src"))
 

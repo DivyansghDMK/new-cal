@@ -806,7 +806,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     if not conclusions:
         conclusions = [
             "No ECG data available",
-            "Please connect device or enable demo ",
+            "Please connect device",
            
             
         ]
@@ -1131,39 +1131,41 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Get conclusions from dashboard/JSON
     dashboard_conclusions = get_dashboard_conclusions_from_image(dashboard_instance)
 
-    # SAFEGUARD: If there is no real data (all core metrics are zero), ignore any
-    # persisted conclusions and use the explicit "no data" conclusions instead.
+    # SAFEGUARD: If there is no real data (HR <= 0 or all core metrics are zero), ignore any
+    # persisted conclusions from last_conclusions.json and show explicit "No ECG data available" instead.
     try:
-        core_keys = ["HR", "PR", "QRS", "QT", "QTc", "ST"]
-        all_zero = True
-        for k in core_keys:
-            v = data.get(k, 0)
+        def _parse_val(val):
+            if val is None:
+                return 0.0
+            s = str(val).strip().lower()
+            if s in ("", "--", "none", "null", "0", "0.0"):
+                return 0.0
+            clean = s.replace("bpm", "").replace("ms", "").replace("mv", "").replace("deg", "").replace("°", "").strip()
             try:
-                all_zero = all_zero and (float(v) == 0.0)
+                return float(clean)
             except Exception:
-                all_zero = all_zero and (str(v).strip() in ["0", "--", "", "None"])
-        if all_zero:
+                return 0.0
+
+        hr_val = _parse_val(data.get("HR") or data.get("HR_bpm") or data.get("Heart_Rate") or data.get("HR_avg") or 0)
+        pr_val = _parse_val(data.get("PR") or data.get("PR_ms") or 0)
+        qrs_val = _parse_val(data.get("QRS") or data.get("QRS_ms") or 0)
+        qt_val = _parse_val(data.get("QT") or data.get("QT_ms") or 0)
+        qtc_val = _parse_val(data.get("QTc") or data.get("QTc_ms") or 0)
+
+        is_no_data = (hr_val <= 0) or (hr_val == 0 and pr_val == 0 and qrs_val == 0 and qt_val == 0 and qtc_val == 0)
+
+        if is_no_data:
             dashboard_conclusions = [
-                " No ECG data available",
-                "Please connect device or enable demo ",
-           
-                
-                
-                
-                
-
-                
-
-                
-
-
-               
-
-                
+                "No ECG data available",
+                "Please connect device"
             ]
-            print(" Overriding conclusions because all core metrics are zero (no data)")
-    except Exception:
-        pass
+            print(" Overriding conclusions because HR is 0 or all core metrics are zero (no data)")
+        else:
+            dashboard_conclusions = [c for c in dashboard_conclusions if "No ECG data available" not in c and "Please connect device" not in c]
+            if hr_val <= 0:
+                dashboard_conclusions = [c for c in dashboard_conclusions if "Normal Sinus Rhythm" not in c and "Normal sinus rhythm" not in c]
+    except Exception as e:
+        print(f" Safeguard check error: {e}")
 
     # FILTER: Remove empty conclusions and "---" placeholders - ONLY SHOW REAL CONCLUSIONS
     # MAXIMUM 12 CONCLUSIONS (because only 12 boxes available)

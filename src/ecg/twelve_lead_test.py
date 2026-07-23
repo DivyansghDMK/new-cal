@@ -1539,7 +1539,7 @@ class ECGTestPage(QWidget):
             self.demo_toggle.setText(self.tr(text))
 
     def _can_generate_report(self) -> bool:
-        """Generate report is allowed when acquisition is running or demo mode is ON."""
+        """Generate report is allowed when acquisition has run for >= 10s or demo mode is ON."""
         if getattr(self, "_start_cooldown_active", False):
             return False
         try:
@@ -1552,6 +1552,16 @@ class ECGTestPage(QWidget):
                 is_acquisition_running = bool(self.timer.isActive())
             if not is_acquisition_running and hasattr(self, 'serial_reader') and self.serial_reader is not None:
                 is_acquisition_running = bool(getattr(self.serial_reader, 'running', False))
+
+            # Enforce 10-second minimum recording duration before report can be generated
+            if is_acquisition_running and not is_demo_mode:
+                if hasattr(self, 'start_time') and self.start_time:
+                    import time
+                    cur_t = time.time()
+                    p_dur = getattr(self, 'paused_duration', 0)
+                    elapsed_sec = int(max(0, cur_t - self.start_time - p_dur))
+                    if elapsed_sec < 10:
+                        return False
 
             frozen_snapshot = getattr(self, "_frozen_report_snapshot", None)
             has_frozen_report = False
@@ -1581,17 +1591,30 @@ class ECGTestPage(QWidget):
         self._refresh_report_btn_label()
 
     def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
-        """Compatibility shim: cooldown removed; keep Generate Report immediately available."""
-        try:
-            for timer in self.countdown_timers:
-                if hasattr(timer, "stop") and timer.isActive():
-                    timer.stop()
-            self.countdown_timers.clear()
-        except Exception:
-            pass
+        """Start countdown timer on the Generate Report button."""
+        self._start_cooldown_active = True
+        self._cooldown_seconds_remaining = seconds
+        if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
+            try:
+                self._cooldown_timer.stop()
+            except Exception:
+                pass
+        self._cooldown_timer = QTimer(self)
+        self._cooldown_timer.setTimerType(Qt.CoarseTimer if is_low_spec_mode() else Qt.PreciseTimer)
+
+        def update_cooldown_tick():
+            self._cooldown_seconds_remaining -= 1
+            if self._cooldown_seconds_remaining <= 0:
+                self._start_cooldown_active = False
+                if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
+                    self._cooldown_timer.stop()
+            self._update_generate_report_button_state()
+
+        self._cooldown_timer.timeout.connect(update_cooldown_tick)
+        self._cooldown_timer.start(1000)
         self._update_generate_report_button_state()
         if reason:
-            print(f" Generate Report cooldown skipped ({reason})")
+            print(f" Generate Report cooldown started ({seconds}s, reason: {reason})")
 
     def _capture_report_snapshot(self, window_sec: float = 7.0):
         """Store the most recent window of waveform data for report generation."""
@@ -2726,49 +2749,39 @@ class ECGTestPage(QWidget):
             # Keep a defined value for startup / low-signal states.
             self.pr_interval = 0
         
-        # FIX-TL3: QRS Blended Approach for LBBB Support
-        # Reference devices use slope-based onset. Threshold-based onset misses slow LBBB initial deflections.
-        # Blended QRS - more stable than either alone.
+        # FIX-TL3: QRS Blended Approach with High Stability
+        # user_metrics_qrs uses Curtin 2018 algorithm (Pan-Tompkins + Adaptive Windows) -> highly accurate & consistent.
         user_metrics_qrs = user_metrics.get("qrs_duration") or 0
         median_beat_qrs = measure_qrs_duration_from_median_beat(
             median_beat_ii, time_axis, fs, tp_baseline_ii
         ) or 0
         
         if user_metrics_qrs > 0 and median_beat_qrs > 0:
-            # If they disagree significantly and user_metrics shows a normal narrow QRS,
-            # trust user_metrics to prevent false Wide QRS alerts from median T-wave contamination.
-            # We check for a significant discrepancy (>= 25 ms) to allow true borderline/wide QRS to blend.
-            if user_metrics_qrs < 115 and median_beat_qrs > 120 and (median_beat_qrs - user_metrics_qrs) >= 25:
-                qrs_duration_raw = user_metrics_qrs
-            elif median_beat_qrs > 120:
-                qrs_duration_raw = int(0.4 * user_metrics_qrs + 0.6 * median_beat_qrs)
+            # If median_beat_qrs is unstable or contaminated by T-wave tail (>15ms difference),
+            # trust user_metrics_qrs (Curtin 2018) to prevent QRS value jumping.
+            if abs(median_beat_qrs - user_metrics_qrs) <= 15:
+                qrs_duration_raw = int(round(0.7 * user_metrics_qrs + 0.3 * median_beat_qrs))
             else:
-                qrs_duration_raw = int(0.5 * user_metrics_qrs + 0.5 * median_beat_qrs)
+                qrs_duration_raw = user_metrics_qrs
         else:
-            qrs_duration_raw = median_beat_qrs or user_metrics_qrs
+            qrs_duration_raw = user_metrics_qrs if user_metrics_qrs > 0 else median_beat_qrs
 
         if not hasattr(self, '_qrs_print_count'):
             self._qrs_print_count = 0
         self._qrs_print_count += 1
         if self._qrs_print_count % 30 == 0:
-            src = "blended"
-            if user_metrics_qrs > 0 and median_beat_qrs > 0 and user_metrics_qrs < 115 and median_beat_qrs > 120 and (median_beat_qrs - user_metrics_qrs) >= 25:
-                src = "user_metrics (median rejected)"
-            print(f" ✓ QRS ({src}): {qrs_duration_raw} ms (raw={user_metrics_qrs}, median={median_beat_qrs})")
+            print(f" ✓ QRS: {qrs_duration_raw} ms (raw_curtin={user_metrics_qrs}, median_beat={median_beat_qrs})")
         
-        # FIX-TL2: Hold last good QRS. Do NOT use hardcoded 85 ms default:
-        # it poisons the median buffer and shows wrong values for several beats.
+        # Hold last good QRS if current frame fails
         if qrs_duration_raw is None or qrs_duration_raw <= 0:
             qrs_duration_raw = getattr(self, 'last_qrs_duration', 0)
-            # If still 0 at startup, leave as 0 — display shows "--" until real data arrives.
         
-        # REAL MODE: Always use real calculated values with smoothing
-        # Smooth QRS with buffer (same as HR)
+        # REAL MODE: Smooth QRS with 15-beat median buffer to eliminate noise jitter
         if not hasattr(self, '_qrs_smooth_buffer'):
             self._qrs_smooth_buffer = []
         if qrs_duration_raw > 0:
             self._qrs_smooth_buffer.append(qrs_duration_raw)
-            if len(self._qrs_smooth_buffer) > 7:
+            if len(self._qrs_smooth_buffer) > 15:  # Increased to 15 for rock-solid stability
                 self._qrs_smooth_buffer.pop(0)
         
         if len(self._qrs_smooth_buffer) > 0:
@@ -2776,7 +2789,7 @@ class ECGTestPage(QWidget):
         else:
             smoothed_qrs = qrs_duration_raw if qrs_duration_raw > 0 else getattr(self, 'last_qrs_duration', 0)
         
-        # Hold-and-jump logic for QRS (same as HR)
+        # Deadband & Hold-and-jump logic for QRS (eliminates 1-5ms UI jitter)
         if not hasattr(self, '_last_displayed_qrs'):
             self._last_displayed_qrs = smoothed_qrs
         if not hasattr(self, '_pending_qrs_value'):
@@ -2785,22 +2798,25 @@ class ECGTestPage(QWidget):
             self._pending_qrs_start_time = 0
         
         qrs_diff = abs(smoothed_qrs - self._last_displayed_qrs)
-        if qrs_diff <= 8:  # Small change: update immediately (allow ±8 ms jitter)
-            self._last_displayed_qrs = smoothed_qrs
+        if qrs_diff <= 5:
+            # Deadband: Hold current value if drift is within 5 ms (eliminates micro-jitter)
+            pass
+        elif qrs_diff <= 12:
+            # Small change (6-12 ms): update smoothly
+            self._last_displayed_qrs = int(round(0.8 * self._last_displayed_qrs + 0.2 * smoothed_qrs))
             self._pending_qrs_value = None
         else:
-            # Large change: hold old value until new value is stable
+            # Large change (>12 ms): hold old value until new value is stable for 0.5s
             current_time = time.time()
             if self._pending_qrs_value is None:
                 self._pending_qrs_value = smoothed_qrs
                 self._pending_qrs_start_time = current_time
             else:
-                if abs(smoothed_qrs - self._pending_qrs_value) <= 4:  # Allow ±4 ms jitter
-                    if current_time - self._pending_qrs_start_time >= 0.5:  # Stable for 0.5 seconds (reduced for real-time)
+                if abs(smoothed_qrs - self._pending_qrs_value) <= 4:
+                    if current_time - self._pending_qrs_start_time >= 0.5:
                         self._last_displayed_qrs = smoothed_qrs
                         self._pending_qrs_value = None
                 else:
-                    # Value changed again, reset timer
                     self._pending_qrs_value = smoothed_qrs
                     self._pending_qrs_start_time = current_time
         
@@ -5048,6 +5064,10 @@ class ECGTestPage(QWidget):
                         else:
                             self.metric_labels['time_elapsed'].setText(f"{minutes:02d}:{seconds:02d}")
                     self._last_displayed_elapsed = current_elapsed_int
+
+                    # Keep Generate Report button state & countdown label in sync with top metrics timer
+                    if current_elapsed_int <= 11 and hasattr(self, '_update_generate_report_button_state'):
+                        self._update_generate_report_button_state()
         except Exception as e:
             print(f" Error updating elapsed time: {e}")
 
@@ -6418,35 +6438,8 @@ class ECGTestPage(QWidget):
     # ---------------------- Start Button Functionality ----------------------
 
     def start_acquisition(self):
-        # Disable "Generate Report" button for 10 seconds after Start is pressed
-        self._start_cooldown_active = True
-        self._cooldown_seconds_remaining = 10
-        if hasattr(self, "_update_generate_report_button_state"):
-            self._update_generate_report_button_state()
-            
-        # Cancel any existing cooldown timer to prevent overlapping
-        if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
-            try:
-                self._cooldown_timer.stop()
-            except Exception:
-                pass
-                
-        self._cooldown_timer = QTimer(self)
-        
-        def update_cooldown_tick():
-            self._cooldown_seconds_remaining -= 1
-            if self._cooldown_seconds_remaining <= 0:
-                self._start_cooldown_active = False
-                if hasattr(self, "_cooldown_timer") and self._cooldown_timer is not None:
-                    self._cooldown_timer.stop()
-                if hasattr(self, "_update_generate_report_button_state"):
-                    self._update_generate_report_button_state()
-            else:
-                if hasattr(self, "_update_generate_report_button_state"):
-                    self._update_generate_report_button_state()
-                    
-        self._cooldown_timer.timeout.connect(update_cooldown_tick)
-        self._cooldown_timer.start(1000)
+        # Disable "Generate Report" button with a 10 second countdown after Start is pressed
+        self._start_generate_report_cooldown(seconds=10, reason="Start")
 
         # CHECK: Ensure no other test is running
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
@@ -7495,13 +7488,24 @@ class ECGTestPage(QWidget):
             traceback.print_exc()
 
     def _refresh_report_btn_label(self):
-        """Update Generate Report button label with selected format."""
+        """Update Generate Report button label with selected format and remaining countdown."""
         try:
             if hasattr(self, 'generate_report_btn') and hasattr(self, 'settings_manager'):
                 _f   = self.settings_manager.get_setting('report_format', '12_1') or '12_1'
                 _lbl = {"12_1": "12:1", "6_2": "6:2", "4_3": "4:3"}.get(_f, "12:1")
-                if getattr(self, "_start_cooldown_active", False) and getattr(self, "_cooldown_seconds_remaining", 0) > 0:
-                    self.generate_report_btn.setText(f"Generate Report ({_lbl}) ({self._cooldown_seconds_remaining}s)")
+                rem = 0
+                if getattr(self, "_start_cooldown_active", False):
+                    rem = max(0, getattr(self, "_cooldown_seconds_remaining", 0))
+                elif hasattr(self, 'start_time') and self.start_time and hasattr(self, 'timer') and self.timer and self.timer.isActive():
+                    import time
+                    cur_t = time.time()
+                    p_dur = getattr(self, 'paused_duration', 0)
+                    elapsed_sec = int(max(0, cur_t - self.start_time - p_dur))
+                    if elapsed_sec < 10:
+                        rem = 10 - elapsed_sec
+
+                if rem > 0:
+                    self.generate_report_btn.setText(f"Generate Report ({_lbl}) ({rem}s)")
                 else:
                     self.generate_report_btn.setText(f"Generate Report ({_lbl})")
         except Exception:
@@ -7530,7 +7534,6 @@ class ECGTestPage(QWidget):
             except Exception:
                 pass
 
-        self._start_generate_report_cooldown(seconds=10, reason="Report Click")
         self._report_generating = True
 
         # Snapshot ECG arrays (< 5ms on main thread).
@@ -7542,10 +7545,8 @@ class ECGTestPage(QWidget):
             if display_mode == "frozen" and frozen_snapshot and any(np.asarray(arr).size > 0 for arr in frozen_snapshot):
                 snap_raw = [np.asarray(arr, dtype=float).copy() for arr in frozen_snapshot]
             else:
-                # Landscape formats (6:2, 4:3) have a full-width Lead II rhythm
-                # strip ~249 mm wide → 9.96 s at 25 mm/s. Capture 10 s so the
-                # strip is completely filled. Portrait 12:1 only needs 7 s (180 mm).
-                _snap_sec = 10.0 if fmt in ('6_2', '4_3') else 7.0
+                # Capture exact 10 seconds of waveform data for all report formats
+                _snap_sec = 10.0
                 snap_raw = self._capture_report_snapshot(window_sec=_snap_sec)
         finally:
             self._report_generating = False
@@ -7624,20 +7625,98 @@ class ECGTestPage(QWidget):
             patient['name'] = 'Demo Mode'
             patient['last_name'] = ''
 
-        # Conclusions (max 5)
-        conc_list = []
+        # Force a fresh evaluation of rhythm & dashboard conclusion so last_conclusions.json is up-to-date
         try:
-            import json as _jc
-            base  = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            cf = str(data_file("last_conclusions.json"))
-            if os.path.exists(cf):
-                cd = _jc.load(open(cf))
-                conc_list = cd.get('findings', [])
-                for r in cd.get('recommendations', [])[:2]:
-                    if r and len(conc_list) < 5:
-                        conc_list.append(r)
+            self.update_latest_rhythm_interpretation()
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                if hasattr(self.dashboard_instance, 'update_live_conclusion'):
+                    self.dashboard_instance.update_live_conclusion()
+        except Exception as _ce:
+            print(f" Error refreshing live conclusions before report: {_ce}")
+
+        # Resolve sampling rate
+        fs = 500.0
+        try:
+            if hasattr(self, 'sampler') and getattr(self.sampler, 'sampling_rate', None):
+                fs = max(100.0, float(self.sampler.sampling_rate))
         except Exception:
             pass
+
+        # Preserve live UI metrics if available; fallback to snapshot calculation only if frozen HR is missing
+        lead_ii_snap = snap_raw[1] if (len(snap_raw) > 1 and snap_raw[1].size > 0) else np.array([])
+        if frozen.get('HR', 0) <= 0 and lead_ii_snap.size >= int(fs * 2.0) and not is_demo_mode and display_mode != "frozen":
+            try:
+                from ecg.ecg_calculations import calculate_all_ecg_metrics
+                snap_metrics = calculate_all_ecg_metrics(lead_ii_snap, fs=fs)
+                if snap_metrics.get("heart_rate", 0) > 0:
+                    frozen['HR'] = int(snap_metrics.get("heart_rate", 0))
+                    frozen['RR'] = int(round(snap_metrics.get("rr_interval", 0)))
+                    frozen['PR'] = int(snap_metrics.get("pr_interval", 0))
+                    frozen['QRS'] = int(snap_metrics.get("qrs_duration", 0))
+                    frozen['QT'] = int(round(snap_metrics.get("qt_interval", 0) or 0))
+                    frozen['QTc'] = int(snap_metrics.get("qtc_interval", 0))
+            except Exception as _m_err:
+                print(f" Warning: Could not compute snapshot metrics: {_m_err}")
+
+        # Direct analysis of the exact 10-second snapshot being printed in the PDF
+        conc_list = []
+        is_flatline = (lead_ii_snap.size < int(fs * 2.0)) or (np.std(lead_ii_snap) < 0.1) or (frozen.get('HR', 0) <= 0)
+
+        if is_flatline:
+            conc_list = ["No ECG data available"]
+            frozen['HR'] = 0
+            frozen['RR'] = 0
+            frozen['PR'] = 0
+            frozen['QRS'] = 0
+            frozen['QT'] = 0
+            frozen['QTc'] = 0
+            frozen['QTcF'] = 0
+            frozen['rv5'] = 0.0
+            frozen['sv1'] = 0.0
+            frozen['rv5_mv'] = 0.0
+            frozen['sv1_mv'] = 0.0
+        else:
+            try:
+                lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+                snapshot_signals = {}
+                for i, name in enumerate(lead_names):
+                    if i < len(snap_raw) and snap_raw[i].size > 0:
+                        snapshot_signals[name] = snap_raw[i]
+
+                if "II" in snapshot_signals and snapshot_signals["II"].size >= int(fs * 2.0):
+                    from ecg.arrhythmia_detector import analyze_ecg
+                    ext_m = {
+                        'external_hr': frozen.get('HR', 0),
+                        'external_pr': frozen.get('PR', 0),
+                        'external_qrs': frozen.get('QRS', 0),
+                    }
+                    snap_results = analyze_ecg(snapshot_signals, fs=fs, external_metrics=ext_m)
+                    snap_arrhythmias = snap_results.get("arrhythmias", [])
+                    if snap_arrhythmias:
+                        conc_list = [a for a in snap_arrhythmias if a and a != "Rhythm Undetermined"]
+            except Exception as _snap_err:
+                print(f" Error analyzing 10s snapshot for report: {_snap_err}")
+
+            if not conc_list or conc_list == ["Rhythm Undetermined"]:
+                latest_rhythm = getattr(self, "_latest_rhythm_interpretation", "") or ""
+                if latest_rhythm and latest_rhythm not in ("Analyzing Rhythm...", "Detecting...", "Rhythm Undetermined", ""):
+                    conc_list = [latest_rhythm]
+
+            hr_val = frozen.get('HR', 0)
+            if not conc_list or conc_list == ["Rhythm Undetermined"]:
+                if 0 < hr_val < 60:
+                    conc_list = ["Sinus Bradycardia"]
+                elif hr_val > 100:
+                    conc_list = ["Sinus Tachycardia"]
+                else:
+                    conc_list = ["Normal Sinus Rhythm"]
+            else:
+                # Sanitize rate-mismatched rhythms
+                if 0 < hr_val < 60:
+                    conc_list = ["Sinus Bradycardia" if c in ("Normal Sinus Rhythm", "Normal sinus rhythm") else c for c in conc_list]
+                elif hr_val > 100:
+                    conc_list = ["Sinus Tachycardia" if c in ("Normal Sinus Rhythm", "Normal sinus rhythm") else c for c in conc_list]
+
         conc_list = conc_list[:5]   # hard cap at 5
 
         # Sampling rate
@@ -7821,6 +7900,7 @@ class ECGTestPage(QWidget):
                 pass
             try: thread.quit(); thread.wait(3000)
             except Exception: pass
+            self._update_generate_report_button_state()
 
         def _on_error(msg):
             print(f"❌ Report error: {msg}")
@@ -7836,6 +7916,7 @@ class ECGTestPage(QWidget):
                 pass
             try: thread.quit(); thread.wait(3000)
             except Exception: pass
+            self._update_generate_report_button_state()
 
         worker.finished.connect(_on_finish)
         worker.error.connect(_on_error)

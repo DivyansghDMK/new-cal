@@ -2304,6 +2304,15 @@ class LoginRegisterDialog(QDialog):
         success = res.get("valid") or res.get("success") or res.get("authorized")
         if not success:
             msg = res.get("message") or res.get("error") or "License registration failed."
+            err_code = str(res.get("error", "")).strip().upper()
+            if err_code == "DEVICE_ALREADY_REGISTERED":
+                from utils.ui_feedback import show_critical
+                show_critical(
+                    self,
+                    "Device Limit Reached",
+                    "Device limit reached (5/5 machines active). Please contact Deckmount support to free up a slot."
+                )
+                return
             from utils.ui_feedback import is_network_error, offline_action_message, show_critical
             if is_network_error(msg):
                 show_critical(

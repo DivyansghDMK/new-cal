@@ -733,6 +733,70 @@ def deactivate():
     return _signed_response({"success": True, "message": "Seat deactivated."})
 
 
+# ── NEW: Release stale device (user-initiated device swap) ───────────────────
+
+@app.post("/api/v1/release-device")
+def release_device():
+    """
+    User-initiated: release ALL seats bound to a given RhythmUltra serial.
+
+    Called when a user tries to register on a new machine but gets
+    DEVICE_ALREADY_REGISTERED, clicks "Yes – Remove Old Device" in the
+    dialog, and the client wants to free the stale seat so it can re-register.
+
+    Body:
+        rhythmultra_serial  — serial of the ECG device being transferred
+        hardware_fingerprint — fingerprint of the *new* machine (for audit)
+
+    Returns { released: N, message: str } — no auth required beyond request sig.
+    """
+    if not _verify_request_sig():
+        return _signed_response({"success": False, "message": "Bad request signature."}, 400)
+
+    body = request.get_json(silent=True) or {}
+    rhythmultra_serial = (
+        body.get("RhythmUltra_serial")
+        or body.get("rhythmultra_serial")
+        or body.get("rhythmulta_serial")
+        or ""
+    ).strip()
+    new_fingerprint = body.get("hardware_fingerprint", "").strip()
+
+    if not rhythmultra_serial:
+        return _signed_response({"success": False, "message": "Missing RhythmUltra serial."}, 400)
+
+    db = get_db()
+    released = 0
+
+    for license_key, license_entry in db.get("licenses", {}).items():
+        for seat_num, seat in license_entry.get("seats", {}).items():
+            stored = (
+                seat.get("RhythmUltra_serial")
+                or seat.get("rhythmulta_serial")
+                or seat.get("rhythmultra_serial")
+                or ""
+            )
+            if stored == rhythmultra_serial and seat.get("status") == "active":
+                # Clear old binding so the seat becomes available again
+                seat["bound_fingerprint"] = None
+                seat["RhythmUltra_serial"] = None
+                seat["rhythmulta_serial"] = None
+                seat["rhythmultra_serial"] = None
+                seat["status"] = "available"
+                seat["released_at"] = int(time.time())
+                seat["released_by_fingerprint"] = new_fingerprint  # audit trail
+                released += 1
+
+    if released:
+        _save_db(db)
+
+    return _signed_response({
+        "success": True,
+        "released": released,
+        "message": f"Released {released} stale seat(s) for RhythmUltra device.",
+    })
+
+
 # ── Legacy: Activate (v1 compat) ──────────────────────────────────────────────
 
 @app.post("/api/v1/activate")
