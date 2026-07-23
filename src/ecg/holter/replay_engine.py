@@ -101,12 +101,21 @@ class HolterReplayEngine:
                             elif 'sinus tachycardia' in arr_label or 'tachycardia' in arr_label:
                                 label_code = 'S'
                                 color = '#00BFFF'  # Deep Sky Blue
-                            elif '1st-degree av block' in arr_label or '2nd-degree av block' in arr_label or '3rd-degree av block' in arr_label:
+                            elif '1st-degree av block' in arr_label:
                                 label_code = 'P'
                                 color = '#FFFF00'  # Yellow
-                            elif 'right bundle branch block' in arr_label or 'left bundle branch block' in arr_label:
+                            elif '2nd-degree av block' in arr_label:
                                 label_code = 'P'
                                 color = '#FFD700'  # Gold
+                            elif '3rd-degree av block' in arr_label:
+                                label_code = 'P'
+                                color = '#FF8C00'  # Dark Orange
+                            elif 'right bundle branch block' in arr_label:
+                                label_code = 'P'
+                                color = '#32CD32'  # Lime Green
+                            elif 'left bundle branch block' in arr_label:
+                                label_code = 'P'
+                                color = '#9370DB'  # Medium Purple
                             elif 'premature ventricular contraction' in arr_label or 'pvc' in arr_label:
                                 label_code = 'V'
                                 color = '#8B4513'  # Brown
@@ -183,12 +192,21 @@ class HolterReplayEngine:
                     elif 'sinus tachycardia' in label_lower or 'tachycardia' in label_lower:
                         label_code = 'S'
                         color = '#00BFFF'  # Deep Sky Blue
-                    elif '1st-degree av block' in label_lower or '2nd-degree av block' in label_lower or '3rd-degree av block' in label_lower:
+                    elif '1st-degree av block' in label_lower:
                         label_code = 'P'
                         color = '#FFFF00'  # Yellow
-                    elif 'right bundle branch block' in label_lower or 'left bundle branch block' in label_lower:
+                    elif '2nd-degree av block' in label_lower:
                         label_code = 'P'
                         color = '#FFD700'  # Gold
+                    elif '3rd-degree av block' in label_lower:
+                        label_code = 'P'
+                        color = '#FF8C00'  # Dark Orange
+                    elif 'right bundle branch block' in label_lower:
+                        label_code = 'P'
+                        color = '#32CD32'  # Lime Green
+                    elif 'left bundle branch block' in label_lower:
+                        label_code = 'P'
+                        color = '#9370DB'  # Medium Purple
                     elif 'premature ventricular contraction' in label_lower or 'pvc' in label_lower:
                         label_code = 'V'
                         color = '#8B4513'  # Brown
