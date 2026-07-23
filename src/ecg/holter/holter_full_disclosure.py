@@ -440,6 +440,8 @@ class HolterFullDisclosureDialog(QDialog):
                         lbl = str(mb.get('label', 'N'))
                         is_man = mb.get('is_manual', False)
                         color = mb.get('color', '#FFFF00')
+                        batch_id = mb.get('batch_id')
+                        marking_mode = mb.get('marking_mode')
                         
                         found = False
                         for m in self._engine._metrics:
@@ -447,16 +449,29 @@ class HolterFullDisclosureDialog(QDialog):
                                 if abs(float(eb.get('timestamp', 0.0)) - ts) < 0.15:
                                     eb['label'] = lbl
                                     eb['is_manual'] = is_man
+                                    eb['color'] = color
+                                    if batch_id is not None:
+                                        eb['batch_id'] = batch_id
+                                    if marking_mode:
+                                        eb['marking_mode'] = marking_mode
                                     found = True
                                     break
                             if found:
                                 break
                         if not found and self._engine._metrics:
-                            self._engine._metrics[0].setdefault('all_beats', []).append({
+                            beat_dict = {
                                 'timestamp': ts,
                                 'label': lbl,
-                                'is_manual': is_man
-                            })
+                                'is_manual': is_man,
+                                'color': color
+                            }
+                            if batch_id is not None:
+                                beat_dict['batch_id'] = batch_id
+                            if marking_mode:
+                                beat_dict['marking_mode'] = marking_mode
+                            self._engine._metrics[0].setdefault('all_beats', []).append(beat_dict)
+                    
+                    self._beat_index_dirty = True
                 print(f"[Full Disclosure] Loaded and merged {len(m_beats)} manual beats on startup.")
                 
                 # Also restore manual beats to canvas _beat_annotations for UI display
@@ -1895,6 +1910,51 @@ class HolterFullDisclosureDialog(QDialog):
                                     }
                                     canvas._beat_annotations.append(new_beat)
                         
+                        # Update engine metrics so manual beats persist across redraws/scrolling
+                        if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                            for target_ts in beats_in_range:
+                                engine_beat_found = False
+                                for m in self._engine._metrics:
+                                    all_beats = m.get('all_beats', [])
+                                    for engine_beat in all_beats:
+                                        if abs(float(engine_beat.get('timestamp', 0.0)) - target_ts) < snap_tolerance_sec:
+                                            engine_beat['label'] = full_label
+                                            engine_beat['color'] = label_colors.get(label, "#FFFF00")
+                                            engine_beat['is_manual'] = True
+                                            engine_beat['marking_mode'] = 'parallel_multi'
+                                            engine_beat['batch_id'] = batch_id
+                                            engine_beat_found = True
+                                            break
+                                    if engine_beat_found:
+                                        break
+                                
+                                if not engine_beat_found and self._engine._metrics:
+                                    added = False
+                                    for m in self._engine._metrics:
+                                        m_start = float(m.get('start_sec', 0.0))
+                                        m_dur = float(m.get('duration', 3600.0))
+                                        if m_start <= target_ts <= m_start + m_dur:
+                                            m.setdefault('all_beats', []).append({
+                                                'timestamp': target_ts,
+                                                'label': full_label,
+                                                'color': label_colors.get(label, "#FFFF00"),
+                                                'is_manual': True,
+                                                'marking_mode': 'parallel_multi',
+                                                'batch_id': batch_id
+                                            })
+                                            added = True
+                                            break
+                                    if not added:
+                                        self._engine._metrics[0].setdefault('all_beats', []).append({
+                                            'timestamp': target_ts,
+                                            'label': full_label,
+                                            'color': label_colors.get(label, "#FFFF00"),
+                                            'is_manual': True,
+                                            'marking_mode': 'parallel_multi',
+                                            'batch_id': batch_id
+                                        })
+                            self._beat_index_dirty = True
+
                         print(f"[Full Disclosure] Labeled all beats between {start_ts:.3f}s and {end_ts:.3f}s as '{label}'")
                         
                         # Clear vertical lines
@@ -2062,96 +2122,81 @@ class HolterFullDisclosureDialog(QDialog):
             session_dir = os.path.dirname(self._engine.ecgh_path)
             manual_beats_path = os.path.join(session_dir, 'manual_beats.json')
             
-            # Collect all beats from engine._metrics that exist there
-            # Use the first Lead-I canvas _beat_annotations as the master list
+            # Collect all beats from engine._metrics and lead_i_canvas
             all_beats = []
+            label_colors_map = {
+                "S": "#00FFFF",      # Supraventricular - Cyan
+                "P": "#FF00FF",      # Premature - Magenta
+                "V": "#FF3333",      # Ventricular - Red
+                "C": "#FFA500",      # Conduction - Orange
+                "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
+                "A": "#FFFF00",      # ACLS - Yellow
+                "N": "#00FF00",      # Normal - Green (legacy)
+                "X": "#0000FF",      # Artifact - Blue (legacy)
+            }
+            
+            seen = set()
+            
+            # 1. First add from engine._metrics across whole recording
+            if hasattr(self._engine, '_metrics') and self._engine._metrics:
+                for m in self._engine._metrics:
+                    for b in m.get('all_beats', []):
+                        ts = float(b.get('timestamp', 0.0))
+                        lbl = str(b.get('label', 'N'))
+                        is_man = b.get('is_manual', False)
+                        if is_man or lbl != 'N':
+                            seen.add(ts)
+                            label_code = lbl
+                            if '(' in lbl and ')' in lbl:
+                                label_code = lbl.split('(')[1].split(')')[0]
+                            beat_color = b.get('color') or label_colors_map.get(label_code, '#FFFF00')
+                            beat_entry = {
+                                'timestamp': ts,
+                                'label': lbl,
+                                'color': beat_color,
+                                'is_manual': is_man
+                            }
+                            if b.get('batch_id') is not None:
+                                beat_entry['batch_id'] = b.get('batch_id')
+                            if b.get('marking_mode'):
+                                beat_entry['marking_mode'] = b.get('marking_mode')
+                            all_beats.append(beat_entry)
+
+            # 2. Also check Lead-I canvas annotations for any beats in active view
             lead_i_canvas = None
             for c in self._canvases:
                 if c.lead_name == 'I':
                     lead_i_canvas = c
                     break
-            
+
             if lead_i_canvas and hasattr(lead_i_canvas, '_beat_annotations'):
-                # Define color mapping for all label codes
-                label_colors_map = {
-                    "S": "#00FFFF",      # Supraventricular - Cyan
-                    "P": "#FF00FF",      # Premature - Magenta
-                    "V": "#FF3333",      # Ventricular - Red
-                    "C": "#FFA500",      # Conduction - Orange
-                    "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
-                    "A": "#FFFF00",      # ACLS - Yellow
-                    "N": "#00FF00",      # Normal - Green (legacy)
-                    "X": "#0000FF",      # Artifact - Blue (legacy)
-                }
-                
-                print(f"[Full Disclosure] SAVE: Lead I has {len(lead_i_canvas._beat_annotations)} beats to save")
-                
                 for b in lead_i_canvas._beat_annotations:
-                    beat_entry = {
-                        'timestamp': float(b.get('timestamp', 0.0)),
-                        'label': str(b.get('label', 'N')),
-                        'is_manual': b.get('is_manual', False)
-                    }
-                    print(f"[Full Disclosure] SAVING: beat at {beat_entry['timestamp']:.3f}s label={beat_entry['label']} is_manual={beat_entry['is_manual']}")
-                    
-                    # CRITICAL FIX: Use saved color if available, otherwise derive from label code
-                    saved_color = b.get('color', '')
-                    if saved_color:
-                        beat_entry['color'] = str(saved_color)
-                    else:
-                        # Derive color from label code
+                    ts = float(b.get('timestamp', 0.0))
+                    if ts not in seen:
                         lbl = str(b.get('label', 'N'))
-                        label_code = lbl
-                        if '(' in lbl and ')' in lbl:
-                            label_code = lbl.split('(')[1].split(')')[0]
-                        beat_entry['color'] = label_colors_map.get(label_code, '#FFFF00')
-                    
-                    # Also save batch_id and marking_mode if present (for parallel multi recovery)
-                    if b.get('batch_id') is not None:
-                        beat_entry['batch_id'] = b.get('batch_id')
-                    if b.get('marking_mode'):
-                        beat_entry['marking_mode'] = b.get('marking_mode')
-                    all_beats.append(beat_entry)
-            else:
-                # Fallback: collect from engine._metrics all_beats
-                if hasattr(self._engine, '_metrics'):
-                    label_colors_map = {
-                        "S": "#00FFFF",      # Supraventricular - Cyan
-                        "P": "#FF00FF",      # Premature - Magenta
-                        "V": "#FF3333",      # Ventricular - Red
-                        "C": "#FFA500",      # Conduction - Orange
-                        "T": "#9932CC",      # TV Paced - Dark Orchid (Purple)
-                        "A": "#FFFF00",      # ACLS - Yellow
-                        "N": "#00FF00",      # Normal - Green (legacy)
-                        "X": "#0000FF",      # Artifact - Blue (legacy)
-                    }
-                    
-                    seen = set()
-                    for m in self._engine._metrics:
-                        for b in m.get('all_beats', []):
-                            ts = float(b.get('timestamp', 0.0))
-                            if ts not in seen:
-                                seen.add(ts)
-                                lbl = str(b.get('label', 'N'))
-                                
-                                # Derive color from label code
+                        is_man = b.get('is_manual', False)
+                        if is_man or lbl != 'N':
+                            seen.add(ts)
+                            saved_color = b.get('color', '')
+                            if saved_color:
+                                color = str(saved_color)
+                            else:
                                 label_code = lbl
                                 if '(' in lbl and ')' in lbl:
                                     label_code = lbl.split('(')[1].split(')')[0]
-                                beat_color = label_colors_map.get(label_code, '#FFFF00')
-                                
-                                beat_entry = {
-                                    'timestamp': ts,
-                                    'label': lbl,
-                                    'color': beat_color,
-                                    'is_manual': b.get('is_manual', False)
-                                }
-                                # Also save batch_id and marking_mode if present
-                                if b.get('batch_id') is not None:
-                                    beat_entry['batch_id'] = b.get('batch_id')
-                                if b.get('marking_mode'):
-                                    beat_entry['marking_mode'] = b.get('marking_mode')
-                                all_beats.append(beat_entry)
+                                color = label_colors_map.get(label_code, '#FFFF00')
+                            
+                            beat_entry = {
+                                'timestamp': ts,
+                                'label': lbl,
+                                'color': color,
+                                'is_manual': is_man
+                            }
+                            if b.get('batch_id') is not None:
+                                beat_entry['batch_id'] = b.get('batch_id')
+                            if b.get('marking_mode'):
+                                beat_entry['marking_mode'] = b.get('marking_mode')
+                            all_beats.append(beat_entry)
 
             
             all_beats.sort(key=lambda b: b['timestamp'])
@@ -2848,12 +2893,14 @@ class HolterFullDisclosureDialog(QDialog):
                 short_code = lbl
                 if '(' in lbl and ')' in lbl:
                     short_code = lbl.split('(')[1].split(')')[0]
-                color = label_colors.get(short_code, "#FFFF00")
+                color = beat.get('color') or label_colors.get(short_code, "#FFFF00")
                 beat_annotations.append({
                     'timestamp': ts,
                     'label': lbl,
                     'color': color,
-                    'is_manual': beat.get('is_manual', False)
+                    'is_manual': beat.get('is_manual', False),
+                    'marking_mode': beat.get('marking_mode'),
+                    'batch_id': beat.get('batch_id')
                 })
             # Already sorted (index is built sorted, and slicing preserves order)
         except Exception as e:
@@ -2897,6 +2944,10 @@ class HolterFullDisclosureDialog(QDialog):
                             b['label'] = lbl
                             b['color'] = color
                             b['is_manual'] = True
+                            if mb.get('marking_mode'):
+                                b['marking_mode'] = mb.get('marking_mode')
+                            if mb.get('batch_id') is not None:
+                                b['batch_id'] = mb.get('batch_id')
                             found = True
                             break
                     if not found:
@@ -2904,7 +2955,9 @@ class HolterFullDisclosureDialog(QDialog):
                             'timestamp': ts,
                             'label': lbl,
                             'color': color,
-                            'is_manual': True
+                            'is_manual': True,
+                            'marking_mode': mb.get('marking_mode'),
+                            'batch_id': mb.get('batch_id')
                         })
                 c._beat_annotations.sort(key=lambda b: b['timestamp'])
             
@@ -2915,7 +2968,7 @@ class HolterFullDisclosureDialog(QDialog):
             
             batch_groups = {}  # batch_id -> list of beats
             for mb in self._pending_manual_beats:
-                if mb.get('batch_id'):  # Changed: only check batch_id, not marking_mode
+                if mb.get('batch_id'):  # Only check batch_id
                     batch_id = mb.get('batch_id')
                     if batch_id not in batch_groups:
                         batch_groups[batch_id] = []
@@ -2951,11 +3004,9 @@ class HolterFullDisclosureDialog(QDialog):
                     if '(' in lbl and ')' in lbl:
                         label_code = lbl.split('(')[1].split(')')[0]
                     
-                    # CRITICAL FIX: Ensure color is correct for C, T, A
-                    # If color is not saved or is default/invalid color, use the correct color for the label code
-                    # Check for empty, default yellow, magenta, or green (legacy defaults)
-                    if not color or color == '#FFFF00' or color == '#FF00FF' or color == '#00FF00':
-                        color = beat_label_colors.get(label_code, '#FFFF00')
+                    # Ensure color is derived correctly if missing or default green
+                    if not color or color in ('#00FF00', '#FFFF00', ''):
+                        color = beat_label_colors.get(label_code, beats[0].get('color') or '#FFFF00')
                     
                     # Create structured event for waveform coloring
                     structured_event = {
@@ -2968,20 +3019,26 @@ class HolterFullDisclosureDialog(QDialog):
                         'source': 'restored_parallel_multi'
                     }
                     
-                    # Check if this event already exists
+                    # Update existing event if found, or append new structured event
                     event_exists = False
                     for ev in self._engine._structured_events:
                         if (abs(float(ev.get('timestamp', 0.0)) - start_ts) < 0.5 and
                             abs(float(ev.get('end_timestamp', 0.0)) - end_ts) < 0.5):
+                            ev['label'] = label_code
+                            ev['label_full'] = lbl
+                            ev['color'] = color
+                            ev['event_type'] = label_code
+                            ev['source'] = 'restored_parallel_multi'
                             event_exists = True
                             break
                     
                     if not event_exists:
                         self._engine._structured_events.append(structured_event)
             
-            # Sort structured events by timestamp
+            # Sort structured events by timestamp and rebuild event index immediately
             self._engine._structured_events.sort(key=lambda x: float(x.get('timestamp', 0.0)))
             self._event_index_dirty = True
+            self._rebuild_event_index()
             
             # Restore vertical lines for ALL parallel multi markings (not just the first)
             # Process all batches to restore all parallel multi selections

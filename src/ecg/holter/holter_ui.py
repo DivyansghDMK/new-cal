@@ -3394,31 +3394,7 @@ class ECGStripCanvas(QWidget):
                         if start_idx < end_idx:
                             colored_intervals.append((start_idx, end_idx, color))
         
-        # 2. Color QRS complex for explicitly annotated beats
-        # CRITICAL FIX: Only apply beat annotation coloring if disable_all_coloring is False
-        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
-        # For Full Disclosure (disable_all_coloring=False), show beat coloring regardless of show_annotations
-        if not self._disable_all_coloring and hasattr(self, '_beat_annotations') and self._beat_annotations:
-            for beat in self._beat_annotations:
-                ts = beat['timestamp']
-                lbl = beat.get('label', 'N')
-                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
-                short_code = lbl
-                if '(' in lbl and ')' in lbl:
-                    short_code = lbl.split('(')[1].split(')')[0]
-                # Highlight QRS peak if the label is something other than 'N'
-                if short_code != 'N' and self._start_sec <= ts <= end_sec:
-                    color = beat.get('color', "#FFFF00")
-                    # R-peak window: ~60ms before and after (120ms QRS width)
-                    qrs_start_ts = ts - 0.06
-                    qrs_end_ts = ts + 0.06
-                    
-                    start_idx = max(0, int((qrs_start_ts - self._start_sec) * self._fs))
-                    end_idx = min(len(d) - 1, int((qrs_end_ts - self._start_sec) * self._fs))
-                    
-                    if start_idx < end_idx:
-                        colored_intervals.append((start_idx, end_idx, color))
-                        
+
         colored_intervals.sort(key=lambda x: x[0])
         
         default_pen = QPen(QColor(self._color))
@@ -3450,7 +3426,7 @@ class ECGStripCanvas(QWidget):
             if end_idx <= start_idx:
                 continue
             seg_pen = QPen(QColor(color))
-            seg_pen.setWidthF(self._pen_width * 3.0)
+            seg_pen.setWidthF(self._pen_width * 2.0)
             painter.setPen(seg_pen)
             seg_path = QPainterPath()
             seg_path.moveTo(xs[start_idx], ys[start_idx])
