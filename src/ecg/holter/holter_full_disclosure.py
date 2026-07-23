@@ -639,25 +639,6 @@ class HolterFullDisclosureDialog(QDialog):
         sep_undo.setStyleSheet(f"color: {COL_GREEN_DRK};")
         top_layout.addWidget(sep_undo)
 
-        # Auto Detect button
-        self.btn_auto_detect = QPushButton("⚡ Auto Detect")
-        self.btn_auto_detect.setStyleSheet(f"""
-            QPushButton {{
-                background: #0d1b2a; color: #FFA500;
-                border: 1px solid #FFA500; padding: 4px 12px;
-                font-size: 13px; font-weight: bold; border-radius: 4px;
-            }}
-            QPushButton:hover:enabled {{ background: #162a3a; }}
-            QPushButton:disabled {{ color: #4a5a68; border: 1px solid #2a3a48; }}
-        """)
-        self.btn_auto_detect.clicked.connect(self._auto_detect_arrhythmias)
-        top_layout.addWidget(self.btn_auto_detect)
-
-        sep_auto = QFrame()
-        sep_auto.setFrameShape(QFrame.VLine)
-        sep_auto.setStyleSheet(f"color: {COL_GREEN_DRK};")
-        top_layout.addWidget(sep_auto)
-
         # Real-time display right of time tabs
         self.lbl_real_time = QLabel("Real Time: --:--:--")
         self.lbl_real_time.setStyleSheet(f"color: {COL_GREEN}; font-weight: bold; font-size: 13px;")
@@ -1353,67 +1334,6 @@ class HolterFullDisclosureDialog(QDialog):
         # Refresh everything on screen: waveforms, beat markers, segment overlay.
         self._update_canvases(self._current_start)
         print(f"[Full Disclosure] Undid action: {snapshot['action']}")
-
-    def _auto_detect_arrhythmias(self):
-        """Auto-detect arrhythmias from the waveform using holter_auto_arrhythmia_detect module."""
-        try:
-            from .holter_auto_arrhythmia_detect import detect_arrhythmias, convert_to_structured_events
-            
-            # Disable button during processing
-            self.btn_auto_detect.setEnabled(False)
-            self.btn_auto_detect.setText("⚡ Detecting...")
-            QApplication.processEvents()
-            
-            # Get ECG data from engine
-            reader = getattr(self._engine, '_reader', None)
-            if not reader:
-                print("[Full Disclosure] No reader found in engine")
-                self.btn_auto_detect.setEnabled(True)
-                self.btn_auto_detect.setText("⚡ Auto Detect")
-                return
-            
-            # Progress callback for UI updates
-            def progress_callback(progress: int):
-                self.btn_auto_detect.setText(f"⚡ Detecting... {progress}%")
-                QApplication.processEvents()
-            
-            # Run detection using the new module
-            detected_segments = detect_arrhythmias(reader, progress_callback)
-            
-            # Add detected arrhythmias to structured_events for waveform coloring
-            if detected_segments:
-                self._snapshot_state('auto_detect')
-                
-                # Convert to structured events format
-                structured_events = convert_to_structured_events(detected_segments)
-                
-                # Initialize structured_events if not present
-                if not hasattr(self._engine, '_structured_events'):
-                    self._engine._structured_events = []
-                
-                # Add detected arrhythmias as structured events
-                self._engine._structured_events.extend(structured_events)
-                
-                # Sort structured_events by timestamp
-                self._engine._structured_events.sort(key=lambda x: float(x.get('timestamp', 0.0) or 0.0))
-                self._event_index_dirty = True
-                
-                print(f"[Full Disclosure] Auto-detection complete: {len(detected_segments)} arrhythmias added to structured_events")
-                
-                # Refresh UI
-                self._update_canvases(self._current_start)
-            else:
-                print("[Full Disclosure] No arrhythmias detected")
-            
-        except Exception as e:
-            print(f"[Full Disclosure] Auto-detection error: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        finally:
-            # Re-enable button
-            self.btn_auto_detect.setEnabled(True)
-            self.btn_auto_detect.setText("⚡ Auto Detect")
 
     def _show_segment_context_menu(self, global_pos):
         """Show arrhythmia right-click context menu for labeling a selected segment with hierarchical dropdown menus."""
@@ -2338,14 +2258,18 @@ class HolterFullDisclosureDialog(QDialog):
                             # Mark beat index dirty so it rebuilds from updated metrics
                             self._beat_index_dirty = True
                             
-                            # Also remove structured events in this range (for waveform coloring)
+                            # Also remove manual structured events in this range (auto-detected badges protected)
                             if hasattr(self._engine, '_structured_events'):
                                 self._engine._structured_events[:] = [
                                     ev for ev in self._engine._structured_events
-                                    if not (ev.get('timestamp', 0) < end_ts and ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts)
+                                    if not (
+                                        ev.get('timestamp', 0) < end_ts and 
+                                        ev.get('end_timestamp', ev.get('timestamp', 0)) > start_ts and
+                                        (ev.get('is_manual', False) or ev.get('source') in ['manual', 'manual_parallel_multi', 'restored_parallel_multi'])
+                                    )
                                 ]
                                 self._event_index_dirty = True
-                                print(f"[Full Disclosure] Removed structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
+                                print(f"[Full Disclosure] Removed manual structured events overlapping with range {start_ts:.3f}s to {end_ts:.3f}s")
                             
                             print(f"[Full Disclosure] Deleted all beats between {start_ts:.3f}s and {end_ts:.3f}s")
                             
@@ -2431,15 +2355,19 @@ class HolterFullDisclosureDialog(QDialog):
                         # Mark beat index dirty so it rebuilds from updated metrics
                         self._beat_index_dirty = True
                         
-                        # Also remove corresponding structured events
+                        # Also remove corresponding manual structured events (auto-detected badges protected)
                         if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
-                            # Remove structured events in this range
+                            # Remove ONLY manual structured events in this range
                             self._engine._structured_events[:] = [
                                 ev for ev in self._engine._structured_events
-                                if not (ev.get('timestamp', 0) >= start_sec and ev.get('timestamp', 0) <= end_sec)
+                                if not (
+                                    ev.get('timestamp', 0) >= start_sec and 
+                                    ev.get('timestamp', 0) <= end_sec and
+                                    (ev.get('is_manual', False) or ev.get('source') in ['manual', 'manual_parallel_multi', 'restored_parallel_multi'])
+                                )
                             ]
                             self._event_index_dirty = True
-                            print(f"[Full Disclosure] Removed structured events in window {start_sec:.3f}s to {end_sec:.3f}s")
+                            print(f"[Full Disclosure] Removed manual structured events in window {start_sec:.3f}s to {end_sec:.3f}s")
                         
                         print(f"[Full Disclosure] Deleted manually marked beats in window {start_sec:.3f}s to {end_sec:.3f}s")
                         
@@ -2505,7 +2433,7 @@ class HolterFullDisclosureDialog(QDialog):
                             # Beats were removed -> cached windowed index is stale
                             self._beat_index_dirty = True
                                     
-                        # --- Also allow deleting Arrythmia Regions ---
+                        # --- Also allow deleting MANUAL Arrhythmia Regions (Auto-detected badges protected) ---
                         if hasattr(self._engine, '_structured_events') and self._engine._structured_events:
                             # Find if click_ts falls inside an active arrhythmia region
                             events = self._engine._structured_events
@@ -2515,16 +2443,16 @@ class HolterFullDisclosureDialog(QDialog):
                                 if ev_ts <= click_ts:
                                     next_ts = float(events[i+1].get('timestamp', 0.0) or 0.0) if i+1 < len(events) else (start_sec + 3600*24)
                                     if click_ts < next_ts:
-                                        # This event spans the click! Check if it's an arrhythmia
-                                        ev_lbl = str(ev.get('label', '')).lower()
-                                        if any(a in ev_lbl for a in ['vfib', 'ventricular fibrillation', 'vtach', 'tachycardia', 'afib', 'fibrillation', 'flutter']):
+                                        # Only allow deleting manually created structured events/badges
+                                        is_manual_ev = ev.get('is_manual', False) or ev.get('source') in ['manual', 'manual_parallel_multi', 'restored_parallel_multi']
+                                        if is_manual_ev:
                                             to_remove = ev
                                         break
                                         
                             if to_remove:
                                 events.remove(to_remove)
                                 self._event_index_dirty = True
-                                print(f"[Full Disclosure] Deleted arrhythmia event: {to_remove.get('label')} at {to_remove.get('timestamp')}")
+                                print(f"[Full Disclosure] Deleted manual arrhythmia event: {to_remove.get('label')} at {to_remove.get('timestamp')}")
                                 
                                 # Re-update the canvases so the region coloring is removed immediately
                                 self._update_canvases(self._current_start)
@@ -2852,12 +2780,26 @@ class HolterFullDisclosureDialog(QDialog):
         # Combine and sort all events by timestamp (manual first, then auto)
         all_events = sorted(manual_events + auto_events, key=lambda x: x['timestamp'])
         
+        # Filter out secondary findings that shouldn't appear in the arrhythmia banner
+        EXCLUDED_LABELS = {
+            "Long QT Syndrome",
+            "Prolonged QTc",
+            "Wide QRS (non-specific)",
+            "Frequent PVCs",
+            "Multifocal PVCs"
+        }
+        
         arrhythmia_label = ""
         if all_events:
-            earliest = all_events[0]
-            if hasattr(self._engine, '_reader') and hasattr(self._engine._reader, 'start_time'):
-                ts_real = datetime.fromtimestamp(self._engine._reader.start_time + earliest['timestamp'])
-                arrhythmia_label = f"Arrhythmia: {earliest['label']} at {ts_real.strftime('%H:%M:%S')}"
+            # Find the first event that is not in the excluded list
+            for event in all_events:
+                label = event.get('label', '')
+                if label not in EXCLUDED_LABELS:
+                    earliest = event
+                    if hasattr(self._engine, '_reader') and hasattr(self._engine._reader, 'start_time'):
+                        ts_real = datetime.fromtimestamp(self._engine._reader.start_time + earliest['timestamp'])
+                        arrhythmia_label = f"Arrhythmia: {earliest['label']} at {ts_real.strftime('%H:%M:%S')}"
+                    break
                 
         self.lbl_arrhythmia.setText(arrhythmia_label)
 
