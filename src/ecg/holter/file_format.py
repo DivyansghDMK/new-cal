@@ -155,11 +155,17 @@ class ECGHFileReader:
 
     def __init__(self, path: str):
         self.path = path
-        self._f = open(path, 'rb')
+        self._f = None
+        self._ensure_open()
         self._parse_header()
         self._load_index()
 
+    def _ensure_open(self):
+        if self._f is None or getattr(self._f, 'closed', False):
+            self._f = open(self.path, 'rb')
+
     def _parse_header(self):
+        self._ensure_open()
         hdr = self._f.read(HEADER_SIZE)
         magic, version, n_leads, fs = struct.unpack_from('>4sHHI', hdr, 0)
         if magic != MAGIC:
@@ -196,6 +202,7 @@ class ECGHFileReader:
 
     def _seek_to_second(self, target_sec: float):
         """Fast seek using index, then fine-tune by frame."""
+        self._ensure_open()
         target_frame = int(target_sec * self.fs)
         target_frame = max(0, min(target_frame, self.total_frames - 1))
 
@@ -218,6 +225,7 @@ class ECGHFileReader:
         """
         Returns ndarray of shape (n_leads, N_samples).
         """
+        self._ensure_open()
         start_sec = max(0.0, start_sec)
         end_sec = min(self.duration_sec, end_sec)
         n_frames = int((end_sec - start_sec) * self.fs)
@@ -250,4 +258,16 @@ class ECGHFileReader:
         return self.duration_sec
 
     def close(self):
-        self._f.close()
+        if hasattr(self, '_f') and self._f and not getattr(self._f, 'closed', False):
+            try:
+                self._f.close()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        self._ensure_open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+

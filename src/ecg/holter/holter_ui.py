@@ -1,4 +1,4 @@
-﻿"""
+"""
 ecg/holter/holter_ui.py
 ========================
 Complete Holter Monitor UI - Professional Medical Software
@@ -3304,6 +3304,21 @@ class ECGStripCanvas(QWidget):
             # Go through events and find regions
             for i, ev in enumerate(self._structured_events):
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+                region_start_ts = ev_ts
+                
+                # Quickly determine region end to skip invisible events
+                region_end_ts = ev.get('end_timestamp')
+                if region_end_ts is None:
+                    if i + 1 < len(self._structured_events):
+                        region_end_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
+                    else:
+                        region_end_ts = end_sec + 10.0
+                else:
+                    region_end_ts = float(region_end_ts)
+                    
+                if region_end_ts < self._start_sec or region_start_ts > end_sec:
+                    continue
+                    
                 ev_lbl = str(ev.get('label', '')).lower()
                 ev_lbl_orig = str(ev.get('label', ''))
 
@@ -3372,18 +3387,6 @@ class ECGStripCanvas(QWidget):
                 if active_label != 'N':
                     # Use color from event if available, otherwise use label_colors
                     color = ev.get('color', label_colors.get(active_label, "#FF3333"))
-                    region_start_ts = ev_ts
-                    
-                    # Use end_timestamp if available, otherwise use next event
-                    region_end_ts = ev.get('end_timestamp')
-                    if region_end_ts is None:
-                        region_end_ts = end_sec + 10.0  # arbitrarily large
-                        if i + 1 < len(self._structured_events):
-                            next_ev_ts = float(self._structured_events[i+1].get('timestamp', 0.0) or 0.0)
-                            region_end_ts = next_ev_ts
-                    else:
-                        region_end_ts = float(region_end_ts)
-                        
                     # Calculate overlapping indices
                     if region_end_ts >= self._start_sec and region_start_ts <= end_sec:
                         start_idx = max(0, int((region_start_ts - self._start_sec) * self._fs))
@@ -3391,31 +3394,7 @@ class ECGStripCanvas(QWidget):
                         if start_idx < end_idx:
                             colored_intervals.append((start_idx, end_idx, color))
         
-        # 2. Color QRS complex for explicitly annotated beats
-        # CRITICAL FIX: Only apply beat annotation coloring if disable_all_coloring is False
-        # For replay/overview panels (disable_all_coloring=True), always show plain green waveforms
-        # For Full Disclosure (disable_all_coloring=False), show beat coloring regardless of show_annotations
-        if not self._disable_all_coloring and hasattr(self, '_beat_annotations') and self._beat_annotations:
-            for beat in self._beat_annotations:
-                ts = beat['timestamp']
-                lbl = beat.get('label', 'N')
-                # Extract short code from full label name (e.g., "Normal(N)" -> "N")
-                short_code = lbl
-                if '(' in lbl and ')' in lbl:
-                    short_code = lbl.split('(')[1].split(')')[0]
-                # Highlight QRS peak if the label is something other than 'N'
-                if short_code != 'N' and self._start_sec <= ts <= end_sec:
-                    color = beat.get('color', "#FFFF00")
-                    # R-peak window: ~60ms before and after (120ms QRS width)
-                    qrs_start_ts = ts - 0.06
-                    qrs_end_ts = ts + 0.06
-                    
-                    start_idx = max(0, int((qrs_start_ts - self._start_sec) * self._fs))
-                    end_idx = min(len(d) - 1, int((qrs_end_ts - self._start_sec) * self._fs))
-                    
-                    if start_idx < end_idx:
-                        colored_intervals.append((start_idx, end_idx, color))
-                        
+
         colored_intervals.sort(key=lambda x: x[0])
         
         default_pen = QPen(QColor(self._color))
@@ -3447,7 +3426,7 @@ class ECGStripCanvas(QWidget):
             if end_idx <= start_idx:
                 continue
             seg_pen = QPen(QColor(color))
-            seg_pen.setWidthF(self._pen_width * 3.0)
+            seg_pen.setWidthF(self._pen_width * 2.0)
             painter.setPen(seg_pen)
             seg_path = QPainterPath()
             seg_path.moveTo(xs[start_idx], ys[start_idx])
@@ -3465,11 +3444,19 @@ class ECGStripCanvas(QWidget):
                 'atrial fibrillation', 'atrial flutter', 'afib', 'aflutter',
                 'ventricular fibrillation', 'ventricular tachycardia', 'vfib', 'vtach',
                 '1st-degree av block', '2nd-degree av block', '3rd-degree av block',
-                'right bundle branch block', 'left bundle branch block'
+                'right bundle branch block', 'left bundle branch block',
+                'premature ventricular contraction', 'pvc',
+                'premature atrial contraction', 'pac'
             ]
             
             for ev in self._structured_events:
                 ev_ts = float(ev.get('timestamp', 0.0) or 0.0)
+                
+                # Performance fix: check visibility before string searches
+                is_visible = self._start_sec <= ev_ts <= end_sec
+                if not is_visible:
+                    continue
+                    
                 ev_label = str(ev.get('label', '')).lower()
                 ev_color = str(ev.get('color', '#FFFF00'))
                 
@@ -3479,38 +3466,40 @@ class ECGStripCanvas(QWidget):
                 # 3. Not Normal Sinus Rhythm
                 is_main_arrhythmia = any(keyword in ev_label for keyword in main_arrhythmia_keywords)
                 is_not_nsr = 'normal sinus rhythm' not in ev_label
-                is_visible = self._start_sec <= ev_ts <= end_sec
                 
-                if is_main_arrhythmia and is_not_nsr and is_visible:
+                if is_main_arrhythmia and is_not_nsr:
                     # Calculate pixel position for the label
                     label_x = int((ev_ts - self._start_sec) * self._fs * x_scale)
                     if 0 <= label_x < w:
                         # Get actual system recording time from recording_index.json
+                        if not hasattr(self, '_cached_start_time'):
+                            self._cached_start_time = None
+                            try:
+                                import json
+                                import os
+                                # Try to get session directory from parent
+                                session_dir = None
+                                parent = self.parent()
+                                while parent is not None:
+                                    if hasattr(parent, 'session_dir'):
+                                        session_dir = parent.session_dir
+                                        break
+                                    parent = parent.parent()
+                                
+                                if session_dir:
+                                    index_path = os.path.join(session_dir, 'recording_index.json')
+                                    if os.path.exists(index_path):
+                                        with open(index_path, 'r') as f:
+                                            index_data = json.load(f)
+                                        self._cached_start_time = index_data.get('start_time')
+                            except Exception as e:
+                                print(f"[ECGStripCanvas] Error reading system time: {e}")
+                        
                         time_str = ""
-                        try:
-                            import json
-                            import os
-                            # Try to get session directory from parent
-                            session_dir = None
-                            parent = self.parent()
-                            while parent is not None:
-                                if hasattr(parent, 'session_dir'):
-                                    session_dir = parent.session_dir
-                                    break
-                                parent = parent.parent()
-                            
-                            if session_dir:
-                                index_path = os.path.join(session_dir, 'recording_index.json')
-                                if os.path.exists(index_path):
-                                    with open(index_path, 'r') as f:
-                                        index_data = json.load(f)
-                                    start_time = index_data.get('start_time')
-                                    if start_time:
-                                        from datetime import datetime
-                                        system_time = datetime.fromtimestamp(start_time + ev_ts)
-                                        time_str = system_time.strftime('%H:%M:%S')
-                        except Exception as e:
-                            print(f"[ECGStripCanvas] Error reading system time: {e}")
+                        if getattr(self, '_cached_start_time', None):
+                            from datetime import datetime
+                            system_time = datetime.fromtimestamp(self._cached_start_time + ev_ts)
+                            time_str = system_time.strftime('%H:%M:%S')
                         
                         # Fallback to elapsed time if system time not available
                         if not time_str:
@@ -3658,8 +3647,8 @@ class ECGStripCanvas(QWidget):
                 if '(' in lbl and ')' in lbl:
                     short_code = lbl.split('(')[1].split(')')[0]
                 
-                if short_code == 'N' and not beat.get('is_manual', False):
-                    continue   # skip default N annotations — user only sees manual arrhythmia marks
+                if not beat.get('is_manual', False):
+                    continue   # Only draw beat labels and timestamps for manual user annotations
 
                 color = beat.get('color', None)
                 if not color:
