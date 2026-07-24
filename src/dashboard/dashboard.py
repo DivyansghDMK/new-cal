@@ -1,3 +1,18 @@
+"""
+CardioX Main Dashboard — src/dashboard/dashboard.py
+===================================================
+PURPOSE & ARCHITECTURE:
+This module implements the primary Dashboard UI (DashboardWindow) presented to clinicians/operators upon login.
+It acts as the central command hub:
+1. Patient Data & Exam Navigation: Quick patient setup, history viewing, and direct launch into 12-lead ECG acquisition.
+2. Real-Time Rhythm Panel: Receives periodic rhythm interpretation cache updates (last_conclusions.json) to display live diagnostic summaries.
+3. System Diagnostics & Controls: Device status, battery levels, cloud sync status indicator, and admin report access.
+
+DEVELOPER NOTES & RECENT REFACTORS:
+- Comprehensive ECG Button (self.holter_btn): Disabled and hidden per product specification to prevent incomplete workflow launches from the main hub.
+- Live Rhythm Refresh: Listens for rhythm updates every ~1s (update_live_conclusion) to mirror the active 12-lead signal metrics.
+"""
+
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider,
@@ -733,6 +748,8 @@ class Dashboard(QWidget):
         self.holter_btn.setStyleSheet("background: #008000; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.holter_btn.setEnabled(False)
+        self.holter_btn.setVisible(False)
         greet_row.addWidget(self.holter_btn)
 
         # --- Add Chatbot Button ---

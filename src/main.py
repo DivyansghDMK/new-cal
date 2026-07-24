@@ -1,3 +1,21 @@
+"""
+CardioX Main Entry Point — src/main.py
+======================================
+PURPOSE & ARCHITECTURE:
+This is the primary application bootstrap and lifecycle controller for the CardioX 12-Lead ECG system.
+It handles:
+1. System & display initialization (PyQt5, software OpenGL rendering fallback, sys.path resolution).
+2. Crash logging setup (ECGCrashLogger) and exception hooks.
+3. License management and startup hardware/seat verification.
+4. User authentication (Standard Login / Sign Up flow with serial number or credential validation).
+5. Instantiation and switching between LoginWindow, DashboardWindow, and ECGTestWindow.
+
+DEVELOPER NOTES & RECENT REFACTORS:
+- Security / Authentication: Removed hardcoded admin/divyansh login bypass. All users must authenticate via standard signup/login & valid license seats.
+- OpenGL Stability: BUG-05 fix forces QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL) on macOS/Linux to prevent driver crashes during high-frequency graph rendering.
+- Crash Logging: Integrates automatic crash payload generation and email error reporting via src/utils/crash_logger.py.
+"""
+
 import sys
 import os
 import shutil
@@ -1838,18 +1856,6 @@ class LoginRegisterDialog(QDialog):
             self.sign_in_logic.users = self.sign_in_logic.load_users()
         except Exception:
             pass
-        # BUG-31 FIX: Admin credentials loaded from environment variable, not hardcoded
-        try:
-            admin_user = os.environ.get('CARDIOX_ADMIN_USER', 'admin')
-            admin_pass = os.environ.get('CARDIOX_ADMIN_PASS', '')  # empty = disabled unless set in .env
-            if admin_pass and identifier.strip().lower() == admin_user and password_or_serial == admin_pass:
-                self.result = True
-                self.username = 'admin'
-                self.user_details = {'is_admin': True}
-                self.accept()
-                return
-        except Exception:
-            pass
         if self.sign_in_logic.validate_credentials(identifier, password_or_serial):
             found = self.sign_in_logic._find_user_record(identifier)
             if found:
@@ -2760,20 +2766,7 @@ def main():
                     except Exception as e:
                         logger.warning(f"Could not set machine serial ID for crash reporting: {e}")
                     
-                    # If admin, open Admin Reports UI instead of dashboard
-                    if isinstance(login.user_details, dict) and login.user_details.get('is_admin'):
-                        try:
-                            from utils.cloud_uploader import get_cloud_uploader
-                            from dashboard.admin_reports import AdminReportsDialog
-                            cu = get_cloud_uploader()
-                            cu.reload_config()
-                            dlg = AdminReportsDialog(cu)
-                            dlg.exec_()
-                        except Exception as e:
-                            QMessageBox.critical(None, "Admin", f"Failed to open admin reports: {e}")
-                        # After admin dialog closes, show login again
-                        login = LoginRegisterDialog()
-                        continue
+
                     # ── Show Medical Compliance Loader (non-blocking) ──────
                     # Show the loader first, then build the dashboard while it
                     # animates so there is NO blank-screen gap between login

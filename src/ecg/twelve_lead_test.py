@@ -1,3 +1,20 @@
+"""
+CardioX 12-Lead ECG Acquisition & Analysis Engine — src/ecg/twelve_lead_test.py
+==================================================================================
+PURPOSE & ARCHITECTURE:
+This is the core clinical acquisition and visualization engine (ECGTestWindow) for 12-lead ECG signals.
+Key Responsibilities:
+1. Real-time 12-Lead Data Buffering: Receives 500Hz serial stream for Leads I, II, III, aVR, aVL, aVF, V1-V6.
+2. Clinical Metric Computation: Pan-Tompkins algorithm for HR, PR interval, QRS duration, QT/QTc interval, axes, and RV5/SV1 voltages.
+3. Live Rhythm Interpretation: Runs periodic Pan-Tompkins & wave classification on Lead II, updating last_conclusions.json cache every ~1s.
+4. Report Snapshotting & PDF Generation (generate_pdf_report): Captures 10-second raw waveform buffer (snap_raw) and renders clinical PDF reports via ecg_report_android.py.
+
+DEVELOPER NOTES & RECENT REFACTORS:
+- Fix 1 (Screen Label Fallback): When generating reports, metrics are read from both internal attributes AND screen labels (`max(_live_val, _screen_val)`), preventing phantom-zero PDFs if a read occurs mid-calculation tick.
+- Fix 2 (Rate Qualifiers): Automatically appends rate qualifiers ("Bradycardia" for HR < 60, "Sinus Tachycardia" for HR > 100) alongside detected non-NSR arrhythmias.
+- Fix 3 (QTc Auto-Warnings): Evaluates QTc against clinical thresholds (≥440ms Borderline, ≥460ms Prolonged, ≥500ms Critical) and auto-injects formatted warnings into report conclusions.
+- Safeguard (Flatline Detection): If HR <= 0 or lead std-dev < 0.1, output conclusions default to "No ECG data available" with zeroed metrics to prevent misleading legacy labels.
+"""
 import os
 from utils.app_paths import data_file
 import sys
@@ -7586,14 +7603,37 @@ class ECGTestPage(QWidget):
                     'assets', 'DeckmountLogo.png'),
             }
         else:
-            
+            # FIX-1: Read metrics from both internal attributes AND screen labels.
+            # Take the higher of the two values so a momentary mid-update zero
+            # never wipes out what the user can clearly see on screen.
+            def _screen_int(label_key, fallback=0):
+                try:
+                    raw = self.metric_labels[label_key].text().strip()
+                    # Strip units like 'BPM', 'ms' etc.
+                    clean = raw.replace('BPM','').replace('bpm','').replace('ms','').replace('mV','').split('/')[0].strip()
+                    val = int(round(float(clean)))
+                    return val if val > 0 else fallback
+                except Exception:
+                    return fallback
+
+            _live_hr  = int(getattr(self, 'last_heart_rate',    0) or 0)
+            _live_pr  = int(getattr(self, 'pr_interval',        0) or 0)
+            _live_qrs = int(getattr(self, 'last_qrs_duration',  0) or 0)
+            _live_qt  = int(getattr(self, 'last_qt_interval',   0) or 0)
+            _live_qtc = int(getattr(self, 'last_qtc_interval',  0) or 0)
+
+            _scr_hr  = _screen_int('heart_rate',  _live_hr)
+            _scr_pr  = _screen_int('pr_interval', _live_pr)
+            _scr_qrs = _screen_int('qrs_duration', _live_qrs)
+            _scr_qtc = _screen_int('qtc_interval', _live_qtc)
+
             frozen = {
-                'HR':       int(getattr(self, 'last_heart_rate',    0) or 0),
+                'HR':       max(_live_hr,  _scr_hr),
                 'RR':       int(getattr(self, 'last_rr_interval',   0) or 0),
-                'PR':       int(getattr(self, 'pr_interval',        0) or 0),
-                'QRS':      int(getattr(self, 'last_qrs_duration',  0) or 0),
-                'QT':       int(getattr(self, 'last_qt_interval',   0) or 0),
-                'QTc':      int(getattr(self, 'last_qtc_interval',  0) or 0),
+                'PR':       max(_live_pr,  _scr_pr),
+                'QRS':      max(_live_qrs, _scr_qrs),
+                'QT':       _live_qt,
+                'QTc':      max(_live_qtc, _scr_qtc),
                 'QTcF':     int(getattr(self, 'last_qtcf_interval', 0) or 0),
                 'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
                 'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
@@ -7711,11 +7751,38 @@ class ECGTestPage(QWidget):
                 else:
                     conc_list = ["Normal Sinus Rhythm"]
             else:
-                # Sanitize rate-mismatched rhythms
+                # FIX-2: Sanitize rate-mismatched rhythms AND append rate qualifier
+                # for non-NSR arrhythmias so the full clinical picture is in the PDF.
                 if 0 < hr_val < 60:
+                    # Replace NSR label directly (rate is inconsistent with NSR)
                     conc_list = ["Sinus Bradycardia" if c in ("Normal Sinus Rhythm", "Normal sinus rhythm") else c for c in conc_list]
+                    # Also append Bradycardia note if not already present alongside other arrhythmias
+                    bradycardia_terms = ("bradycardia", "slow", "junctional", "block")
+                    if not any(t in c.lower() for c in conc_list for t in bradycardia_terms):
+                        conc_list.append("Bradycardia")
                 elif hr_val > 100:
+                    # Replace NSR label directly (rate is inconsistent with NSR)
                     conc_list = ["Sinus Tachycardia" if c in ("Normal Sinus Rhythm", "Normal sinus rhythm") else c for c in conc_list]
+                    # Also append Tachycardia note if not already present alongside other arrhythmias
+                    tachycardia_terms = ("tachycardia", "fast", "flutter", "fibrillation", "svt", "vt")
+                    if not any(t in c.lower() for c in conc_list for t in tachycardia_terms):
+                        conc_list.append("Sinus Tachycardia")
+
+        # FIX-3: Auto-add QTc warning to conclusion when clinically significant.
+        # A prolonged QTc is a risk for life-threatening arrhythmias (Torsades de Pointes).
+        # Without this, the doctor only sees the raw number buried in the header — easy to miss.
+        try:
+            qtc_for_warning = frozen.get('QTc', 0) or 0
+            qtc_already_noted = any('qtc' in c.lower() or 'qt' in c.lower() for c in conc_list)
+            if not qtc_already_noted and qtc_for_warning > 0:
+                if qtc_for_warning >= 500:
+                    conc_list.insert(0, f"Critically Prolonged QTc ({qtc_for_warning} ms) — High Risk")
+                elif qtc_for_warning >= 460:
+                    conc_list.insert(0, f"Prolonged QTc ({qtc_for_warning} ms)")
+                elif qtc_for_warning >= 440:
+                    conc_list.insert(0, f"Borderline QTc ({qtc_for_warning} ms)")
+        except Exception:
+            pass
 
         conc_list = conc_list[:5]   # hard cap at 5
 

@@ -1,3 +1,12 @@
+"""
+CardioX Test Cloud Connection Entry Point — test_cloud_connection/src/main.py
+=============================================================================
+PURPOSE & ARCHITECTURE:
+This is a lightweight testing entry point used for cloud sync and offline queuing integration tests.
+DEVELOPER NOTES:
+- Admin bypass has been removed in sync with src/main.py. Standard login authentication is enforced.
+"""
+
 import sys
 import os
 
@@ -641,18 +650,6 @@ class LoginRegisterDialog(QDialog):
     def handle_login(self):
         identifier = self.login_email.text()  # Can be full name, username, or phone
         password_or_serial = self.login_password.text()
-        # BUG-31 FIX: Admin credentials loaded from environment variable, not hardcoded
-        try:
-            admin_user = os.environ.get('CARDIOX_ADMIN_USER', 'admin')
-            admin_pass = os.environ.get('CARDIOX_ADMIN_PASS', '')  # empty = disabled unless set in .env
-            if admin_pass and identifier.strip().lower() == admin_user and password_or_serial == admin_pass:
-                self.result = True
-                self.username = 'admin'
-                self.user_details = {'is_admin': True}
-                self.accept()
-                return
-        except Exception:
-            pass
         if self.sign_in_logic.sign_in_user_allow_serial(identifier, password_or_serial):
             # Get the actual user record for details
             found = self.sign_in_logic._find_user_record(identifier)
@@ -909,20 +906,7 @@ def main():
                     except Exception as e:
                         logger.warning(f"Could not set machine serial ID for crash reporting: {e}")
                     
-                    # If admin, open Admin Reports UI instead of dashboard
-                    if isinstance(login.user_details, dict) and login.user_details.get('is_admin'):
-                        try:
-                            from utils.cloud_uploader import get_cloud_uploader
-                            from dashboard.admin_reports import AdminReportsDialog
-                            cu = get_cloud_uploader()
-                            cu.reload_config()
-                            dlg = AdminReportsDialog(cu)
-                            dlg.exec_()
-                        except Exception as e:
-                            QMessageBox.critical(None, "Admin", f"Failed to open admin reports: {e}")
-                        # After admin dialog closes, show login again
-                        login = LoginRegisterDialog()
-                        continue
+
                     # ── Show splash while Dashboard imports + constructs ──────
                     # On first run / slow disk, matplotlib+scipy imports take 2-5s
                     # Without splash: window appears frozen → user thinks crash

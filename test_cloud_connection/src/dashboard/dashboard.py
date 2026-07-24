@@ -1,3 +1,10 @@
+"""
+CardioX Test Cloud Dashboard — test_cloud_connection/src/dashboard/dashboard.py
+=================================================================================
+PURPOSE: Cloud sync test dashboard implementation.
+DEVELOPER NOTES: Holter/Comprehensive button disabled and hidden in sync with src/dashboard/dashboard.py.
+"""
+
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider
@@ -568,6 +575,8 @@ class Dashboard(QWidget):
         self.holter_btn.setStyleSheet("background: #00FF00; color: black; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.holter_btn.setEnabled(False)
+        self.holter_btn.setVisible(False)
         greet_row.addWidget(self.holter_btn)
 
         dashboard_layout.addLayout(greet_row)
