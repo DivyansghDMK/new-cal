@@ -2450,9 +2450,23 @@ class ECGAnalysisWindow(QDialog):
             super().keyPressEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  DATA LOADING  (identical to original — preserved completely)
-    # ─────────────────────────────────────────────────────────────────────────
-    # Removed: load_reports() - Report UI elements removed
+    def load_selected_report(self, index=0):
+        """Load selected report from dropdown."""
+        try:
+            self._load_and_render_report(index)
+        except Exception:
+            pass
+
+    def load_reports(self):
+        """Load public/mobile reports."""
+        try:
+            self.load_mobile_reports()
+        except Exception:
+            pass
+
+    def export_report(self):
+        """Export report JSON."""
+        pass
 
     def _load_and_render_report(self, index):
         """Load and render the selected report by index."""
