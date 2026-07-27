@@ -405,7 +405,7 @@ class ECGMenu(QGroupBox):
         layout = QVBoxLayout(self)
         self.buttons = {}
         self.menu_button_defs = [
-            ("Open ECG", self.on_open_ecg),
+            # ("Open ECG", self.on_open_ecg),  # Commented out - not currently needed
             ("Working Mode", self.on_working_mode),
             ("Report Setup", self.on_report_setup),
             ("Set Filter", self.on_set_filter),

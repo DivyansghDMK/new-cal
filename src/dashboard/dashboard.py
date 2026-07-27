@@ -3196,7 +3196,7 @@ class Dashboard(QWidget):
                     
                     # Validate Lead II data
                     if not isinstance(lead_ii_data, (list, np.ndarray)) or len(lead_ii_data) <= 10:
-                        print(" Invalid Lead II data")
+                        # print(" Invalid Lead II data")  # Commented out to suppress log messages
                         return self._fallback_wave_update(frame)
                     
                     # Convert to numpy array safely

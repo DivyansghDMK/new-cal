@@ -1028,7 +1028,7 @@ class ECGTestPage(QWidget):
 
         # Create ECG menu buttons
         ecg_menu_buttons = [
-            ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),
+            # ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),  # Commented out - not currently needed
             ("Holter", self.show_holter_menu, "#00FF00"),  # Added Holter button (Green)
             ("Working Mode", self.ecg_menu.show_working_mode, "#ffc107"),
             ("Report Setup", self.ecg_menu.show_report_setup, "#6c757d"),
@@ -1094,32 +1094,32 @@ class ECGTestPage(QWidget):
                 }}
             """)
 
+        # created_buttons[0].clicked.disconnect()  # Open ECG - removed
+        # created_buttons[0].clicked.connect(self.ecg_menu.show_open_ecg)  # Open ECG - removed
+        
         created_buttons[0].clicked.disconnect()
-        created_buttons[0].clicked.connect(self.ecg_menu.show_open_ecg)
+        created_buttons[0].clicked.connect(self.show_holter_menu)
+        # Disable Holter entry from 12-lead ECG menu per request.
+        created_buttons[0].setEnabled(False)
+        created_buttons[0].setVisible(False)
         
         created_buttons[1].clicked.disconnect()
-        created_buttons[1].clicked.connect(self.show_holter_menu)
-        # Disable Holter entry from 12-lead ECG menu per request.
-        created_buttons[1].setEnabled(False)
-        created_buttons[1].setVisible(False)
+        created_buttons[1].clicked.connect(self.ecg_menu.show_working_mode)
         
         created_buttons[2].clicked.disconnect()
-        created_buttons[2].clicked.connect(self.ecg_menu.show_working_mode)
+        created_buttons[2].clicked.connect(self.ecg_menu.show_report_setup)
         
         created_buttons[3].clicked.disconnect()
-        created_buttons[3].clicked.connect(self.ecg_menu.show_report_setup)
+        created_buttons[3].clicked.connect(self.ecg_menu.show_set_filter)
         
         created_buttons[4].clicked.disconnect()
-        created_buttons[4].clicked.connect(self.ecg_menu.show_set_filter)
+        created_buttons[4].clicked.connect(self.ecg_menu.show_system_setup)
         
         created_buttons[5].clicked.disconnect()
-        created_buttons[5].clicked.connect(self.ecg_menu.show_system_setup)
-        
-        created_buttons[6].clicked.disconnect()
-        created_buttons[6].clicked.connect(self.ecg_menu.show_load_default)
+        created_buttons[5].clicked.connect(self.ecg_menu.show_load_default)
 
-        created_buttons[7].clicked.disconnect()
-        created_buttons[7].clicked.connect(self.ecg_menu.show_exit)
+        created_buttons[6].clicked.disconnect()
+        created_buttons[6].clicked.connect(self.ecg_menu.show_exit)
 
         # Recording Toggle Button Section - Make it compact
         recording_frame = QFrame()
