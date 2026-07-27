@@ -118,95 +118,80 @@ def update_ecg_metrics_display(
             return current_time
 
         # ── BPM ──────────────────────────────────────────────────────────────
-        # skip_heart_rate=True → controlled exclusively by HolterBPMController
-        if not skip_heart_rate:
-            if 'heart_rate' in metric_labels:
-                raw_hr = int(round(heart_rate)) if isinstance(heart_rate, (int, float)) else 0
+        if not skip_heart_rate and 'heart_rate' in metric_labels:
+            raw_hr = int(round(heart_rate)) if isinstance(heart_rate, (int, float)) else 0
+            if raw_hr <= 0:
+                _last_valid['heart_rate'] = 0
+                _set_if_changed(metric_labels['heart_rate'], "  0")
+            else:
                 hr_val = _clamp('heart_rate', raw_hr)
-                if hr_val is not None:
-                    _set_if_changed(metric_labels['heart_rate'], f"{hr_val:3d}")
-                elif 'heart_rate' not in _last_valid:
-                    _set_if_changed(metric_labels['heart_rate'], "--")
-                # If out of range and we already have a valid value, keep it
+                _set_if_changed(metric_labels['heart_rate'], f"{hr_val:3d}" if hr_val else "  0")
 
-        # ── RR Interval ───────────────────────────────────────────────────── FIX-D1
+        # ── RR Interval ──────────────────────────────────────────────────────
         if 'rr_interval' in metric_labels:
             if rr_interval is not None and rr_interval > 0:
                 rr_val = int(round(rr_interval))
                 clamped = _clamp('rr_interval', rr_val)
-                if clamped is not None:
-                    _set_if_changed(metric_labels['rr_interval'], f"{clamped}")
-            # If no valid rr and no previous, show "--" once
-            elif 'rr_interval' not in _last_valid:
-                _set_if_changed(metric_labels['rr_interval'], "--")
+                _set_if_changed(metric_labels['rr_interval'], f"{clamped}" if clamped else "0")
+            else:
+                _last_valid['rr_interval'] = 0
+                _set_if_changed(metric_labels['rr_interval'], "0")
 
         # ── PR Interval ───────────────────────────────────────────────────────
         if 'pr_interval' in metric_labels:
             raw_pr = int(round(pr_interval)) if isinstance(pr_interval, (int, float)) else 0
-            if raw_pr > 0:
-                pr_val = _clamp('pr_interval', raw_pr)
-                if pr_val is not None:
-                    _set_if_changed(metric_labels['pr_interval'], f"{pr_val:3d}")
+            if raw_pr <= 0:
+                _last_valid['pr_interval'] = 0
+                _set_if_changed(metric_labels['pr_interval'], "  0")
             else:
-                # zero means "no signal" — only clear if we have no previous good value
-                if 'pr_interval' not in _last_valid:
-                    _set_if_changed(metric_labels['pr_interval'], "--")
+                pr_val = _clamp('pr_interval', raw_pr)
+                _set_if_changed(metric_labels['pr_interval'], f"{pr_val:3d}" if pr_val else "  0")
 
         # ── QRS Duration ──────────────────────────────────────────────────────
         if 'qrs_duration' in metric_labels:
             raw_qrs = int(round(qrs_duration)) if isinstance(qrs_duration, (int, float)) else 0
-            if raw_qrs > 0:
-                qrs_val = _clamp('qrs_duration', raw_qrs)
-                if qrs_val is not None:
-                    _set_if_changed(metric_labels['qrs_duration'], f"{qrs_val:3d}")
+            if raw_qrs <= 0:
+                _last_valid['qrs_duration'] = 0
+                _set_if_changed(metric_labels['qrs_duration'], "  0")
             else:
-                if 'qrs_duration' not in _last_valid:
-                    _set_if_changed(metric_labels['qrs_duration'], "--")
+                qrs_val = _clamp('qrs_duration', raw_qrs)
+                _set_if_changed(metric_labels['qrs_duration'], f"{qrs_val:3d}" if qrs_val else "  0")
 
-        # ── P Duration ────────────────────────────────────────────────────── FIX-D2
+        # ── P Duration ───────────────────────────────────────────────────────
         if 'p_duration' in metric_labels:
             if isinstance(p_duration, (int, float)) and p_duration > 0:
                 p_val = _clamp('p_duration', int(round(p_duration)))
-                if p_val is not None:
-                    _set_if_changed(metric_labels['p_duration'], f"{p_val}")
-            elif 'p_duration' not in _last_valid:
-                _set_if_changed(metric_labels['p_duration'], "--")
+                _set_if_changed(metric_labels['p_duration'], f"{p_val}" if p_val else "0")
+            else:
+                _last_valid['p_duration'] = 0
+                _set_if_changed(metric_labels['p_duration'], "0")
 
-        # ── ST (legacy key — keep at 0, ST elevation is separate) ────────────
+        # ── ST ───────────────────────────────────────────────────────────────
         if 'st_interval' in metric_labels:
             _set_if_changed(metric_labels['st_interval'], "0")
 
-        # ── QT / QTc ─────────────────────────────────────────────────────── FIX-D3
+        # ── QT / QTc ──────────────────────────────────────────────────────────
         if 'qtc_interval' in metric_labels:
-            parts = []
-            qt_ok  = qt_interval  is not None and isinstance(qt_interval,  (int, float)) and qt_interval  > 0
+            qt_ok = qt_interval is not None and isinstance(qt_interval, (int, float)) and qt_interval > 0
             qtc_ok = qtc_interval is not None and isinstance(qtc_interval, (int, float)) and qtc_interval > 0
 
-            if qt_ok:
-                qt_int = int(round(qt_interval))
-                qt_clamped = _clamp_qt_for_hr(qt_int, heart_rate)
-                if qt_clamped is not None:
-                    parts.append(f"{qt_clamped}")
-                elif 'qt_interval' in _last_valid:
-                    parts.append(f"{_last_valid['qt_interval']}")
-
-            if qtc_ok:
-                qtc_int = int(round(qtc_interval))
-                qtc_clamped = _clamp('qtc_interval', qtc_int)
-                if qtc_clamped is not None:
-                    parts.append(f"{qtc_clamped}")
-                elif 'qtc_interval' in _last_valid:
-                    parts.append(f"{_last_valid['qtc_interval']}")
-
-            if parts:
-                display_text = "/".join(parts)
-            elif 'qt_interval' in _last_valid and 'qtc_interval' in _last_valid:
-                # Both clamped out — hold the last composite display
-                display_text = f"{_last_valid['qt_interval']}/{_last_valid['qtc_interval']}"
+            if not qt_ok and not qtc_ok:
+                _last_valid['qt_interval'] = 0
+                _last_valid['qtc_interval'] = 0
+                _set_if_changed(metric_labels['qtc_interval'], "0/0")
             else:
-                display_text = "--"
-
-            _set_if_changed(metric_labels['qtc_interval'], display_text)
+                parts = []
+                if qt_ok:
+                    qt_int = int(round(qt_interval))
+                    qt_clamped = _clamp_qt_for_hr(qt_int, heart_rate)
+                    if qt_clamped is not None:
+                        parts.append(f"{qt_clamped}")
+                if qtc_ok:
+                    qtc_int = int(round(qtc_interval))
+                    qtc_clamped = _clamp('qtc_interval', qtc_int)
+                    if qtc_clamped is not None:
+                        parts.append(f"{qtc_clamped}")
+                _set_if_changed(metric_labels['qtc_interval'], "/".join(parts) if parts else "0/0")
 
         return current_time
 

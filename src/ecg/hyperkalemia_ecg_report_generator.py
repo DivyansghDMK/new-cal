@@ -3955,18 +3955,32 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # contact block on landscape page
     contact_block_x = 590
     contact_block_top_y = 545.90 + header_y_shift
+
+    def _fit_hk_text(text, max_w=200):
+        t = str(text or "").strip()
+        if not t: return ""
+        try:
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            if stringWidth(t, FONT_TYPE_BOLD, 9) <= max_w: return t
+            ell = "..."
+            while len(t) > 0 and stringWidth(t + ell, FONT_TYPE_BOLD, 9) > max_w:
+                t = t[:-1]
+            return t + ell if t else ""
+        except Exception:
+            return t[:22] + "..." if len(t) > 22 else t
+
     if patient_org:
-        org_name_label = String(contact_block_x, contact_block_top_y, patient_org,
+        org_name_label = String(contact_block_x, contact_block_top_y, _fit_hk_text(patient_org),
                         fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
         master_drawing.add(org_name_label)
     
     if patient_org_address:
-        org_address_label = String(contact_block_x, contact_block_top_y - 14, patient_org_address,
+        org_address_label = String(contact_block_x, contact_block_top_y - 14, _fit_hk_text(patient_org_address),
                           fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
         master_drawing.add(org_address_label)
 
     if patient_doctor_mobile:
-        phone_label = String(contact_block_x, contact_block_top_y - 28, patient_doctor_mobile,
+        phone_label = String(contact_block_x, contact_block_top_y - 28, _fit_hk_text(patient_doctor_mobile),
                           fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
         master_drawing.add(phone_label)
     

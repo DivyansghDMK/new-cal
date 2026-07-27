@@ -42,6 +42,8 @@ except ImportError:
 
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
 from PyQt5.QtGui import QFont, QPixmap, QColor, QImage
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
@@ -442,15 +444,14 @@ class PdfPreviewPanel(QWidget):
         self._render()
 
     def _update_nav(self):
-        has = self._total_pages > 0
-        self.zoom_in.setEnabled(_HAS_FITZ and has)
-        self.zoom_out.setEnabled(_HAS_FITZ and has)
-        if has:
+        self.zoom_in.setVisible(False)
+        self.zoom_out.setVisible(False)
+        if self._total_pages > 1:
             self.page_label.setText(f"Page {self._page_index+1} / {self._total_pages}")
-        elif self._pdf_path and os.path.exists(self._pdf_path) and not _HAS_FITZ:
-            self.page_label.setText("Preview unavailable")
+            self.page_label.setVisible(True)
         else:
-            self.page_label.setText("No report loaded")
+            self.page_label.setText("")
+            self.page_label.setVisible(False)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -876,6 +877,15 @@ class HistoryWindow(QDialog):
         self._preview_temp_pdf = ""
         self.setStyleSheet(self.STYLE)
 
+        # Load doctor profile defaults from users.json for table fallback
+        try:
+            from dashboard.doctor_profile_dialog import _load_users_db, _find_user_key_and_record
+            users_db = _load_users_db()
+            _, user_rec = _find_user_key_and_record(users_db, self.username or "")
+            self._user_profile = user_rec or {}
+        except Exception:
+            self._user_profile = {}
+
         # Responsive: use 90% of screen but never less than 800x500
         screen = QApplication.desktop().availableGeometry()
         self.resize(max(800, int(screen.width() * 0.90)),
@@ -892,8 +902,280 @@ class HistoryWindow(QDialog):
             pass
 
         self.load_history()
+        self._setup_shortcuts()   # keyboard shortcuts — added last so all widgets exist
 
-    # ── UI construction ─────────────────────────────────────────────────────
+    def _get_profile_fallback(self, entry, field_name):
+        val = str(entry.get(field_name, "") or "").strip()
+        if val:
+            return val
+
+        prof = getattr(self, "_user_profile", {}) or {}
+
+        if field_name == "doctor":
+            return str(entry.get("doctor", "") or prof.get("doctor", "") or prof.get("doctor_name", "") or prof.get("full_name", "") or self.owner_full_name or self.username or "").strip()
+        elif field_name == "org_name":
+            return str(entry.get("org_name", "") or entry.get("Org.", "") or prof.get("org_name", "") or prof.get("Org. Name", "") or prof.get("Org.", "") or "").strip()
+        elif field_name == "org_address":
+            return str(entry.get("org_address", "") or prof.get("org_address", "") or prof.get("Org. Address", "") or "").strip()
+        return val
+
+    # ── Keyboard Shortcuts ──────────────────────────────────────────────────
+    def _setup_shortcuts(self):
+        """Register keyboard shortcuts for common history-window actions."""
+        def _sc(key, slot):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(slot)
+            return sc
+
+        _sc("Ctrl+P", self._preview_selected)                      # Preview
+        _sc("Ctrl+E", self._send_email)                            # Email
+        _sc("Ctrl+O", self._open_in_system)                        # Open in viewer
+        _sc("Ctrl+F", lambda: self.search_input.setFocus())        # Focus search
+        _sc("F5",     self.load_history)                           # Refresh table
+        _sc("Ctrl+D", self._export_dicom)                          # Export DICOM
+        _sc("F1",     self._show_shortcuts_dialog)                 # Show shortcuts popup
+
+    # ── Shortcuts Help Dialog ────────────────────────────────────────────────
+    def _show_shortcuts_dialog(self):
+        """Display a popup dialog listing all system keyboard shortcuts."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts Reference")
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setMinimumSize(640, 560)
+        dialog.setStyleSheet("""
+            QDialog { background: #ffffff; border-radius: 12px; }
+            QLabel { color: #0f172a; font-family: 'Segoe UI', Arial; }
+            QTableWidget {
+                background: #ffffff; color: #0f172a; gridline-color: #e2e8f0;
+                border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px;
+                alternate-background-color: #f8fafc;
+            }
+            QHeaderView::section {
+                background: #f1f5f9; color: #0f172a; font-weight: bold; font-size: 13px;
+                padding: 10px; border: none; border-bottom: 2px solid #cbd5e1;
+            }
+            QPushButton {
+                background: #ff6600; color: #ffffff; border-radius: 8px; padding: 10px 28px;
+                font-size: 14px; font-weight: bold; border: none;
+            }
+            QPushButton:hover { background: #e65c00; }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        header_box = QHBoxLayout()
+        icon_lbl = QLabel("⌨️")
+        icon_lbl.setStyleSheet("font-size: 24px;")
+        title = QLabel("Keyboard Shortcuts Cheat Sheet")
+        title.setStyleSheet("font-size: 20px; font-weight: 800; color: #ff6600;")
+        header_box.addWidget(icon_lbl)
+        header_box.addWidget(title)
+        header_box.addStretch()
+        layout.addLayout(header_box)
+
+        shortcuts = [
+            ("History Window", "Ctrl + P", "Preview selected report in side panel"),
+            ("History Window", "Ctrl + E", "Open Email dialog for selected report"),
+            ("History Window", "Ctrl + O", "Open selected report in system PDF viewer"),
+            ("History Window", "Ctrl + F", "Jump cursor focus to Search bar"),
+            ("History Window", "Ctrl + D", "Export selected report as DICOM file"),
+            ("History Window", "F5", "Refresh report history table"),
+            ("Dashboard", "Ctrl + N", "Open New Patient Registration"),
+            ("Dashboard", "Ctrl + H", "Open ECG Report History Window"),
+            ("General", "F1", "Open this Keyboard Shortcuts cheat sheet"),
+            ("General", "Esc", "Close active popup / window"),
+        ]
+
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["Scope", "Shortcut Key", "Action Description"])
+        table.setRowCount(len(shortcuts))
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+
+        for row, (scope, key, desc) in enumerate(shortcuts):
+            item_scope = QTableWidgetItem(scope)
+            item_scope.setForeground(QColor("#475569"))
+            item_scope.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            item_scope.setTextAlignment(Qt.AlignCenter)
+
+            item_key = QTableWidgetItem(key)
+            item_key.setTextAlignment(Qt.AlignCenter)
+            item_key.setFont(QFont("Consolas", 10, QFont.Bold))
+            item_key.setForeground(QColor("#0284c7"))
+            item_key.setBackground(QColor("#e0f2fe"))
+
+            item_desc = QTableWidgetItem(desc)
+            item_desc.setForeground(QColor("#0f172a"))
+            item_desc.setFont(QFont("Segoe UI", 10, QFont.Bold if "F1" in key or "Ctrl" in key else QFont.Normal))
+
+            table.setItem(row, 0, item_scope)
+            table.setItem(row, 1, item_key)
+            table.setItem(row, 2, item_desc)
+            table.setRowHeight(row, 32)
+
+        table.setColumnWidth(0, 140)
+        table.setColumnWidth(1, 150)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        layout.addWidget(table)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(dialog.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dialog.exec_()
+
+
+
+    # ── DICOM Export ─────────────────────────────────────────────────────────
+    def _export_dicom(self):
+        """Export the selected history row as a DICOM file."""
+        try:
+            from utils.dicom_exporter import entry_to_dicom, is_available
+        except ImportError:
+            QMessageBox.warning(
+                self, "DICOM Export",
+                "DICOM exporter module not found.\n"
+                "Ensure dicom_exporter.py is in src/utils/."
+            )
+            return
+
+        if not is_available():
+            QMessageBox.warning(
+                self, "DICOM Export — Not Available",
+                "pydicom is not installed.\n"
+                "Run the following command and restart:\n\n"
+                "    pip install pydicom"
+            )
+            return
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self, "DICOM Export", "Please select a report row first."
+            )
+            return
+
+        # Retrieve the full entry from all_history_entries
+        entry = None
+        try:
+            # Match by row data (date + patient name)
+            date_item = self.table.item(row, 0)
+            name_item = self.table.item(row, 4)
+            if date_item and name_item:
+                d = date_item.text().strip()
+                n = name_item.text().strip()
+                for e in self.all_history_entries:
+                    if e.get("date", "") == d and (
+                        e.get("patient_name", "") == n or
+                        (e.get("first_name", "") + " " + e.get("last_name", "")).strip() == n
+                    ):
+                        entry = e
+                        break
+        except Exception:
+            pass
+
+        if entry is None:
+            QMessageBox.warning(self, "DICOM Export", "Could not retrieve data for the selected row.")
+            return
+
+        # Ask user where to save
+        patient_safe = re.sub(r"\W+", "_", str(entry.get("patient_name") or "patient")).strip("_")
+        default_name = f"ECG_{patient_safe}_{entry.get('date','')}.dcm"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export as DICOM",
+            default_name,
+            "DICOM Files (*.dcm);;All Files (*.*)"
+        )
+        if not save_path:
+            return
+
+        try:
+            out = entry_to_dicom(entry, save_path)
+            reply = QMessageBox.information(
+                self,
+                "DICOM Export — Saved",
+                f"DICOM file saved:\n{out}\n\nOpen containing folder?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                import subprocess
+                subprocess.Popen(f'explorer /select,"{out}"')
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "DICOM Export Failed",
+                f"Could not create DICOM file:\n{exc}"
+            )
+
+    # ── HL7 Export ───────────────────────────────────────────────────────────
+    def _export_hl7(self):
+        """Export or copy the HL7 v2.5.1 ORU^R01 message for the selected report."""
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self, "Export HL7", "Please select a report row first."
+            )
+            return
+
+        entry = None
+        try:
+            date_item = self.table.item(row, 0)
+            name_item = self.table.item(row, 4)
+            if date_item and name_item:
+                d = date_item.text().strip()
+                n = name_item.text().strip()
+                for e in self.all_history_entries:
+                    if e.get("date", "") == d and (
+                        e.get("patient_name", "") == n or
+                        (e.get("first_name", "") + " " + e.get("last_name", "")).strip() == n
+                    ):
+                        entry = e
+                        break
+        except Exception:
+            pass
+
+        if entry is None:
+            QMessageBox.warning(self, "Export HL7", "Could not retrieve data for selected row.")
+            return
+
+        hl7_text = entry.get("hl7_message") or _history_entry_to_hl7(entry)
+
+        # Save dialog
+        patient_safe = re.sub(r"\W+", "_", str(entry.get("patient_name") or "patient")).strip("_")
+        default_name = f"HL7_{patient_safe}_{entry.get('date','')}.hl7"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export HL7 v2.5.1 Message",
+            default_name,
+            "HL7 Files (*.hl7);;Text Files (*.txt);;All Files (*.*)"
+        )
+        if not save_path:
+            return
+
+        try:
+            with open(save_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(hl7_text)
+
+            QApplication.clipboard().setText(hl7_text)
+            reply = QMessageBox.information(
+                self,
+                "HL7 Message Exported",
+                f"HL7 v2.5.1 message saved to:\n{save_path}\n\n"
+                f"✅ HL7 message has also been copied to your clipboard!\n"
+                f"You can paste it directly into your EMR/HIS integration terminal.",
+                QMessageBox.Ok,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "HL7 Export Failed", f"Could not write HL7 file:\n{exc}")
+
+    # ── UI construction ──────────────────────────────────────────────────────
     def _build_ui(self):
         from PyQt5.QtWidgets import QTabWidget
         root = QVBoxLayout(self)
@@ -924,6 +1206,19 @@ class HistoryWindow(QDialog):
         hh.addSpacing(10)
         hh.addLayout(txt_col)
         hh.addStretch()
+        shortcuts_btn = QPushButton("⌨️  Shortcuts (F1)")
+        shortcuts_btn.setFixedSize(155, 36)
+        shortcuts_btn.setCursor(Qt.PointingHandCursor)
+        shortcuts_btn.setToolTip("View all keyboard shortcuts cheat sheet (F1)")
+        shortcuts_btn.setStyleSheet(
+            "QPushButton { background: #ff6600; color: #ffffff; "
+            "border: 1px solid #ff8533; border-radius: 10px; font-weight: bold; font-size: 12px; padding: 2px 10px; }"
+            "QPushButton:hover { background: #e65c00; border-color: #ffffff; }"
+        )
+        shortcuts_btn.clicked.connect(self._show_shortcuts_dialog)
+        hh.addWidget(shortcuts_btn)
+        hh.addSpacing(8)
+
         close_btn = QPushButton("✕  Close")
         close_btn.setObjectName("btn_close")
         close_btn.setFixedSize(98, 36)
@@ -1471,12 +1766,14 @@ class HistoryWindow(QDialog):
         srch_lbl = QLabel("Search by:")
         srch_lbl.setStyleSheet("color:#111111;font-size:12px;")
         self.search_type_combo = QComboBox()
-        self.search_type_combo.addItems(["Patient Name", "Date Range", "Single Date"])
+        # Phase-2B: 'All Fields' is now the default (index 0)
+        self.search_type_combo.addItems(["All Fields", "Patient Name", "Date Range", "Single Date"])
         self.search_type_combo.currentTextChanged.connect(self._on_search_type_changed)
         self.search_type_combo.setFixedWidth(130)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Patient name...")
+        self.search_input.setPlaceholderText("Search name, doctor, diagnosis, date…")
+        self.search_input.setMaxLength(30)
         self.search_input.textChanged.connect(self.filter_table)
 
         self.start_date_edit = QDateEdit()
@@ -1513,12 +1810,67 @@ class HistoryWindow(QDialog):
         h.addWidget(refresh_btn)
         return frame
 
+    # ── Phase-1: risk severity helpers ──────────────────────────────────────
+    _CRITICAL_KEYWORDS = (
+        "ventricular tachycardia", "vt", "ventricular fibrillation", "vf",
+        "atrial fibrillation", "afib", "af ", "stemi", "complete heart block",
+        "third degree", "asystole", "bigeminy", "trigeminy",
+        "wide complex", "flutter", "torsade",
+    )
+    _WARNING_KEYWORDS = (
+        "tachycardia", "bradycardia", "pac", "pvc", "lbbb", "rbbb",
+        "first degree block", "second degree", "mobitz", "wenckebach",
+        "prolonged qt", "qtc", "st elevation", "st depression",
+        "ischemia", "infarction", "hypertrophy",
+    )
+    _NORMAL_KEYWORDS = (
+        "normal sinus", "sinus rhythm", "within normal", "no significant",
+        "regular rhythm", "normal ecg", "normal study",
+    )
+
+    @staticmethod
+    def _get_row_risk(entry: dict):
+        """Return ('critical'|'warning'|'normal'|'') based on entry findings."""
+        # Collect all text fields that may contain findings
+        text_parts = []
+        for key in ("findings", "interpretation", "conclusion", "rhythm",
+                     "arrhythmia", "diagnosis", "report_type"):
+            val = entry.get(key)
+            if isinstance(val, list):
+                text_parts.extend(str(v) for v in val)
+            elif isinstance(val, str) and val:
+                text_parts.append(val)
+        combined = " ".join(text_parts).lower()
+        if not combined:
+            return ""
+        for kw in HistoryWindow._CRITICAL_KEYWORDS:
+            if kw in combined:
+                return "critical"
+        for kw in HistoryWindow._WARNING_KEYWORDS:
+            if kw in combined:
+                return "warning"
+        for kw in HistoryWindow._NORMAL_KEYWORDS:
+            if kw in combined:
+                return "normal"
+        return ""
+
+    @staticmethod
+    def _get_findings_summary(entry: dict) -> str:
+        """Return a short one-line findings string for the Findings column."""
+        findings = entry.get("findings") or entry.get("interpretation") or entry.get("conclusion") or ""
+        if isinstance(findings, list):
+            # Join first 2 items and cap at 60 chars
+            text = "; ".join(str(f) for f in findings[:2] if f)
+        else:
+            text = str(findings)
+        return text[:60] + ("…" if len(text) > 60 else "")
+
     def _build_table(self, layout):
         self.table = QTableWidget()
-        self.table.setColumnCount(11)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
             "Date", "Time", "Org.", "Doctor", "Patient Name",
-            "Org. Name", "Org. Address", "Height", "Weight", "Type", "Status"
+            "Org. Name", "Org. Address", "Type", "Status", "Findings",
         ])
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
@@ -1543,12 +1895,13 @@ class HistoryWindow(QDialog):
         fixed_columns = {
             0: 92,   # Date
             1: 84,   # Time
+            2: 120,  # Org.
+            3: 110,  # Doctor
             5: 130,  # Org. Name
             6: 150,  # Org. Address
-            7: 68,   # Height
-            8: 68,   # Weight
-            9: 90,   # Type
-            10: 86,  # Status
+            7: 90,   # Type
+            8: 86,   # Status
+            # col 9 (Findings) → Stretch below
         }
         for col in range(self.table.columnCount()):
             if col in fixed_columns:
@@ -1556,10 +1909,12 @@ class HistoryWindow(QDialog):
                 self.table.setColumnWidth(col, fixed_columns[col])
             elif col == 4:
                 hh.setSectionResizeMode(col, QHeaderView.Stretch)
+            elif col == 9:  # Findings — stretch to fill remaining space
+                hh.setSectionResizeMode(col, QHeaderView.Stretch)
             else:
                 hh.setSectionResizeMode(col, QHeaderView.Interactive)
-        self.table.setColumnWidth(2, 126)
-        self.table.setColumnWidth(3, 96)
+        self.table.setColumnWidth(2, 120)
+        self.table.setColumnWidth(3, 110)
         self.table.setColumnWidth(4, max(140, self.table.viewport().width() // 5))
 
     def resizeEvent(self, event):
@@ -1593,21 +1948,48 @@ class HistoryWindow(QDialog):
             row.addWidget(b)
             return b
 
-        btn("Preview", self._preview_selected)
-        btn("Email", self._send_email)
-        btn("Open Report", self._open_in_system, secondary=True)
+        btn("Preview",        self._preview_selected)
+        btn("Email",           self._send_email)
+        btn("Open Report",     self._open_in_system,      secondary=True)
         btn("Send for Review", self.send_report_for_review)
-        btn("Export All", self.export_all_reports, secondary=True)
+        btn("Export All",      self.export_all_reports,   secondary=True)
+
+        # DICOM export button (disabled gracefully if pydicom not installed)
+        try:
+            from utils.dicom_exporter import is_available as _dicom_ok
+            _dicom_enabled = _dicom_ok()
+        except Exception:
+            _dicom_enabled = False
+        dicom_btn = QPushButton("Export DICOM")
+        dicom_btn.setFixedHeight(34)
+        dicom_btn.setObjectName("btn_secondary")
+        dicom_btn.setToolTip(
+            "Export selected report as DICOM ECG file (Ctrl+D)"
+            if _dicom_enabled else
+            "pydicom not installed — run: pip install pydicom"
+        )
+        dicom_btn.setEnabled(_dicom_enabled)
+        dicom_btn.clicked.connect(self._export_dicom)
+        row.addWidget(dicom_btn)
+
+        btn("Export HL7", self._export_hl7, secondary=True)
+
         row.addStretch()
 
         layout.addWidget(bar)
 
     # ── search ──────────────────────────────────────────────────────────────
     def _on_search_type_changed(self, search_type):
-        self.search_input.setVisible(search_type == "Patient Name")
+        # Phase-2B: 'All Fields' and 'Patient Name' both use the text input
+        self.search_input.setVisible(search_type in ("All Fields", "Patient Name"))
         for w in (self.start_date_edit, self.to_label, self.end_date_edit):
             w.setVisible(search_type == "Date Range")
         self.single_date_edit.setVisible(search_type == "Single Date")
+        # Update placeholder to help the doctor understand what to type
+        if search_type == "All Fields":
+            self.search_input.setPlaceholderText("Search name, doctor, diagnosis, date…")
+        else:
+            self.search_input.setPlaceholderText("Patient name…")
         self.filter_table()
 
     def filter_table(self):
@@ -1615,7 +1997,31 @@ class HistoryWindow(QDialog):
         self.table.setRowCount(0)
         for entry in self.all_history_entries:
             show = False
-            if search_type == "Patient Name":
+            if search_type == "All Fields":
+                # Phase-2B: search across every relevant field
+                txt = self.search_input.text().strip().lower()
+                if not txt:
+                    show = True
+                else:
+                    # Build a combined string from all searchable fields
+                    findings = entry.get("findings", [])
+                    findings_str = (" ".join(str(f) for f in findings)
+                                    if isinstance(findings, list) else str(findings or ""))
+                    haystack = " ".join([
+                        str(entry.get("patient_name", "")),
+                        str(entry.get("first_name", "")),
+                        str(entry.get("last_name", "")),
+                        str(entry.get("doctor", "")),
+                        str(entry.get("report_type", "")),
+                        str(entry.get("date", "")),
+                        str(entry.get("org_name", "")),
+                        str(entry.get("interpretation", "")),
+                        str(entry.get("conclusion", "")),
+                        str(entry.get("review_status", "")),
+                        findings_str,
+                    ]).lower()
+                    show = txt in haystack
+            elif search_type == "Patient Name":
                 txt = self.search_input.text().strip().lower()
                 show = txt == "" or txt in entry.get("patient_name", "").lower()
             elif search_type == "Date Range":
@@ -1907,35 +2313,85 @@ class HistoryWindow(QDialog):
         row = self.table.rowCount()
         self.table.insertRow(row)
         status = entry.get("review_status", "Pending")
+
+        # ── Findings summary for inline column ───────────────────────────────
+        findings_text = self._get_findings_summary(entry)
+
+        # Profile fallbacks for doctor and clinic details
+        doc = self._get_profile_fallback(entry, "doctor")
+        org_name = self._get_profile_fallback(entry, "org_name")
+        org_addr = self._get_profile_fallback(entry, "org_address")
+
         values = [
-            entry.get("date", ""), entry.get("time", ""), entry.get("Org.", ""),
-            entry.get("doctor", ""),
+            entry.get("date", ""),
+            entry.get("time", ""),
+            org_name,
+            doc,
             entry.get("patient_name", "") or (
                 (entry.get("first_name", "") + " " + entry.get("last_name", "")).strip()),
-            entry.get("org_name", ""), entry.get("org_address", ""),
-            str(entry.get("height", "")), str(entry.get("weight", "")),
-            entry.get("report_type", ""), status,
+            org_name,
+            org_addr,
+            entry.get("report_type", ""),
+            status,
+            findings_text,  # col 9 — Findings
         ]
+
+        # ── Determine row risk level for color coding ─────────────────────────
+        risk = self._get_row_risk(entry)
+        row_bg_colors = {
+            "critical": "#fde8e8",   # soft red
+            "warning":  "#fff8e1",   # soft amber
+            "normal":   "#e8f5e9",   # soft green
+        }
+        row_bg = row_bg_colors.get(risk, "")
+
         status_colors = {
             "Pending":     ("#f2f2f2", "#333333"),
             "Under Review":("#e8e8e8", "#111111"),
             "Reviewed":    ("#d9d9d9", "#111111"),
             "Queued":      ("#efefef", "#333333"),
         }
+
+        # ── risk badge prefix for Status cell (col 8) ─────────────────────────
+        risk_badge = {"critical": "🔴 ", "warning": "🟡 ", "normal": "🟢 "}.get(risk, "")
+
         for col, val in enumerate(values):
-            item = QTableWidgetItem(val)
-            item.setTextAlignment(Qt.AlignCenter)
-            if col == 10:
-                bg, fg = status_colors.get(val, ("#e9ecef", "#6c757d"))
+            # Prepend badge only on Status column (col 8)
+            display_val = (risk_badge + val) if (col == 8 and risk_badge) else val
+            item = QTableWidgetItem(display_val)
+            item.setTextAlignment(
+                Qt.AlignLeft | Qt.AlignVCenter if col == 9 else Qt.AlignCenter
+            )
+
+            # Apply row background tint
+            if row_bg and col != 8:
+                item.setBackground(QColor(row_bg))
+
+            # Status column colors
+            if col == 8:
+                bg, fg = status_colors.get(status, ("#e9ecef", "#6c757d"))
                 item.setBackground(QColor(bg))
                 item.setForeground(QColor(fg))
                 item.setFont(QFont("Segoe UI", 9, QFont.Bold))
+
+            # Findings column tooltip shows full text
+            if col == 9 and findings_text:
+                full_findings = entry.get("findings") or entry.get("interpretation") or entry.get("conclusion") or ""
+                if isinstance(full_findings, list):
+                    full_findings = "; ".join(str(f) for f in full_findings if f)
+                item.setToolTip(str(full_findings))
+                item.setForeground(QColor(
+                    "#b91c1c" if risk == "critical" else
+                    "#92400e" if risk == "warning" else
+                    "#166534" if risk == "normal" else "#374151"
+                ))
+
             self.table.setItem(row, col, item)
 
         rf = entry.get("report_file", "")
         if self.table.item(row, 0):
             self.table.item(row, 0).setData(Qt.UserRole, rf)
-        self.table.setRowHeight(row, 26)
+        self.table.setRowHeight(row, 28)  # slightly taller for readability
         self._configure_table_columns()
 
     # ── interactions ─────────────────────────────────────────────────────────
@@ -2060,7 +2516,7 @@ class HistoryWindow(QDialog):
         menu.setStyleSheet("QMenu{background:#fff;border:1px solid #cfcfcf;border-radius:5px;}"
                            "QMenu::item{padding:7px 18px;color:#111;}"
                            "QMenu::item:selected{background:#111;color:#fff;}")
-        si = self.table.item(row, 10)
+        si = self.table.item(row, 8)
         current = si.text() if si else "Pending"
         acts = {
             menu.addAction("⚪ Pending"): "Pending",
@@ -2076,7 +2532,7 @@ class HistoryWindow(QDialog):
 
     def _update_review_status(self, row, new_status):
         from PyQt5.QtGui import QColor
-        si = self.table.item(row, 10)
+        si = self.table.item(row, 8)
         if not si:
             return
         si.setText(new_status)
@@ -2335,7 +2791,7 @@ class HistoryWindow(QDialog):
     # ── helpers ───────────────────────────────────────────────────────────────
     def _get_report_data_from_row(self, row) -> dict:
         cols = ["date", "time", "organization", "doctor", "patient_name",
-                "age", "gender", "height", "weight", "report_type", "review_status"]
+                "org_name", "org_address", "report_type", "review_status"]
         data = {}
         for i, key in enumerate(cols):
             item = self.table.item(row, i)
@@ -2617,8 +3073,6 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
     }
     if isinstance(patient_details, dict):
         base.update(patient_details)
-        # Normalise organisation fields so the history table always finds them
-        # regardless of which key variant the form stored.
         if not base.get("org_name"):
             base["org_name"] = (
                 base.get("Org. Name")
@@ -2632,6 +3086,25 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
                 or base.get("organisation_address")
                 or ""
             )
+
+    # Auto-fill doctor and organization profile from users.json if blank
+    try:
+        from dashboard.doctor_profile_dialog import _load_users_db, _find_user_key_and_record
+        users_db = _load_users_db()
+        _, user_rec = _find_user_key_and_record(users_db, username or "")
+        if user_rec:
+            if not base.get("doctor"):
+                base["doctor"] = user_rec.get("doctor") or user_rec.get("doctor_name") or user_rec.get("full_name") or owner_full_name or username or ""
+            if not base.get("doctor_name"):
+                base["doctor_name"] = base.get("doctor")
+            if not base.get("org_name"):
+                base["org_name"] = user_rec.get("org_name") or user_rec.get("Org. Name") or user_rec.get("Org.") or ""
+            if not base.get("Org."):
+                base["Org."] = base.get("org_name")
+            if not base.get("org_address"):
+                base["org_address"] = user_rec.get("org_address") or user_rec.get("Org. Address") or ""
+    except Exception:
+        pass
 
     # Preserve the full structured record and emit an HL7 sidecar so the history
     # archive can be exchanged with other systems later without losing context.

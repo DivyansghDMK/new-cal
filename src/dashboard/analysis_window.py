@@ -1,4 +1,4 @@
-﻿"""
+"""
 ECG Analysis Window — Professional Clinical Edition
 ====================================================
 Enhanced with:
@@ -1022,18 +1022,30 @@ class PublicReportsDialog(QDialog):
             self.table.setRowCount(len(rows))
 
             for row, report in enumerate(rows):
-                name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
-                age = self._norm(self._get_first(report, "age", "patient_age", "patientAge"))
-                gender = self._norm(self._get_first(report, "gender", "patient_gender", "patientGender"))
+                name = self._norm(self._get_first(report, "name", "patient_name", "patientName")) or "Unknown"
+                age_val = self._get_first(report, "age", "patient_age", "patientAge")
+                gender_val = self._get_first(report, "gender", "patient_gender", "patientGender")
 
-                vals = [name, f"{age}/{gender}".strip("/")]
+                age_str = self._norm(age_val)
+                gender_str = self._norm(gender_val)
+
+                if age_str and gender_str:
+                    ag_str = f"{age_str}/{gender_str}"
+                elif age_str:
+                    ag_str = age_str
+                elif gender_str:
+                    ag_str = gender_str
+                else:
+                    ag_str = "—"
+
+                vals = [name, ag_str]
                 for col, val in enumerate(vals):
                     item = QTableWidgetItem(val)
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col == 0 else Qt.AlignCenter)
                     self.table.setItem(row, col, item)
                 if self.table.item(row, 0):
                     self.table.item(row, 0).setData(Qt.UserRole, report)
-                self.table.setRowHeight(row, 26)
+                self.table.setRowHeight(row, 28)
         finally:
             self.table.blockSignals(False)
             self.table.setUpdatesEnabled(True)
@@ -1487,6 +1499,8 @@ class ECGAnalysisWindow(QDialog):
         self.patient_meta_lbl.setStyleSheet("color:#d8b28b;font-size:10px;")
         pat_col.addWidget(self.patient_lbl)
         pat_col.addWidget(self.patient_meta_lbl)
+        self.patient_lbl.setVisible(False)
+        self.patient_meta_lbl.setVisible(False)
         lay.addLayout(pat_col)
         lay.addStretch()
 
@@ -1500,6 +1514,25 @@ class ECGAnalysisWindow(QDialog):
         lay.addWidget(self.measure_lbl)
         lay.addStretch()
 
+        self.report_lbl = QLabel("Report:")
+        self.report_lbl.setVisible(False)
+        lay.addWidget(self.report_lbl)
+        self.report_combo = QComboBox()
+        self.report_combo.currentIndexChanged.connect(self.load_selected_report)
+        self.report_combo.setMinimumWidth(280)
+        self.report_combo.setVisible(False)
+        lay.addWidget(self.report_combo)
+
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setFixedWidth(32)
+        self.refresh_btn.clicked.connect(self.load_reports)
+        self.refresh_btn.setVisible(False)
+        lay.addWidget(self.refresh_btn)
+
+        self.export_btn = QPushButton("⬇ JSON")
+        self.export_btn.clicked.connect(self.export_report)
+        self.export_btn.setVisible(False)
+        lay.addWidget(self.export_btn)
 
         self.pdf_btn = QPushButton("📄 PDF Report")
         self.pdf_btn.setObjectName("primary")
@@ -1972,6 +2005,7 @@ class ECGAnalysisWindow(QDialog):
         self.mobile_no_input = QLineEdit()
         self.mobile_no_input.setObjectName("mobile_input")
         self.mobile_no_input.setPlaceholderText("XXXXXXXXXX")
+        self.mobile_no_input.setMaxLength(10)
         self.mobile_no_input.setFixedWidth(170)
         mobile_lay.addWidget(self.mobile_no_input, 0, Qt.AlignRight)
 

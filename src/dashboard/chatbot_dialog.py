@@ -78,7 +78,7 @@ class ChatbotThread(QThread):
                 json={
                     "model": model_name,
                     "temperature": 0.2,
-                    "max_tokens": 400,
+                    "max_tokens": 1200,
                     "messages": [
                         {"role": "system", "content": ECG_SYSTEM_PROMPT},
                         {"role": "user", "content": self.prompt},
@@ -187,11 +187,30 @@ class ChatbotDialog(QDialog):
         self.input_box = QTextEdit()
         self.input_box.setObjectName("InputBox")
         self.input_box.setFixedHeight(48)
+
+        # Phase-1C: Analyze Current Patient button
+        self.analyze_btn = QPushButton("📋 Patient")
+        self.analyze_btn.setObjectName("SendBtn")
+        self.analyze_btn.setFixedHeight(48)
+        self.analyze_btn.setMinimumWidth(90)
+        self.analyze_btn.setToolTip(
+            "Auto-fill with current patient findings from last ECG analysis"
+        )
+        self.analyze_btn.setStyleSheet(
+            "QPushButton#SendBtn{"
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #16a34a,stop:1 #2563eb);"
+            "color:white;border-radius:12px;font-size:13px;font-weight:bold;padding:10px 14px;}"
+            "QPushButton#SendBtn:hover{background:#15803d;}"
+            "QPushButton#SendBtn:disabled{background:#ccc;color:#fff;}"
+        )
+        self.analyze_btn.clicked.connect(self._inject_patient_context)
+
         self.send_btn = QPushButton("Send")
         self.send_btn.setObjectName("SendBtn")
         self.send_btn.setFixedHeight(48)
         self.send_btn.setMinimumWidth(100)
         self.send_btn.clicked.connect(self.send_message)
+        input_row.addWidget(self.analyze_btn)
         input_row.addWidget(self.input_box, 4)
         input_row.addWidget(self.send_btn, 1)
         layout.addLayout(input_row)
@@ -200,6 +219,7 @@ class ChatbotDialog(QDialog):
         if not self.api_key:
             self.add_message("[Error: Chatbot API key not set. Please set GROQ_API_KEY in your .env file.]", sender="AI")
             self.send_btn.setEnabled(False)
+
     def add_message(self, text, sender="user"):
         item = QListWidgetItem()
         bubble = QWidget()
@@ -228,6 +248,60 @@ class ChatbotDialog(QDialog):
     def _message_max_width(self):
         viewport_width = self.chat_list.viewport().width() if hasattr(self, "chat_list") else self.width()
         return max(260, viewport_width - 80)
+
+    # Phase-1C: inject current patient context into the chatbot input ──────────
+    def _inject_patient_context(self):
+        """Read last_conclusions.json and prefill the chatbot with current patient findings."""
+        try:
+            # Locate last_conclusions.json relative to the project root
+            base_candidates = [
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'last_conclusions.json'),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'last_conclusions.json'),
+            ]
+            conclusions_path = ""
+            for c in base_candidates:
+                norm = os.path.normpath(c)
+                if os.path.exists(norm):
+                    conclusions_path = norm
+                    break
+
+            if not conclusions_path:
+                self.input_box.setPlainText(
+                    "Interpret this ECG: No live patient data found. "
+                    "Please describe the ECG findings manually."
+                )
+                return
+
+            with open(conclusions_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            timestamp   = data.get('timestamp', 'unknown time')
+            findings    = data.get('findings', [])
+            recs        = data.get('recommendations', [])
+
+            if isinstance(findings, list):
+                findings_str = "; ".join(str(x) for x in findings if x) or "No findings recorded"
+            else:
+                findings_str = str(findings) or "No findings recorded"
+
+            if isinstance(recs, list):
+                recs_str = "; ".join(str(x) for x in recs if x) or "None"
+            else:
+                recs_str = str(recs) or "None"
+
+            context = (
+                f"Current patient ECG summary (recorded at {timestamp}):\n"
+                f"Findings: {findings_str}\n"
+                f"Recommendations: {recs_str}\n\n"
+                f"Please interpret these ECG findings and explain their clinical significance."
+            )
+            self.input_box.setPlainText(context)
+            self.input_box.setFocus()
+        except Exception as exc:
+            self.input_box.setPlainText(
+                f"Interpret this ECG: Could not read patient data ({exc}). "
+                "Please type the ECG findings manually."
+            )
 
     def _rewrap_messages(self):
         for i in range(self.chat_list.count()):

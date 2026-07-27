@@ -128,6 +128,22 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
         filter_band = "Filter: Off"
     filter_info = f"25.0 mm/s   {filter_band}   AC : {ac_frequency}   10.0 mm/mV"
 
+def _fit_pdf_text(text, max_width_pt, font_name="Helvetica", font_size=9):
+    """Truncate string with '...' if width in points exceeds max_width_pt so text never overflows PDF box or margins."""
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    try:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        if stringWidth(text, font_name, font_size) <= max_width_pt:
+            return text
+        ellipsis = "..."
+        while len(text) > 0 and stringWidth(text + ellipsis, font_name, font_size) > max_width_pt:
+            text = text[:-1]
+        return (text + ellipsis) if text else ""
+    except Exception:
+        return text[:18] + "..." if len(text) > 18 else text
+
     # 5. Prepare Org Info
     org_name = patient.get('Org.', '') if patient else ''
     org_address = patient.get('org_address', '') if patient else ''
@@ -166,7 +182,8 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     master_drawing.add(String(col1_x, y_start - 4*y_step, display_filter_info, fontSize=9, fontName="Helvetica", fillColor=colors.black))
 
     # --- COLUMN 2 ---
-    master_drawing.add(String(col2_x, y_start, f"Name: {full_name}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    fitted_name = _fit_pdf_text(f"Name: {full_name}", 115, "Helvetica", 9)
+    master_drawing.add(String(col2_x, y_start, fitted_name, fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(col2_x, y_start - y_step, f"HR: {int(round(float(HR)))} bpm", fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(col2_x, y_start - 2*y_step, f"RR: {RR} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(col2_x, y_start - 3*y_step, f"PR: {PR} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
@@ -181,9 +198,13 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     # master_drawing.add(String(col3_x, y_start - 4*y_step, f"P/QRS/T: {p_qrs_t_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
 
     # --- COLUMN 4 ---
-    master_drawing.add(String(col4_x, y_start, org_name, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(col4_x, y_start - y_step, org_address, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(col4_x, y_start - 2*y_step, phone_no, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    fitted_org = _fit_pdf_text(org_name, 130, "Helvetica-Bold", 9)
+    fitted_address = _fit_pdf_text(org_address, 130, "Helvetica-Bold", 9)
+    fitted_phone = _fit_pdf_text(phone_no, 130, "Helvetica-Bold", 9)
+
+    master_drawing.add(String(col4_x, y_start, fitted_org, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(col4_x, y_start - y_step, fitted_address, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(col4_x, y_start - 2*y_step, fitted_phone, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
 
 
 
@@ -3883,6 +3904,8 @@ def generate_ecg_report(
     t_mm = extract_axis_value(sanitized_t_axis)
     
     # Calculate axis values for data dictionary
+    rv5_mv = data.get('rv5_mv') if data.get('rv5_mv') is not None else (data.get('rv5') or 0.0)
+    sv1_mv = data.get('sv1_mv') if data.get('sv1_mv') is not None else (data.get('sv1') or 0.0)
     data['rv5_mv'] = rv5_mv
     data['sv1_mv'] = sv1_mv
     data['p_axis'] = sanitized_p_axis

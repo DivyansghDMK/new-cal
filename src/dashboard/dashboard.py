@@ -16,9 +16,9 @@ DEVELOPER NOTES & RECENT REFACTORS:
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider,
-    QRadioButton, QButtonGroup, QGraphicsDropShadowEffect, QToolButton
+    QRadioButton, QButtonGroup, QGraphicsDropShadowEffect, QToolButton, QShortcut
 )
-from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage, QIntValidator, QIcon, QDesktopServices
+from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage, QIntValidator, QIcon, QDesktopServices, QKeySequence
 from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal, QDate, QUrl
 try:
     from PyQt5.QtMultimedia import QSound
@@ -659,6 +659,44 @@ class Dashboard(QWidget):
         self.apply_language(self.current_language)
         
         dashboard_layout.addLayout(header)
+
+        # ── Phase-3A: Critical arrhythmia alert banner (hidden by default) ───
+        self._alert_banner_lbl = QLabel("")
+        self._alert_banner_lbl.setAlignment(Qt.AlignCenter)
+        self._alert_banner_lbl.setWordWrap(True)
+        self._alert_banner_lbl.setStyleSheet(
+            "QLabel {"
+            "  background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #b91c1c,stop:0.5 #dc2626,stop:1 #b91c1c);"
+            "  color: #ffffff;"
+            "  font-size: 14px;"
+            "  font-weight: bold;"
+            "  padding: 8px 16px;"
+            "  border-radius: 8px;"
+            "  letter-spacing: 0.5px;"
+            "}"
+        )
+        self._alert_banner_lbl.setVisible(False)
+        dashboard_layout.addWidget(self._alert_banner_lbl)
+
+        # ── Phase-3B: Offline queue pending badge (hidden when queue empty) ──
+        self._queue_badge_lbl = QLabel("")
+        self._queue_badge_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._queue_badge_lbl.setStyleSheet(
+            "QLabel {"
+            "  background: #1d4ed8;"
+            "  color: #ffffff;"
+            "  font-size: 11px;"
+            "  font-weight: bold;"
+            "  padding: 4px 14px;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        self._queue_badge_lbl.setVisible(False)
+        # Place badge in a right-aligned row
+        _badge_row = QHBoxLayout()
+        _badge_row.addStretch()
+        _badge_row.addWidget(self._queue_badge_lbl)
+        dashboard_layout.addLayout(_badge_row)
 
         # --- Device Connection Monitor ---
         self.device_connected = False
@@ -1624,6 +1662,19 @@ class Dashboard(QWidget):
             wb_layout.addWidget(warning_text, 1)
             
             dashboard_layout.insertWidget(2, warning_banner)
+
+        # Register keyboard shortcuts
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        """Register keyboard shortcuts for common dashboard actions."""
+        def _sc(key, slot):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(slot)
+            return sc
+
+        _sc("Ctrl+N", self.show_new_registration_dialog)
+        _sc("Ctrl+H", self.open_history_window)
 
     # Calendar date selection
     
@@ -3643,6 +3694,23 @@ class Dashboard(QWidget):
         except Exception as e:
             print(f"❌ Periodic sync error: {e}")
     
+    def reset_dashboard_metrics_to_zero(self):
+        """Reset all dashboard metric labels to 0 when no ECG signal is active."""
+        if hasattr(self, "metric_labels") and isinstance(self.metric_labels, dict):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("0 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
+            if key in self.metric_labels:
+                self.metric_labels[key].setText("0 ms")
+            if 'qt_interval' in self.metric_labels:
+                self.metric_labels['qt_interval'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
+
     def update_dashboard_metrics_from_ecg(self):
         try:
             import time as _time
@@ -3652,82 +3720,50 @@ class Dashboard(QWidget):
             if _time.time() - self._last_metrics_update_ts < 0.3:
                 return
             self._last_metrics_update_ts = _time.time()
-            if not self.is_ecg_active():
+            if not self.is_ecg_active() or self._is_ecg_frozen():
+                self.reset_dashboard_metrics_to_zero()
                 return
-            if self._is_ecg_frozen():
-                return
+
             if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'get_current_metrics'):
                 ecg_metrics = self.ecg_test_page.get_current_metrics()
                 hr_raw = str(ecg_metrics.get('heart_rate', '0')).strip()
                 pr_raw = str(ecg_metrics.get('pr_interval', '0')).strip()
                 qrs_raw = str(ecg_metrics.get('qrs_duration', '0')).strip()
                 p_raw = str(ecg_metrics.get('st_interval', '0')).replace(' ms', '').replace('mV', '').strip()
-                qt_raw = str(ecg_metrics.get('qt_interval', '')).replace(' ms', '').strip()
+                qt_raw = str(ecg_metrics.get('qt_interval', '0')).replace(' ms', '').strip()
                 qtc_raw = str(ecg_metrics.get('qtc_interval', '0')).replace(' ms', '').strip()
                 
                 # Check validity
                 def is_valid(val):
-                    return val not in ('', '0', '00', '0.0', '--', 'None')
-                
+                    return val not in ('', '0', '00', '0.0', '--', 'None', 'None ms')
+
+                # If lead off or no signal, reset cached metrics
+                if getattr(self.ecg_test_page, "_lead_off_latched", False):
+                    self._last_hr = "0"
+                    self._last_pr = "0"
+                    self._last_qrs = "0"
+                    self._last_p = "0"
+
                 if 'heart_rate' in self.metric_labels:
-                    if is_valid(hr_raw):
-                        self._last_hr = hr_raw
-                        self.metric_labels['heart_rate'].setText(f"{hr_raw} BPM")
-                    else:
-                        cached = getattr(self, '_last_hr', None)
-                        if cached:
-                            self.metric_labels['heart_rate'].setText(f"{cached} BPM")
-                        else:
-                            self.metric_labels['heart_rate'].setText("0 BPM")
-                            
+                    self.metric_labels['heart_rate'].setText(f"{hr_raw if is_valid(hr_raw) else '0'} BPM")
+
                 if 'pr_interval' in self.metric_labels:
-                    if is_valid(pr_raw):
-                        self._last_pr = pr_raw
-                        self.metric_labels['pr_interval'].setText(f"{pr_raw} ms")
-                    else:
-                        cached = getattr(self, '_last_pr', None)
-                        if cached:
-                            self.metric_labels['pr_interval'].setText(f"{cached} ms")
-                        else:
-                            self.metric_labels['pr_interval'].setText("0 ms")
-                            
+                    self.metric_labels['pr_interval'].setText(f"{pr_raw if is_valid(pr_raw) else '0'} ms")
+
                 if 'qrs_duration' in self.metric_labels:
-                    if is_valid(qrs_raw):
-                        self._last_qrs = qrs_raw
-                        self.metric_labels['qrs_duration'].setText(f"{qrs_raw} ms")
-                    else:
-                        cached = getattr(self, '_last_qrs', None)
-                        if cached:
-                            self.metric_labels['qrs_duration'].setText(f"{cached} ms")
-                        else:
-                            self.metric_labels['qrs_duration'].setText("0 ms")
-                            
+                    self.metric_labels['qrs_duration'].setText(f"{qrs_raw if is_valid(qrs_raw) else '0'} ms")
+
                 key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
                 if key in self.metric_labels:
-                    if is_valid(p_raw):
-                        self._last_p = p_raw
-                        self.metric_labels[key].setText(f"{p_raw} ms")
-                    else:
-                        cached = getattr(self, '_last_p', None)
-                        if cached:
-                            self.metric_labels[key].setText(f"{cached} ms")
-                        else:
-                            self.metric_labels[key].setText("0 ms")
-                            
+                    self.metric_labels[key].setText(f"{p_raw if is_valid(p_raw) else '0'} ms")
+
                 if 'qtc_interval' in self.metric_labels:
                     if is_valid(qt_raw) and is_valid(qtc_raw):
-                        val = f"{qt_raw}/{qtc_raw}"
-                        self._last_qtc = val
-                        self.metric_labels['qtc_interval'].setText(val)
+                        self.metric_labels['qtc_interval'].setText(f"{qt_raw}/{qtc_raw} ms")
                     elif is_valid(qtc_raw):
-                        self._last_qtc = qtc_raw
-                        self.metric_labels['qtc_interval'].setText(qtc_raw)
+                        self.metric_labels['qtc_interval'].setText(f"{qtc_raw} ms")
                     else:
-                        cached = getattr(self, '_last_qtc', None)
-                        if cached:
-                            self.metric_labels['qtc_interval'].setText(cached)
-                        else:
-                            self.metric_labels['qtc_interval'].setText("--")
+                        self.metric_labels['qtc_interval'].setText("0 ms")
                 self._last_metrics_update_ts = _time.time()
                 # Ensure dashboard interpretation updates as soon as live metrics arrive.
                 # Previously this only refreshed after visiting the expanded lead view.
@@ -4877,11 +4913,54 @@ class Dashboard(QWidget):
 
                     print(f" Saved {len(clean_findings)} findings to last_conclusions.json")
                     print(f"   Findings: {clean_findings}")
+
+                    # ── Phase-3A: Critical arrhythmia alert banner ────────────────────
+                    _CRITICAL_ALERT_KEYWORDS = (
+                        "ventricular tachycardia", "ventricular fibrillation",
+                        "atrial fibrillation", "afib", "complete heart block",
+                        "third degree", "asystole", "stemi", "torsade", "vf", "vt",
+                    )
+                    combined_lower = " ".join(str(f).lower() for f in clean_findings)
+                    is_critical = any(kw in combined_lower for kw in _CRITICAL_ALERT_KEYWORDS)
+                    try:
+                        if hasattr(self, "_alert_banner_lbl"):
+                            if is_critical:
+                                top_finding = clean_findings[0] if clean_findings else "Critical Finding"
+                                self._alert_banner_lbl.setText(
+                                    f"🔴  CRITICAL ALERT — {top_finding}  |  Immediate attention required!"
+                                )
+                                self._alert_banner_lbl.setVisible(True)
+                                # Auto-hide after 30 seconds
+                                from PyQt5.QtCore import QTimer as _QT
+                                _QT.singleShot(30000, lambda: self._alert_banner_lbl.setVisible(False) if hasattr(self, "_alert_banner_lbl") else None)
+                            else:
+                                self._alert_banner_lbl.setVisible(False)
+                    except Exception:
+                        pass
+                    # ── Phase-3B: Offline queue badge ────────────────────────────────
+                    try:
+                        if hasattr(self, "_queue_badge_lbl"):
+                            oq_dir = str(data_file("offline_queue"))
+                            pending = 0
+                            if os.path.isdir(oq_dir):
+                                pending = sum(
+                                    1 for fn in os.listdir(oq_dir)
+                                    if fn.lower().endswith((".json", ".pdf"))
+                                )
+                            if pending > 0:
+                                self._queue_badge_lbl.setText(f"📤 {pending} pending")
+                                self._queue_badge_lbl.setVisible(True)
+                            else:
+                                self._queue_badge_lbl.setVisible(False)
+                    except Exception:
+                        pass
+
                 else:
                     print(" Skipped saving empty findings to last_conclusions.json (waiting for valid ECG data)")
 
             except Exception as save_err:
                 print(f" Error saving conclusions to JSON: {save_err}")
+
 
         except Exception as e:
             print(f" Error updating conclusion: {e}")

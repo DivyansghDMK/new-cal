@@ -3747,14 +3747,28 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # ── Date/Time (top-right) ────────────────────────────────────────────────
     contact_block_x = 604
     contact_block_top_y = 542.83 + header_shift_y
+
+    def _fit_hrv_text(text, max_w=190):
+        t = str(text or "").strip()
+        if not t: return ""
+        try:
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            if stringWidth(t, FONT_TYPE_BOLD, 9) <= max_w: return t
+            ell = "..."
+            while len(t) > 0 and stringWidth(t + ell, FONT_TYPE_BOLD, 9) > max_w:
+                t = t[:-1]
+            return t + ell if t else ""
+        except Exception:
+            return t[:22] + "..." if len(t) > 22 else t
+
     if org_name:
-        master_drawing.add(String(contact_block_x, contact_block_top_y, org_name,
+        master_drawing.add(String(contact_block_x, contact_block_top_y, _fit_hrv_text(org_name),
                                   fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
     if org_address:
-        master_drawing.add(String(contact_block_x, contact_block_top_y - 14, org_address,
+        master_drawing.add(String(contact_block_x, contact_block_top_y - 14, _fit_hrv_text(org_address),
                                   fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
     if doctor_mobile:
-        master_drawing.add(String(contact_block_x, contact_block_top_y - 28, doctor_mobile,
+        master_drawing.add(String(contact_block_x, contact_block_top_y - 28, _fit_hrv_text(doctor_mobile),
                                   fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
 
     # ── Lead label (just above the first strip) ───────────────────────────────

@@ -176,14 +176,17 @@ class DoctorProfileDialog(QDialog):
 
         self.full_name_edit = QLineEdit()
         self.full_name_edit.setPlaceholderText("Enter your full name")
+        self.full_name_edit.setMaxLength(20)
         add_form_row("Full Name", self.full_name_edit)
 
         self.doctor_name_edit = QLineEdit()
         self.doctor_name_edit.setPlaceholderText("Enter your Doctor name")
+        self.doctor_name_edit.setMaxLength(20)
         add_form_row("Doctor Name", self.doctor_name_edit)
 
         self.org_name_edit = QLineEdit()
         self.org_name_edit.setPlaceholderText("Clinic or Hospital name")
+        self.org_name_edit.setMaxLength(28)
         add_form_row("Clinic / Hospital Name", self.org_name_edit)
 
         self.org_address_edit = QTextEdit()
