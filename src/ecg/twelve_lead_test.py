@@ -2240,6 +2240,11 @@ class ECGTestPage(QWidget):
         if not hasattr(self, 'last_heart_rate'):
             self.last_heart_rate = 0
 
+        # Lead disconnection guard: If ANY lead is disconnected or latched off, ZERO OUT IMMEDIATELY!
+        if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
+            self.reset_metrics_to_zero()
+            return
+
         if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
             print(" Demo mode active - skipping live ECG metrics calculation")
             return
@@ -4898,7 +4903,7 @@ class ECGTestPage(QWidget):
         if getattr(self, '_report_generating', False) or getattr(self, '_grid_frozen', False):
             return
 
-        if getattr(self, "_lead_off_latched", False) or not intervals:
+        if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()) or not intervals:
             self.reset_metrics_to_zero()
             return
 
@@ -6956,9 +6961,8 @@ class ECGTestPage(QWidget):
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
 
-            # If leads are globally OFF (e.g., RL/DRL removed) we must not display a
-            # stale BPM from the controller. Force BPM to 0 while latched.
-            if getattr(self, "_lead_off_latched", False):
+            # If leads are OFF or any lead is disconnected, force BPM to 0 immediately
+            if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
                 try:
                     self.last_rr_interval = 0
                 except Exception:
@@ -6968,7 +6972,7 @@ class ECGTestPage(QWidget):
                 except Exception:
                     pass
                 if hasattr(self, "metric_labels") and "heart_rate" in self.metric_labels:
-                    self.metric_labels["heart_rate"].setText("--")
+                    self.metric_labels["heart_rate"].setText("  0")
                 return
 
             rr_ms = getattr(self, 'last_rr_interval', 0)

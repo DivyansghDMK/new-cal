@@ -3737,12 +3737,13 @@ class Dashboard(QWidget):
                 def is_valid(val):
                     return val not in ('', '0', '00', '0.0', '--', 'None', 'None ms')
 
-                # If lead off or no signal, reset cached metrics
-                if getattr(self.ecg_test_page, "_lead_off_latched", False):
-                    self._last_hr = "0"
-                    self._last_pr = "0"
-                    self._last_qrs = "0"
-                    self._last_p = "0"
+                # If lead off or any lead is disconnected, reset metrics to zero instantly
+                is_off = getattr(self.ecg_test_page, "_lead_off_latched", False) or any(
+                    not connected for connected in getattr(self.ecg_test_page, "_lead_connection_state", {}).values()
+                )
+                if is_off:
+                    self.reset_dashboard_metrics_to_zero()
+                    return
 
                 if 'heart_rate' in self.metric_labels:
                     self.metric_labels['heart_rate'].setText(f"{hr_raw if is_valid(hr_raw) else '0'} BPM")
