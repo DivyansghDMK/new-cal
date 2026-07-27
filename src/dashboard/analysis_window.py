@@ -940,19 +940,15 @@ class PublicReportsDialog(QDialog):
         filters.addStretch(1)
         root.addLayout(filters)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Report ID", "Type", "Date", "Format", "Name", "Age/Gender"])
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Name", "Age/Gender"])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         root.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
@@ -1026,18 +1022,14 @@ class PublicReportsDialog(QDialog):
             self.table.setRowCount(len(rows))
 
             for row, report in enumerate(rows):
-                rid = self._norm(self._get_first(report, "report_id", "reportId", "id", "reportID"))
-                rtype = self._norm(self._get_first(report, "report_type", "reportType", "type"))
-                rdate = self._norm(self._get_first(report, "report_date", "reportDate", "date", "created_at", "createdAt"))
-                fmt = self._norm(self._get_first(report, "report_format", "reportFormat", "format"))
                 name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
                 age = self._norm(self._get_first(report, "age", "patient_age", "patientAge"))
                 gender = self._norm(self._get_first(report, "gender", "patient_gender", "patientGender"))
 
-                vals = [rid, rtype, rdate, fmt, name, f"{age}/{gender}".strip("/")]
+                vals = [name, f"{age}/{gender}".strip("/")]
                 for col, val in enumerate(vals):
                     item = QTableWidgetItem(val)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col in (4,) else Qt.AlignCenter)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col == 0 else Qt.AlignCenter)
                     self.table.setItem(row, col, item)
                 if self.table.item(row, 0):
                     self.table.item(row, 0).setData(Qt.UserRole, report)
@@ -1115,7 +1107,7 @@ class ECGAnalysisWindow(QDialog):
         self._apply_stylesheet()
         self._build_ui()
         self._init_loader_overlay()
-        self.load_reports()
+        # self.load_reports() - Removed with report UI elements
         QTimer.singleShot(0, self._fit_window_to_screen)
 
     def resizeEvent(self, event):
@@ -1508,20 +1500,6 @@ class ECGAnalysisWindow(QDialog):
         lay.addWidget(self.measure_lbl)
         lay.addStretch()
 
-        lay.addWidget(QLabel("Report:"))
-        self.report_combo = QComboBox()
-        self.report_combo.currentIndexChanged.connect(self.load_selected_report)
-        self.report_combo.setMinimumWidth(280)
-        lay.addWidget(self.report_combo)
-
-        self.refresh_btn = QPushButton("↻")
-        self.refresh_btn.setFixedWidth(32)
-        self.refresh_btn.clicked.connect(self.load_reports)
-        lay.addWidget(self.refresh_btn)
-
-        self.export_btn = QPushButton("⬇ JSON")
-        self.export_btn.clicked.connect(self.export_report)
-        lay.addWidget(self.export_btn)
 
         self.pdf_btn = QPushButton("📄 PDF Report")
         self.pdf_btn.setObjectName("primary")
@@ -2175,24 +2153,8 @@ class ECGAnalysisWindow(QDialog):
 
             self.reports.append(new_report)
             idx = len(self.reports) - 1
-            pd = new_report.get("patient_details", {}) if isinstance(new_report.get("patient_details"), dict) else {}
-            display_name = pd.get("name") or new_report.get("patient_name") or "Public Report"
-            rep_id = pd.get("report_id") or new_report.get("report_id") or selected.get("report_id") or selected.get("reportId") or ""
-            rep_type = (
-                selected.get("report_type")
-                or selected.get("reportType")
-                or selected.get("type")
-                or new_report.get("report_type")
-                or "report"
-            )
-            try:
-                self.report_combo.blockSignals(True)
-                self.report_combo.addItem(f"[Mobile] {display_name} | {rep_type} | ID:{rep_id}", "")
-                self.report_combo.setCurrentIndex(idx)
-            finally:
-                self.report_combo.blockSignals(False)
-            # Do the heavy report parse/render while the loader is visible
-            self.load_selected_report(idx)
+            # Load and render the selected report
+            self._load_and_render_report(idx)
             self._hide_loader()
         except Exception as e:
             if is_network_error(e):
@@ -2447,52 +2409,28 @@ class ECGAnalysisWindow(QDialog):
         elif key == Qt.Key_Escape:
             if self._active_lead_popup is not None and self._active_lead_popup.isVisible():
                 self._active_lead_popup.close()
+        elif key == Qt.Key_Return or key == Qt.Key_Enter:
+            # Ignore Enter/Return to prevent window from closing
+            pass
         else:
             super().keyPressEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  DATA LOADING  (identical to original — preserved completely)
     # ─────────────────────────────────────────────────────────────────────────
-    def load_reports(self):
-        self.report_combo.blockSignals(True)
-        self.report_combo.clear()
-        self.reports = []
-        try:
-            base_dir   = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            reports_dir = os.path.join(base_dir, 'reports')
-            os.makedirs(reports_dir, exist_ok=True)
-            files = [f for f in os.listdir(reports_dir)
-                     if f.endswith('.json') and not f.startswith('index')]
-            files.sort(reverse=True)
-            for filename in files:
-                filepath = os.path.join(reports_dir, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        report = json.load(f)
-                    patient_name = self._extract_patient_name(report)
-                    date_str     = self._extract_report_date(report)
-                    self.report_combo.addItem(f"{patient_name} | {date_str}", filepath)
-                    self.reports.append(report)
-                except Exception as e:
-                    print(f"Error loading report {filename}: {e}")
-        except Exception as e:
-            from utils.ui_feedback import show_critical
-            show_critical(self, "Error", "Failed to load reports.")
-        finally:
-            self.report_combo.blockSignals(False)
-        # if self.reports:
-        #     self.load_selected_report(0)
+    # Removed: load_reports() - Report UI elements removed
 
-    def load_selected_report(self, index):
+    def _load_and_render_report(self, index):
+        """Load and render the selected report by index."""
         if index < 0 or index >= len(self.reports):
             return
-        self.current_report      = self.reports[index]
-        self.current_report_path = self.report_combo.itemData(index) or ""
+        self.current_report = self.reports[index]
+        self.current_report_path = ""  # No file path for API-loaded reports
         self._update_patient_info()
         self._load_lead_data()
         self._load_metrics_findings()
         self._load_manual_annotations()
-        self.frame_start_sample     = 0
+        self.frame_start_sample = 0
         self.pending_mark_start_sec = None
         self.mark_end_btn.setEnabled(False)
         self.mark_status_lbl.setText("No active mark")
@@ -2895,10 +2833,11 @@ class ECGAnalysisWindow(QDialog):
                 "api_id": id_text,
             }
             self.reports.append(new_report)
-            idx  = len(self.reports) - 1
-            name = api_data.get("name", "Unknown API")
-            self.report_combo.addItem(f"[API] {name} | ID:{id_text}", "")
-            self.report_combo.setCurrentIndex(idx)
+            # Report combo box removed - skip UI update
+            # idx  = len(self.reports) - 1
+            # name = api_data.get("name", "Unknown API")
+            # self.report_combo.addItem(f"[API] {name} | ID:{id_text}", "")
+            # self.report_combo.setCurrentIndex(idx)
             self.api_fetch_btn.setText("Fetch")
         except requests.exceptions.RequestException as e:
             from utils.ui_feedback import offline_action_message, show_critical
@@ -2920,19 +2859,7 @@ class ECGAnalysisWindow(QDialog):
     # ─────────────────────────────────────────────────────────────────────────
     #  EXPORT / PDF  (identical to original)
     # ─────────────────────────────────────────────────────────────────────────
-    def export_report(self):
-        if not self.current_report:
-            QMessageBox.warning(self, "Export", "No report selected"); return
-        # Name includes "report" so auto-sync/cloud uploader treats it as uploadable report JSON.
-        default_name = f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Export JSON", default_name, "JSON (*.json)")
-        if not path: return
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.current_report, f, indent=2, ensure_ascii=False)
-            QMessageBox.information(self, "Export", f"Exported:\n{path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+    # Removed: export_report() - JSON export button removed
 
     def generate_pdf_report(self):
         if not self.current_report:
