@@ -2279,10 +2279,14 @@ class ECGTestPage(QWidget):
                 lead_ii_data = lead_i_data
                 _raw_std_ii = float(np.std(lead_ii_data))
 
-        _is_flat_line_ii = len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0
+        # Check limb lead status: Do NOT treat as flatline if primary limb leads (Lead I or II) are active!
+        limb_conn = getattr(self, "_lead_connection_state", {})
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+
+        _is_flat_line_ii = (len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0) and not limb_active
         
         if _is_flat_line_ii:
-            # Reset everything to 0 so the display shows zeros for all params
+            # Reset everything to 0 ONLY when all primary limb leads are disconnected
             self.last_heart_rate   = 0
             self.last_rr_interval  = 0
             self.pr_interval       = 0
@@ -2297,9 +2301,6 @@ class ECGTestPage(QWidget):
             for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
                 if hasattr(self, _buf):
                     getattr(self, _buf).clear()
-            # The generic display updater intentionally holds the last valid
-            # value for noisy frames. For true asystole/flatline we must force
-            # the visible labels back to zero instead of preserving stale data.
             try:
                 from .ui import display_updates as _du
                 for _key in (
