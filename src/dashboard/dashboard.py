@@ -4474,14 +4474,16 @@ class Dashboard(QWidget):
         if not getattr(self, "device_connected", False):
             return
         
-        # Lead disconnection or inactive check: immediately reset interpretation
+        # Lead disconnection or inactive check: ONLY reset if primary limb leads are off
         ecg_page = getattr(self, 'ecg_test_page', None)
-        is_off = False
-        if ecg_page:
-            is_off = getattr(ecg_page, "_lead_off_latched", False) or any(
-                not connected for connected in getattr(ecg_page, "_lead_connection_state", {}).values()
-            )
+        limb_conn = getattr(ecg_page, "_lead_connection_state", {}) if ecg_page else {}
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+        is_off = getattr(ecg_page, "_lead_off_latched", False) or not limb_active
         if is_off or not self.is_ecg_active() or self._is_ecg_frozen():
+            if hasattr(self, '_last_valid_conclusion_html') and self._last_valid_conclusion_html and limb_active:
+                if hasattr(self, 'conclusion_box'):
+                    self.conclusion_box.setHtml(self._last_valid_conclusion_html)
+                return
             if hasattr(self, 'conclusion_box'):
                 self.conclusion_box.setHtml("""
                     <p style='color: #888; font-style: italic;'>
@@ -4896,6 +4898,13 @@ class Dashboard(QWidget):
                     "</p></div>"
                 )
 
+            disconnected_leads = [lead for lead, conn in limb_conn.items() if not conn]
+            if disconnected_leads:
+                lead_str = ", ".join(disconnected_leads)
+                banner = f"<div style='background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 8px 12px; border-radius: 8px; font-weight: bold; margin-bottom: 10px; font-size: 12px;'>⚠️ Signal Lost — Please reconnect lead(s): {lead_str}</div>"
+                conclusion_html = banner + conclusion_html
+
+            self._last_valid_conclusion_html = conclusion_html
             if hasattr(self, 'conclusion_box'):
                 self.conclusion_box.setHtml(conclusion_html)
 

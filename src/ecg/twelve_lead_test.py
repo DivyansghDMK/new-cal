@@ -10329,12 +10329,20 @@ class ECGTestPage(QWidget):
                                 if i < len(self.data) and lead_name in packet:
                                     # While latched, force all leads to OFF to stop flicker.
                                     value = None if getattr(self, "_lead_off_latched", False) else packet[lead_name]
+                                    if not hasattr(self, '_lead_missing_counts'):
+                                        self._lead_missing_counts = {}
+
                                     was_connected = self._lead_connection_state.get(lead_name, True)
                                     if value is None:
-                                        self._lead_connection_state[lead_name] = False
-                                        # Keep stable flat trace while disconnected.
+                                        missing = self._lead_missing_counts.get(lead_name, 0) + 1
+                                        self._lead_missing_counts[lead_name] = missing
+                                        # Debounce window: require at least 25 consecutive missing packets (50ms)
+                                        # before treating the lead as disconnected to prevent brief signal noise recalculation.
+                                        if missing >= 25:
+                                            self._lead_connection_state[lead_name] = False
                                         write_value = float(self._lead_last_valid_value.get(lead_name, 0.0))
                                     else:
+                                        self._lead_missing_counts[lead_name] = 0
                                         write_value = float(value)
                                         self._lead_last_valid_value[lead_name] = write_value
                                         self._lead_connection_state[lead_name] = True
