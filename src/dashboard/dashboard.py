@@ -2702,7 +2702,7 @@ class Dashboard(QWidget):
             # Since QTc uses Bazett's formula: QTc = QT / sqrt(RR)
             # If QT is correct, QTc will automatically be correct
             # Adding range validation for safety
-            qtc_bazett = max(300, min(500, qtc_bazett))  # Extended safety range
+            qtc_bazett = max(200, min(600, qtc_bazett))  # Extended safety range (200-600ms)
             
             # P Duration: Normal range 60-120ms, relatively stable
             # Standard P wave duration is typically 80-100ms, slight variation with HR
@@ -3019,8 +3019,8 @@ class Dashboard(QWidget):
                         if qt_val > 0 and rr_ms > 0:
                             rr_sec = rr_ms / 1000.0
                             qtc_val = qt_val / (rr_sec ** 0.5)
-                            # Validate QTC range (250-600 ms)
-                            qtc_val = max(250, min(600, qtc_val))
+                            # Validate QTC range (200-600 ms)
+                            qtc_val = max(200, min(600, qtc_val))
                         else:
                             qtc_val = 0
                         
