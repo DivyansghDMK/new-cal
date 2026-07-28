@@ -2923,8 +2923,8 @@ class ECGTestPage(QWidget):
             RR = rr_ms / 1000.0  # RR in seconds
             qtc_interval = int(round((qt_interval / 1000.0) / np.sqrt(RR) * 1000.0))
 
-            # Validation: QTc should be in reasonable range (300-500 ms typically)
-            if qtc_interval < 250 or qtc_interval > 600:
+            # Validation: QTc should be in reasonable range (200-600 ms)
+            if qtc_interval < 200 or qtc_interval > 600:
                 # OPTIMIZED: Reduced print frequency for better performance
                 if not hasattr(self, '_qtc_range_warn_count'):
                     self._qtc_range_warn_count = 0
@@ -5124,6 +5124,7 @@ class ECGTestPage(QWidget):
             self.last_qt_interval = 0
             self.last_qtc_interval = 0
             self.last_p_duration = 0
+            self._latest_rhythm_interpretation = "Analyzing Rhythm..."
 
             try:
                 from .ui import display_updates as _du
@@ -7637,6 +7638,21 @@ class ECGTestPage(QWidget):
                 except Exception:
                     return fallback
 
+            def _screen_qtc(label_key, fallback=0):
+                """Read QTc from combined 'QT/QTc' label — always the second part after '/'."""
+                try:
+                    raw = self.metric_labels[label_key].text().strip()
+                    clean = raw.replace('BPM','').replace('bpm','').replace('ms','').replace('mV','').strip()
+                    if '/' in clean:
+                        # "400/284" → take QTc (second part)
+                        qtc_part = clean.split('/')[-1].strip()
+                    else:
+                        qtc_part = clean
+                    val = int(round(float(qtc_part))) if qtc_part else 0
+                    return val if val > 0 else fallback
+                except Exception:
+                    return fallback
+
             _live_hr  = int(getattr(self, 'last_heart_rate',    0) or 0)
             _live_pr  = int(getattr(self, 'pr_interval',        0) or 0)
             _live_qrs = int(getattr(self, 'last_qrs_duration',  0) or 0)
@@ -7646,7 +7662,7 @@ class ECGTestPage(QWidget):
             _scr_hr  = _screen_int('heart_rate',  _live_hr)
             _scr_pr  = _screen_int('pr_interval', _live_pr)
             _scr_qrs = _screen_int('qrs_duration', _live_qrs)
-            _scr_qtc = _screen_int('qtc_interval', _live_qtc)
+            _scr_qtc = _screen_qtc('qtc_interval', _live_qtc)
 
             frozen = {
                 'HR':       max(_live_hr,  _scr_hr),

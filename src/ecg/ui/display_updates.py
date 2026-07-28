@@ -32,7 +32,7 @@ _LIMITS = {
     # NOTE: QT lower bound is handled dynamically in update_ecg_metrics_display
     # because physiologic QT gets shorter as HR rises (e.g. 180-190 ms at ~240 BPM).
     'qt_interval' : (150,  600),   # ms (fallback bound)
-    'qtc_interval': (300,  500),   # ms (Bazett)
+    'qtc_interval': (200,  600),   # ms (Bazett / Fridericia)
     'rr_interval' : (200, 2000),   # ms
     'p_duration'  : (40,   160),   # ms
 }
@@ -189,7 +189,7 @@ def update_ecg_metrics_display(
                 if qtc_ok:
                     qtc_int = int(round(qtc_interval))
                     qtc_clamped = _clamp('qtc_interval', qtc_int)
-                    if qtc_clamped is not None:
+                    if qtc_clamped is not None and qtc_clamped > 0:
                         parts.append(f"{qtc_clamped}")
                 _set_if_changed(metric_labels['qtc_interval'], "/".join(parts) if parts else "0/0")
 

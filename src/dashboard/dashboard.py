@@ -2702,7 +2702,7 @@ class Dashboard(QWidget):
             # Since QTc uses Bazett's formula: QTc = QT / sqrt(RR)
             # If QT is correct, QTc will automatically be correct
             # Adding range validation for safety
-            qtc_bazett = max(300, min(500, qtc_bazett))  # Extended safety range
+            qtc_bazett = max(200, min(600, qtc_bazett))  # Extended safety range (200-600ms)
             
             # P Duration: Normal range 60-120ms, relatively stable
             # Standard P wave duration is typically 80-100ms, slight variation with HR
@@ -3019,8 +3019,8 @@ class Dashboard(QWidget):
                         if qt_val > 0 and rr_ms > 0:
                             rr_sec = rr_ms / 1000.0
                             qtc_val = qt_val / (rr_sec ** 0.5)
-                            # Validate QTC range (250-600 ms)
-                            qtc_val = max(250, min(600, qtc_val))
+                            # Validate QTC range (200-600 ms)
+                            qtc_val = max(200, min(600, qtc_val))
                         else:
                             qtc_val = 0
                         
@@ -3710,6 +3710,13 @@ class Dashboard(QWidget):
                 self.metric_labels['qt_interval'].setText("0 ms")
             if 'qtc_interval' in self.metric_labels:
                 self.metric_labels['qtc_interval'].setText("0 ms")
+        if hasattr(self, 'conclusion_box'):
+            self.conclusion_box.setHtml("""
+                <p style='color: #888; font-style: italic;'>
+                Waiting for stable ECG data...<br><br>
+                Metrics are being analyzed. Please wait a few seconds.
+                </p>
+            """)
 
     def update_dashboard_metrics_from_ecg(self):
         try:
@@ -4432,6 +4439,23 @@ class Dashboard(QWidget):
         """Generate comprehensive personalized conclusion based on current ECG metrics with detailed BPM analysis"""
         if not getattr(self, "device_connected", False):
             return
+        
+        # Lead disconnection or inactive check: immediately reset interpretation
+        ecg_page = getattr(self, 'ecg_test_page', None)
+        is_off = False
+        if ecg_page:
+            is_off = getattr(ecg_page, "_lead_off_latched", False) or any(
+                not connected for connected in getattr(ecg_page, "_lead_connection_state", {}).values()
+            )
+        if is_off or not self.is_ecg_active() or self._is_ecg_frozen():
+            if hasattr(self, 'conclusion_box'):
+                self.conclusion_box.setHtml("""
+                    <p style='color: #888; font-style: italic;'>
+                    Waiting for stable ECG data...<br><br>
+                    Metrics are being analyzed. Please wait a few seconds.
+                    </p>
+                """)
+            return
         try:
             findings = []
             recommendations = []
@@ -4604,38 +4628,16 @@ class Dashboard(QWidget):
             # don't block the whole dashboard interpretation on `rhythm_text` being set (it can remain
             # "Analyzing Rhythm..." until the expanded lead view is opened).
             has_metric_data = bool((hr > 0) or (pr > 0) or (qrs > 0) or (qt > 0) or (qtc > 0))
-            if (rhythm_clean in ignore_values or not rhythm_clean) and has_metric_data:
-                if hr > 100:
-                    rhythm_issue = rhythm_issue or "Tachycardia"
-                    rhythm_clean = rhythm_issue
-                elif 0 < hr < 60:
-                    rhythm_issue = rhythm_issue or "Bradycardia"
-                    rhythm_clean = rhythm_issue
-                else:
-                    is_normal_rhythm = True
-                    rhythm_clean = "Normal Sinus Rhythm"
-
-            if (rhythm_clean in ignore_values or not rhythm_clean) and not has_metric_data:
-                # Still waiting for ECG data or device disconnected
-                if rhythm_clean == "Rhythm Undetermined":
-                    # Show device disconnected interpretation
-                    conclusion_html = """
-                        <div style='padding:4px;'>
-                            <b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>
-                            <span style='color:#e74c3c; font-weight:bold;'>⚠ Rhythm Undetermined</span><br><br>
-                            <p style='font-size:10px; color:#999; font-style:italic;'>
-                            <b>NOTE:</b> This is an automated analysis for educational purposes only. 
-                            Not a substitute for professional medical advice.
-                            </p>
-                        </div>
-                    """
-                else:
-                    conclusion_html = """
-                        <p style='color: #888; font-style: italic;'>
-                        Waiting for stable ECG data...<br><br>
-                        Metrics are being analyzed. Please wait a few seconds.
-                        </p>
-                    """
+            if not has_metric_data:
+                conclusion_html = """
+                    <p style='color: #888; font-style: italic;'>
+                    Waiting for stable ECG data...<br><br>
+                    Metrics are being analyzed. Please wait a few seconds.
+                    </p>
+                """
+                if hasattr(self, 'conclusion_box'):
+                    self.conclusion_box.setHtml(conclusion_html)
+                return
 
             # ── Significant-rhythm override ─────────────────────────────────────
             # If the arrhythmia engine's latest analysis contains a clinically
@@ -6148,11 +6150,17 @@ class Dashboard(QWidget):
             finally:
                 check_btn.setEnabled(True)
 
-            if isinstance(data, dict) and data.get("success") is True:
+            if isinstance(data, dict) and (data.get("success") is True or (data.get("status") and data.get("status") != "error")):
                 _render(data)
                 return
 
-            QMessageBox.warning(dialog, "Support", str(data.get("message") if isinstance(data, dict) else "Failed to fetch status."))
+            msg = None
+            if isinstance(data, dict):
+                msg = data.get("message") or data.get("error") or data.get("detail")
+            if not msg or str(msg).strip().lower() == "none":
+                msg = f"Complaint ID '{complaint_id}' not found. Please check your Complaint ID and try again."
+
+            QMessageBox.warning(dialog, "Support", str(msg))
 
         check_btn.clicked.connect(_check)
 

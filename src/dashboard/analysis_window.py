@@ -1352,14 +1352,34 @@ class ECGAnalysisWindow(QDialog):
             }
             QComboBox {
                 background: #1a1f34;
-                color: #fff4e8;
-                border: 1px solid #5b4525;
+                color: #ffffff;
+                border: 1px solid #6a532e;
                 border-radius: 5px;
-                padding: 4px 8px;
+                padding: 4px 22px 4px 8px;
                 font-size: 11px;
+                font-weight: bold;
             }
-            QComboBox::drop-down { border: none; width: 18px; }
-            QComboBox::down-arrow { image: none; }
+            QComboBox:hover {
+                border-color: #ff8a1f;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #ffffff;
+                margin-right: 4px;
+            }
+            QComboBox::down-arrow:hover {
+                border-top-color: #ff8a1f;
+            }
             QComboBox QAbstractItemView {
                 background: #1a1f34;
                 color: #fff4e8;
@@ -1511,6 +1531,7 @@ class ECGAnalysisWindow(QDialog):
             "background:#241808;border:1px solid #8a5a1f;border-radius:4px;padding:3px 10px;")
         self.measure_lbl.setMinimumWidth(280)
         self.measure_lbl.setAlignment(Qt.AlignCenter)
+        self.measure_lbl.setVisible(False)
         lay.addWidget(self.measure_lbl)
         lay.addStretch()
 
@@ -1589,15 +1610,7 @@ class ECGAnalysisWindow(QDialog):
         self.zoom_combo.setCurrentText("4x")
         self.zoom_combo.currentIndexChanged.connect(
             lambda i: setattr(self, 'magnifier_zoom', i + 2))
-        self.zoom_combo.setFixedWidth(62)
-        self.zoom_combo.setStyleSheet("""
-            font-size:10px;
-            padding:2px;
-            color:#fff4e8;
-            background:#1b1f34;
-            border:1px solid #6a532e;
-            border-radius:4px;
-        """)
+        self.zoom_combo.setFixedWidth(74)
         lay.addWidget(self.zoom_combo)
 
         lay.addStretch()
@@ -1684,7 +1697,7 @@ class ECGAnalysisWindow(QDialog):
         self.window_combo.addItems(["1.0 s","2.0 s","3.0 s","5.0 s","10.0 s"])
         self.window_combo.setCurrentText("10.0 s")
         self.window_combo.currentTextChanged.connect(self._on_window_changed)
-        self.window_combo.setFixedWidth(74)
+        self.window_combo.setFixedWidth(88)
         controls.addWidget(self.window_combo)
 
         controls.addWidget(QLabel("Step:"))
@@ -1692,7 +1705,7 @@ class ECGAnalysisWindow(QDialog):
         self.step_combo.addItems(["0.2 s","0.5 s","1.0 s"])
         self.step_combo.setCurrentText("0.5 s")
         self.step_combo.currentTextChanged.connect(self._on_step_changed)
-        self.step_combo.setFixedWidth(68)
+        self.step_combo.setFixedWidth(80)
         controls.addWidget(self.step_combo)
 
         controls.addSpacing(12)
