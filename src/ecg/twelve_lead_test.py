@@ -5124,6 +5124,7 @@ class ECGTestPage(QWidget):
             self.last_qt_interval = 0
             self.last_qtc_interval = 0
             self.last_p_duration = 0
+            self._latest_rhythm_interpretation = "Analyzing Rhythm..."
 
             try:
                 from .ui import display_updates as _du

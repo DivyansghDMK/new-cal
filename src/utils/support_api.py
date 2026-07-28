@@ -148,11 +148,20 @@ class SupportAPI:
             if resp.status_code >= 200 and resp.status_code < 300 and isinstance(data, dict):
                 return data
 
+            err_msg = None
+            if isinstance(data, dict):
+                err_msg = data.get("message") or data.get("error") or data.get("detail")
+            if not err_msg or str(err_msg).strip().lower() == "none":
+                if resp.status_code == 404:
+                    err_msg = f"Complaint ID '{complaint_id}' was not found."
+                else:
+                    err_msg = f"Unable to retrieve complaint status (HTTP {resp.status_code})."
+
             return {
                 "success": False,
                 "status": "error",
                 "status_code": resp.status_code,
-                "message": data.get("message") if isinstance(data, dict) else resp.text,
+                "message": str(err_msg),
                 "raw": data,
             }
         except requests.exceptions.Timeout:
