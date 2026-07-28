@@ -2279,10 +2279,14 @@ class ECGTestPage(QWidget):
                 lead_ii_data = lead_i_data
                 _raw_std_ii = float(np.std(lead_ii_data))
 
-        _is_flat_line_ii = len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0
+        # Check limb lead status: Do NOT treat as flatline if primary limb leads (Lead I or II) are active!
+        limb_conn = getattr(self, "_lead_connection_state", {})
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+
+        _is_flat_line_ii = (len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0) and not limb_active
         
         if _is_flat_line_ii:
-            # Reset everything to 0 so the display shows zeros for all params
+            # Reset everything to 0 ONLY when all primary limb leads are disconnected
             self.last_heart_rate   = 0
             self.last_rr_interval  = 0
             self.pr_interval       = 0
@@ -2297,9 +2301,6 @@ class ECGTestPage(QWidget):
             for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
                 if hasattr(self, _buf):
                     getattr(self, _buf).clear()
-            # The generic display updater intentionally holds the last valid
-            # value for noisy frames. For true asystole/flatline we must force
-            # the visible labels back to zero instead of preserving stale data.
             try:
                 from .ui import display_updates as _du
                 for _key in (
@@ -6976,11 +6977,13 @@ class ECGTestPage(QWidget):
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
 
+            # If leads are OFF or any lead is disconnected, force BPM to 0 immediately
+            if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
             # Only force BPM to 0 when the primary limb leads are actually lost.
             # Partial lead disconnects should keep the last stable BPM visible so the
             # dashboard does not flicker between 0 and the real value.
-            limb_conn = getattr(self, "_lead_connection_state", {})
-            limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+                limb_conn = getattr(self, "_lead_connection_state", {})
+                limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
             if getattr(self, "_lead_off_latched", False) or not limb_active:
                 try:
                     self.last_rr_interval = 0
@@ -10333,12 +10336,20 @@ class ECGTestPage(QWidget):
                                 if i < len(self.data) and lead_name in packet:
                                     # While latched, force all leads to OFF to stop flicker.
                                     value = None if getattr(self, "_lead_off_latched", False) else packet[lead_name]
+                                    if not hasattr(self, '_lead_missing_counts'):
+                                        self._lead_missing_counts = {}
+
                                     was_connected = self._lead_connection_state.get(lead_name, True)
                                     if value is None:
-                                        self._lead_connection_state[lead_name] = False
-                                        # Keep stable flat trace while disconnected.
+                                        missing = self._lead_missing_counts.get(lead_name, 0) + 1
+                                        self._lead_missing_counts[lead_name] = missing
+                                        # Debounce window: require at least 25 consecutive missing packets (50ms)
+                                        # before treating the lead as disconnected to prevent brief signal noise recalculation.
+                                        if missing >= 25:
+                                            self._lead_connection_state[lead_name] = False
                                         write_value = float(self._lead_last_valid_value.get(lead_name, 0.0))
                                     else:
+                                        self._lead_missing_counts[lead_name] = 0
                                         write_value = float(value)
                                         self._lead_last_valid_value[lead_name] = write_value
                                         self._lead_connection_state[lead_name] = True
