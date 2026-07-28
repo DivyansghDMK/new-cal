@@ -6979,6 +6979,12 @@ class ECGTestPage(QWidget):
 
             # If leads are OFF or any lead is disconnected, force BPM to 0 immediately
             if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
+            # Only force BPM to 0 when the primary limb leads are actually lost.
+            # Partial lead disconnects should keep the last stable BPM visible so the
+            # dashboard does not flicker between 0 and the real value.
+                limb_conn = getattr(self, "_lead_connection_state", {})
+                limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+            if getattr(self, "_lead_off_latched", False) or not limb_active:
                 try:
                     self.last_rr_interval = 0
                 except Exception:

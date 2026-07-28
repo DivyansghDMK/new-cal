@@ -4474,11 +4474,13 @@ class Dashboard(QWidget):
         if not getattr(self, "device_connected", False):
             return
         
-        # Lead disconnection or inactive check: ONLY reset if primary limb leads are off
+        # Only reset interpretation when both primary limb leads are off.
         ecg_page = getattr(self, 'ecg_test_page', None)
-        limb_conn = getattr(ecg_page, "_lead_connection_state", {}) if ecg_page else {}
-        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-        is_off = getattr(ecg_page, "_lead_off_latched", False) or not limb_active
+        is_off = False
+        if ecg_page:
+            limb_conn = getattr(ecg_page, "_lead_connection_state", {})
+            limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+            is_off = getattr(ecg_page, "_lead_off_latched", False) or not limb_active
         if is_off or not self.is_ecg_active() or self._is_ecg_frozen():
             if hasattr(self, '_last_valid_conclusion_html') and self._last_valid_conclusion_html and limb_active:
                 if hasattr(self, 'conclusion_box'):
