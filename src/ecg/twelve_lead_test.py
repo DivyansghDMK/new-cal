@@ -2240,8 +2240,10 @@ class ECGTestPage(QWidget):
         if not hasattr(self, 'last_heart_rate'):
             self.last_heart_rate = 0
 
-        # Lead disconnection guard: If ANY lead is disconnected or latched off, ZERO OUT IMMEDIATELY!
-        if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
+        # Lead disconnection guard: Only zero out if BOTH primary limb leads (I and II) are disconnected!
+        limb_conn = getattr(self, "_lead_connection_state", {})
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+        if getattr(self, "_lead_off_latched", False) or not limb_active:
             self.reset_metrics_to_zero()
             return
 
@@ -2269,9 +2271,15 @@ class ECGTestPage(QWidget):
         # flat/disconnected lead has std < 50 counts. Detect this condition
         # (or completely 0 signal) and return all-zero metrics instead of running the full pipeline.
         _raw_std_ii = float(np.std(lead_ii_data)) if len(lead_ii_data) > 0 else 0.0
-        _raw_mean_ii = float(np.mean(np.abs(lead_ii_data))) if len(lead_ii_data) > 0 else 0.0
         
-        _is_flat_line_ii = len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 0.1 or (_raw_mean_ii > 100.0 and _raw_std_ii < 50.0)
+        # Fallback to Lead I if Lead II is flat (std < 5.0)
+        if _raw_std_ii < 5.0 and len(self.data) > 0 and len(self.data[0]) >= 100:
+            lead_i_data = self.data[0]
+            if float(np.std(lead_i_data)) >= 5.0:
+                lead_ii_data = lead_i_data
+                _raw_std_ii = float(np.std(lead_ii_data))
+
+        _is_flat_line_ii = len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0
         
         if _is_flat_line_ii:
             # Reset everything to 0 so the display shows zeros for all params
@@ -4357,13 +4365,12 @@ class ECGTestPage(QWidget):
             self._last_metric_update_ts = 0.0
 
         metric_labels = getattr(self, 'metric_labels', {})
-        # HolterBPMController is the exclusive source of HR when active
-        _skip_hr = (self._bpm_ctrl is not None and self._bpm_ctrl.is_running)
+        # Always update UI heart_rate metric label whenever valid heart rate is measured
         self._last_metric_update_ts = update_ecg_metrics_display(
             metric_labels, heart_rate, pr_interval, qrs_duration, p_duration,
             qt_interval, qtc_interval, qtcf_interval, self._last_metric_update_ts,
-            rr_interval=rr_interval,      # FIX-D1: forward RR to display layer
-            skip_heart_rate=_skip_hr,     # HolterBPM owns the HR label
+            rr_interval=rr_interval,
+            skip_heart_rate=False, # Ensure heart rate label is updated on UI!
         )
 
     def get_current_metrics(self):
@@ -4850,7 +4857,9 @@ class ECGTestPage(QWidget):
             if not hasattr(self, 'lead_status_label') or self.lead_status_label is None:
                 return
             off_leads = list(off_leads or [])
-            if off_leads or getattr(self, "_lead_off_latched", False):
+            # Only reset metrics to zero if both primary limb leads (I and II) are off
+            limb_off = [l for l in ('I', 'II') if l in off_leads]
+            if len(limb_off) == 2 or getattr(self, "_lead_off_latched", False):
                 self.reset_metrics_to_zero()
 
             signature = tuple(off_leads)
@@ -4882,10 +4891,8 @@ class ECGTestPage(QWidget):
             pass
 
     def _on_lead_reconnected(self, lead_index: int, lead_name: str, value: float):
-        """Reset per-lead state when a previously disconnected lead reconnects."""
+        """Reset per-lead state when a previously disconnected lead reconnects (preserves rolling ECG buffer)."""
         try:
-            if lead_index < len(self.data):
-                self.data[lead_index].fill(float(value))
             if hasattr(self, '_baseline_anchors') and lead_index < len(self._baseline_anchors):
                 self._baseline_anchors[lead_index] = float(value)
             if hasattr(self, '_sweep_cursor_state') and isinstance(self._sweep_cursor_state, dict):
@@ -4895,15 +4902,16 @@ class ECGTestPage(QWidget):
                 self._y_range_update_count[lead_index] = 0
             if lead_index < len(self._flatline_alert_shown):
                 self._flatline_alert_shown[lead_index] = False
-            print(f"Lead reconnected: {lead_name}")
-        except Exception as e:
-            print(f"Error restoring lead after reconnect ({lead_name}): {e}")
+        except Exception:
+            pass
 
     def update_ecg_metrics_on_top_of_lead_graphs(self, intervals):
         if getattr(self, '_report_generating', False) or getattr(self, '_grid_frozen', False):
             return
 
-        if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()) or not intervals:
+        limb_conn = getattr(self, "_lead_connection_state", {})
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+        if getattr(self, "_lead_off_latched", False) or not limb_active or not intervals:
             self.reset_metrics_to_zero()
             return
 
@@ -4916,20 +4924,20 @@ class ECGTestPage(QWidget):
             except Exception:
                 return 0
 
-        _bpm_active = (self._bpm_ctrl is not None and self._bpm_ctrl.is_running)
-        if not _bpm_active:
-            hr_val = _metric_to_int(intervals.get('Heart_Rate'))
-            if hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
-                self.metric_labels['heart_rate'].setText(f"{hr_val:3d}" if hr_val > 0 else "  0")
+        hr_val = _metric_to_int(intervals.get('Heart_Rate'))
+        if hr_val > 0 and hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
+            self.metric_labels['heart_rate'].setText(f"{hr_val:3d}")
 
         if hasattr(self, 'metric_labels'):
             if 'pr_interval' in self.metric_labels:
                 pr_val = _metric_to_int(intervals.get('PR'))
-                self.metric_labels['pr_interval'].setText(f"{pr_val:3d}" if pr_val > 0 else "  0")
+                if pr_val > 0:
+                    self.metric_labels['pr_interval'].setText(f"{pr_val:3d}")
 
             if 'qrs_duration' in self.metric_labels:
                 qrs_val = _metric_to_int(intervals.get('QRS'))
-                self.metric_labels['qrs_duration'].setText(f"{qrs_val:2d}" if qrs_val > 0 else " 0")
+                if qrs_val > 0:
+                    self.metric_labels['qrs_duration'].setText(f"{qrs_val:2d}")
 
             if 'qtc_interval' in self.metric_labels:
                 qt_val = _metric_to_int(intervals.get('QT'))
@@ -4938,8 +4946,6 @@ class ECGTestPage(QWidget):
                     self.metric_labels['qtc_interval'].setText(f"{qt_val}/{qtc_val}")
                 elif qtc_val > 0:
                     self.metric_labels['qtc_interval'].setText(f"{qtc_val}")
-                else:
-                    self.metric_labels['qtc_interval'].setText("0/0")
 
     def update_metrics_frame_theme(self, dark_mode=False, medical_mode=False):
        
@@ -5096,7 +5102,11 @@ class ECGTestPage(QWidget):
             print(f" Error updating elapsed time: {e}")
 
     def reset_metrics_to_zero(self):
-        """Reset all ECG metric labels to zero/initial state."""
+        """Reset all ECG metric labels to zero/initial state ONLY when all limb leads are disconnected."""
+        limb_conn = getattr(self, "_lead_connection_state", {})
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+        if limb_active and hasattr(self, 'last_heart_rate') and getattr(self, 'last_heart_rate', 0) > 0:
+            return
         try:
             if hasattr(self, 'metric_labels') and isinstance(self.metric_labels, dict):
                 if 'heart_rate' in self.metric_labels:
@@ -5167,8 +5177,12 @@ class ECGTestPage(QWidget):
     # ------------------------ Calculate ECG Intervals ------------------------
 
     def calculate_ecg_intervals(self, lead_ii_data):
-        if not lead_ii_data or len(lead_ii_data) < 100:
-            return {}
+        if not lead_ii_data or len(lead_ii_data) < 100 or (isinstance(lead_ii_data, (list, np.ndarray)) and np.std(lead_ii_data) < 5):
+            # Fallback to Lead I if Lead II is flat or disconnected
+            if hasattr(self, 'data') and len(self.data) > 0 and len(self.data[0]) >= 100 and np.std(self.data[0]) >= 5:
+                lead_ii_data = self.data[0]
+            else:
+                return {}
         
         try:
             from ecg.pan_tompkins import pan_tompkins
@@ -10272,8 +10286,12 @@ class ECGTestPage(QWidget):
                         except Exception:
                             raw_off_count = 0
 
-                        global_threshold = int(getattr(self, "_LEAD_OFF_GLOBAL_THRESHOLD", 10))
-                        if raw_off_count >= global_threshold:
+                        global_threshold = 12  # Only latch global OFF if ALL 12 leads are off
+                        limb_active = (packet.get('I') is not None) or (packet.get('II') is not None)
+                        if limb_active:
+                            self._lead_off_latched = False
+                            self._lead_off_latch_on_count = 0
+                        elif raw_off_count >= global_threshold:
                             self._lead_off_latch_on_count = int(getattr(self, "_lead_off_latch_on_count", 0)) + 1
                         else:
                             self._lead_off_latch_on_count = 0
@@ -10282,15 +10300,15 @@ class ECGTestPage(QWidget):
                         latch_off_packets = int(getattr(self, "_LEAD_OFF_LATCH_OFF_PACKETS", 50))
 
                         if not getattr(self, "_lead_off_latched", False):
-                            if self._lead_off_latch_on_count >= latch_on_packets:
+                            if not limb_active and self._lead_off_latch_on_count >= latch_on_packets:
                                 self._lead_off_latched = True
                                 self._lead_off_latch_off_count = 0
                         else:
-                            if raw_off_count < global_threshold:
+                            if limb_active or raw_off_count < global_threshold:
                                 self._lead_off_latch_off_count = int(getattr(self, "_lead_off_latch_off_count", 0)) + 1
                             else:
                                 self._lead_off_latch_off_count = 0
-                            if self._lead_off_latch_off_count >= latch_off_packets:
+                            if limb_active or self._lead_off_latch_off_count >= latch_off_packets:
                                 self._lead_off_latched = False
                                 self._lead_off_latch_on_count = 0
                                 self._lead_off_latch_off_count = 0

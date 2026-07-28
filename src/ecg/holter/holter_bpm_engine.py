@@ -259,12 +259,29 @@ class HolterBPMWorker(threading.Thread):
     #    Called 500x per second from the Qt main thread                     
     def push(self, packet: dict):
         """
-        Extracts Lead II and writes into the ring buffer.
+        Extracts Lead II (with fallback to Lead I or III) and writes into the ring buffer.
         This is the hot path -- must stay O(1) with no allocation.
         """
-        val_ii = float(packet.get("II", packet.get(LEAD_NAMES[LEAD_II_IDX], 2048)))
-        val_v1 = float(packet.get("V1", packet.get(LEAD_NAMES[6], 2048)))
-        val_v6 = float(packet.get("V6", packet.get(LEAD_NAMES[11], 2048)))
+        raw_ii = packet.get("II")
+        if raw_ii is None or raw_ii == "None" or raw_ii == 2048:
+            raw_ii = packet.get("I", packet.get("III", packet.get("aVL", 2048)))
+        try:
+            val_ii = float(raw_ii) if raw_ii is not None and raw_ii != "None" else 2048.0
+        except Exception:
+            val_ii = 2048.0
+
+        raw_v1 = packet.get("V1")
+        try:
+            val_v1 = float(raw_v1) if raw_v1 is not None and raw_v1 != "None" else 2048.0
+        except Exception:
+            val_v1 = 2048.0
+
+        raw_v6 = packet.get("V6")
+        try:
+            val_v6 = float(raw_v6) if raw_v6 is not None and raw_v6 != "None" else 2048.0
+        except Exception:
+            val_v6 = 2048.0
+
         with self._ring_lock:
             self._ring_ii[self._ring_ptr] = val_ii
             self._ring_v1[self._ring_ptr] = val_v1
