@@ -3094,6 +3094,11 @@ class Dashboard(QWidget):
             if _time.time() - self._last_metrics_update_ts < 0.3:
                 return
             self._last_metrics_update_ts = _time.time()
+            # If the dashboard timers are paused (e.g. context switch to HRV /
+            # Hyperkalemia test), do not let live signal callbacks overwrite the
+            # 0-reset that was applied on the context switch.
+            if hasattr(self, 'metrics_timer') and not self.metrics_timer.isActive():
+                return
             # Do not clear metrics if serial or acquisition is running or last valid metrics exist
             if not self.is_ecg_active() and not getattr(self, "device_connected", False) and not getattr(self, "_dashboard_last_valid", {}):
                 if 'heart_rate' in self.metric_labels:
@@ -3566,6 +3571,11 @@ class Dashboard(QWidget):
             return
         if self._is_ecg_frozen():
             return
+        # If the dashboard timers are paused (e.g. context switch to HRV /
+        # Hyperkalemia test), do not let background signal callbacks overwrite
+        # the 0-reset that was applied on the context switch.
+        if hasattr(self, 'metrics_timer') and not self.metrics_timer.isActive():
+            return
         if not hasattr(self, '_dashboard_last_valid'):
             self._dashboard_last_valid = {}
 
@@ -3862,6 +3872,48 @@ class Dashboard(QWidget):
                 print("  Dashboard ECG animation resumed.")
             except Exception as e:
                 print(f"  Failed to resume dashboard ECG animation: {e}")
+
+    def _reset_metrics_on_context_switch(self):
+        """Force-reset all dashboard metric labels to 0 and clear the ECG
+        interpretation panel when the user switches context (e.g. opens the
+        HRV or Hyperkalemia test from the dashboard).
+
+        This is intentionally independent of the lead-detach logic — it fires
+        unconditionally on a button click and does NOT change any lead-disconnect
+        guards or the _lead_connection_state tracking.
+        """
+        # 1. Wipe the sticky last-valid cache so old values don't re-appear
+        if hasattr(self, '_dashboard_last_valid'):
+            self._dashboard_last_valid.clear()
+
+        # 2. Reset every metric label to zero
+        if hasattr(self, 'metric_labels') and isinstance(self.metric_labels, dict):
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("0 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            _st_key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
+            if _st_key in self.metric_labels:
+                self.metric_labels[_st_key].setText("0 ms")
+            if 'qt_interval' in self.metric_labels:
+                self.metric_labels['qt_interval'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
+
+        # 3. Reset ECG interpretation panel
+        if hasattr(self, 'conclusion_box'):
+            self.conclusion_box.setHtml("""
+                <p style='color: #888; font-style: italic;'>
+                Waiting for stable ECG data...<br><br>
+                Metrics are being analyzed. Please wait a few seconds.
+                </p>
+            """)
+
+        # 4. Invalidate the cached conclusion so it is always regenerated fresh
+        self._last_valid_conclusion_html = None
+        print(" Dashboard metrics reset on context switch.")
 
     def on_page_changed(self, index):
         """Handle page stack widget changes. Pause timers if moving away from main dashboard page."""
@@ -4490,10 +4542,56 @@ class Dashboard(QWidget):
                     </p>
                 """)
             return
+
+        # ── NEW: Chest-leads (V1–V6) all disconnected ─────────────────────────
+        # When every precordial lead is off the interpretation cannot be reliable
+        # even though the limb leads (I, II) are still active.
+        # Show a waiting message and invalidate the cached conclusion so that when
+        # the chest leads are reconnected a fresh interpretation is generated
+        # rather than the old (possibly stale) one being shown immediately.
+        # NOTE: The metric labels (HR, PR, QRS, QTc) are intentionally left
+        # unchanged — they are derived from limb leads and remain valid.
+        if ecg_page:
+            _lead_state = getattr(ecg_page, '_lead_connection_state', {})
+            _chest_leads = ('V1', 'V2', 'V3', 'V4', 'V5', 'V6')
+            _all_chest_off = bool(_lead_state) and all(
+                not _lead_state.get(v, True) for v in _chest_leads
+            )
+            if _all_chest_off:
+                if hasattr(self, 'conclusion_box'):
+                    self.conclusion_box.setHtml("""
+                        <p style='color: #888; font-style: italic;'>
+                        Waiting for stable ECG data...<br><br>
+                        Metrics are being analyzed. Please wait a few seconds.
+                        </p>
+                    """)
+                # Invalidate cache so reconnection forces a fresh interpretation
+                self._last_valid_conclusion_html = None
+                return
+        # ── END chest-leads guard ───────────────────────────────────────────────
+
+        # ── All leads connected: always generate fresh interpretation ───────────
+        # When all standard leads (I, II + V1–V6) are confirmed connected,
+        # clear any stale cached conclusion so the panel never shows old HTML
+        # after a lead-reconnect cycle (e.g., after a brief V1–V6 dropout).
+        # The code falls through to the try: block below to build the interpretation.
+        if ecg_page:
+            _lead_state = getattr(ecg_page, '_lead_connection_state', {})
+            _std_leads = ('I', 'II', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6')
+            _all_connected = bool(_lead_state) and all(
+                _lead_state.get(lead, False) for lead in _std_leads
+            )
+            if _all_connected:
+                # All leads online — invalidate cache so interpretation is always fresh
+                self._last_valid_conclusion_html = None
+        # ── Falls through to try: block to generate fresh conclusion ────────────
+
         try:
             findings = []
             recommendations = []
             additional_info = []
+
+
             
             rhythm_text = None
             ecg_page = getattr(self, 'ecg_test_page', None)
@@ -6622,6 +6720,7 @@ class Dashboard(QWidget):
 
         try:
             self.pause_dashboard_timers()
+            self._reset_metrics_on_context_switch()   # reset labels + interpretation
             from ecg.hyperkalemia_test import HyperkalemiaTestWindow
             self.hyperkalemia_window = HyperkalemiaTestWindow(parent=self, username=self.username)
             self.hyperkalemia_window.showMaximized()
@@ -6651,6 +6750,11 @@ class Dashboard(QWidget):
                 ecg_page.stop_acquisition()
         except Exception as e:
             print(f" Error stopping 12-lead test: {e}")
+
+        # Pause timers BEFORE showing the dialog so that the metrics_timer
+        # cannot fire during the dialog and restore old cached values after
+        # stop_acquisition briefly triggers a lead-detach reset (visible flicker).
+        self.pause_dashboard_timers()
 
         duration_minutes = None
         dlg = QDialog(self)
@@ -6709,16 +6813,19 @@ class Dashboard(QWidget):
         outer.addWidget(cancel)
 
         if dlg.exec_() != QDialog.Accepted or not duration_minutes:
+            # User cancelled — restore dashboard to normal operation
+            self.resume_dashboard_timers()
             return
 
         try:
-            self.pause_dashboard_timers()
+            self._reset_metrics_on_context_switch()   # reset labels + interpretation
             from ecg.hrv_test import HRVTestWindow
             self.hrv_window = HRVTestWindow(parent=self, username=self.username, duration_minutes=duration_minutes)
             self.hrv_window.showMaximized()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open HRV Test window: {str(e)}")
-            print(f" Error opening HRV test: {e}")   
+            print(f" Error opening HRV test: {e}")
+
     
     def go_to_lead_test(self):
         if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'update_metrics_frame_theme'):
