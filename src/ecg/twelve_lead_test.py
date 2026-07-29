@@ -804,7 +804,7 @@ class ECGTestPage(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Minimum size for usability
         
-        self.setWindowTitle("12-Lead ECG Monitor")
+        self.setWindowTitle("12-Lead CardioX")
         self.stacked_widget = stacked_widget  # Save reference for navigation
 
         # Use a shared SettingsManager when provided (keeps filters/settings consistent
@@ -1858,6 +1858,9 @@ class ECGTestPage(QWidget):
             self._display_mode = "frozen"
             self._grid_frozen = True
             self._replay_cursor = 0
+            # Pause overlay redraws so Freeze keeps the exact current frame.
+            if hasattr(self, '_overlay_timer') and self._overlay_timer.isActive():
+                self._overlay_timer.stop()
 
             # ── FREEZE METRIC LABELS ───────────────────────────────────────
             # Snapshot every visible metric label text right now so the top
@@ -1995,7 +1998,13 @@ class ECGTestPage(QWidget):
         if hasattr(self, "stop_btn") and self.stop_btn:
             self.stop_btn.setToolTip("Freeze the live ECG screen, then click Resume to continue live plotting")
 
-        # Force an immediate redraw from the current live buffer so Resume feels instant.
+        # Restart overlay redraws and force an immediate redraw from the current live buffer
+        # so Resume feels instant.
+        try:
+            if hasattr(self, '_overlay_timer'):
+                self._overlay_timer.start(100)
+        except Exception:
+            pass
         try:
             self.update_plots()
         except Exception:
@@ -5252,7 +5261,7 @@ class ECGTestPage(QWidget):
 
     def show_help(self):
         help_text = """
-        <h3>12-Lead ECG Monitor Help</h3>
+        <h3>12-Lead CardioX Help</h3>
         <p><b>Getting Started:</b></p>
         <ul>
         <li>Configure serial port and baud rate in System Setup</li>
@@ -5269,7 +5278,7 @@ class ECGTestPage(QWidget):
         </ul>
         """
         msg = QMessageBox(self)
-        msg.setWindowTitle("Help - 12-Lead ECG Monitor")
+        msg.setWindowTitle("Help - 12-Lead CardioX")
         msg.setText(help_text)
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
@@ -8740,10 +8749,15 @@ class ECGTestPage(QWidget):
                     
                     # Always represent the true sample window:
                     # - if we have >= buffer_len samples, show the newest buffer_len
-                    # - if we have < buffer_len samples, right-align what we have and leave leading NaNs
+                    # - if we are frozen in 12:1, left-align the captured snapshot so the
+                    #   frozen trace fills the visible area without a leading gap
+                    # - otherwise, if we have < buffer_len samples, right-align what we have
+                    #   and leave leading NaNs for live scrolling behavior.
                     n = len(centered)
                     if n >= buffer_len:
                         plot_data[:] = centered[-buffer_len:]
+                    elif use_snapshot and getattr(self, "_current_overlay_layout", "12x1") == "12x1":
+                        plot_data[:n] = centered
                     elif n > 0:
                         plot_data[-n:] = centered
                     
@@ -9603,10 +9617,15 @@ class ECGTestPage(QWidget):
                     
                     # Always represent the true sample window:
                     # - if we have >= buffer_len samples, show the newest buffer_len
-                    # - if we have < buffer_len samples, right-align what we have and leave leading NaNs
+                    # - if we are frozen in 12:1, left-align the captured snapshot so the
+                    #   frozen trace fills the visible area without a leading gap
+                    # - otherwise, if we have < buffer_len samples, right-align what we have
+                    #   and leave leading NaNs for live scrolling behavior.
                     n = len(centered)
                     if n >= buffer_len:
                         plot_data[:] = centered[-buffer_len:]
+                    elif use_snapshot and getattr(self, "_current_overlay_layout", "12x1") == "12x1":
+                        plot_data[:n] = centered
                     elif n > 0:
                         plot_data[-n:] = centered
                     

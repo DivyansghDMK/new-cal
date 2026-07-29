@@ -77,7 +77,7 @@ def _prepare_runtime_workspace() -> str:
     base_dir = os.getenv("ECG_RUNTIME_DIR", "").strip()
     if not base_dir:
         local_appdata = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
-        base_dir = os.path.join(local_appdata, "Deckmount", "ECGMonitor")
+        base_dir = os.path.join(local_appdata, "Deckmount", "CardioX")
     base_dir = os.path.abspath(base_dir)
     os.makedirs(base_dir, exist_ok=True)
 
@@ -2516,13 +2516,13 @@ def main():
         if sys.platform == "win32":
             try:
                 import ctypes
-                myappid = "deckmount.cardiox.ecgmonitor.2.1"
+                myappid = "CardioX.1.1.0"
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             except Exception as e:
                 print(f"[MainApp] Failed to set AppUserModelID: {e}")
 
         app = QApplication(sys.argv)
-        app.setApplicationName("ECG Monitor")
+        app.setApplicationName("CardioX")
         app.setApplicationVersion(APP_VERSION)
 
         # Set application icon

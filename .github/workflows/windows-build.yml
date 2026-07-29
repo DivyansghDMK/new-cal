@@ -73,9 +73,9 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}\src
         run: |
-          .\build_release.ps1 -Name ECGMonitor -Version $env:VERSION -Channel $env:CHANNEL -Repository $env:REPOSITORY
-          if (!(Test-Path "dist/ECGMonitor/ECGMonitor.exe")) {
-            Write-Error "Expected executable missing: dist/ECGMonitor/ECGMonitor.exe"
+          .\build_release.ps1 -Name CardioX -Version $env:VERSION -Channel $env:CHANNEL -Repository $env:REPOSITORY
+          if (!(Test-Path "dist/CardioX/CardioX.exe")) {
+            Write-Error "Expected executable missing: dist/CardioX/CardioX.exe"
             exit 1
           }
           if (!(Get-ChildItem "dist/installers" -Filter "*.exe" -ErrorAction SilentlyContinue)) {
@@ -86,9 +86,9 @@ jobs:
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ECGMonitor-windows-release
+          name: CardioX-windows-release
           path: |
-            dist/ECGMonitor/**
+            dist/CardioX/**
             dist/installers/**
           if-no-files-found: error
 
@@ -98,7 +98,7 @@ jobs:
         with:
           tag_name: ${{ env.TAG_NAME }}
           target_commitish: ${{ github.sha }}
-          name: ECG Monitor ${{ env.VERSION }}
+          name: CardioX ${{ env.VERSION }}
           prerelease: ${{ env.CHANNEL != 'stable' }}
           generate_release_notes: true
           files: |

@@ -233,7 +233,7 @@ class SendEmailDialog(QDialog):
         self.body = QTextEdit()
         self.body.setPlainText(
             f"Dear Doctor,\n\nPlease find attached the ECG report for patient: {patient_name}.\n\n"
-            f"Regards,\nECG Monitor"
+            f"Regards,\nCardioX"
         )
         self.body.setFixedHeight(100)
 

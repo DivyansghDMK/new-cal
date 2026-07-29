@@ -1,4 +1,4 @@
-# ECG Monitor Application
+# CardioX Application
 
 A comprehensive ECG monitoring application with 12-lead ECG analysis, real-time metrics calculation, and dashboard visualization.
 
@@ -55,6 +55,7 @@ modularecg/
 The application includes a hidden diagnostic system for troubleshooting and crash reporting:
 
 ### Accessing the Crash Logger
+
 - **Triple-click** the heart rate metric on the dashboard
 - A diagnostic dialog will open showing:
   - Session statistics (duration, errors, crashes, memory usage)
@@ -63,6 +64,7 @@ The application includes a hidden diagnostic system for troubleshooting and cras
   - Options to send reports via email or clear logs
 
 ### Email Configuration
+
 To enable email reporting on other computers:
 
 1. **Copy the template**: `cp email_config_template.txt .env`
@@ -75,6 +77,7 @@ To enable email reporting on other computers:
 4. **Restart** the application
 
 ### Features
+
 - **Automatic crash detection** and logging
 - **System information** collection
 - **Session statistics** tracking
@@ -84,16 +87,19 @@ To enable email reporting on other computers:
 ## Running the Application
 
 ### Option 1: Using Batch File (Windows)
+
 ```bash
 launch_app.bat
 ```
 
 ### Option 2: Using PowerShell Script
+
 ```bash
 .\launch_app.ps1
 ```
 
 ### Option 3: Direct Python Execution
+
 ```bash
 cd src
 python main.py
@@ -140,9 +146,9 @@ This section gives a single-page overview of how the main pieces of the app work
   - Display **live metrics** at the top: HR, PR, QRS, Axis, ST, QT/QTc, elapsed Time.
   - Show **12 real‑time leads** using PyQtGraph (fed by `ECGTestPage` in `src/ecg/twelve_lead_test.py`).
   - Host the right‑hand sliding **control panels**:
-    - *Save ECG Details*
-    - *Working Mode* (wave speed, wave gain, sampling mode)
-    - *System Setup*, *Report Setup*, *Filter*, etc.
+    - _Save ECG Details_
+    - _Working Mode_ (wave speed, wave gain, sampling mode)
+    - _System Setup_, _Report Setup_, _Filter_, etc.
   - Manage the **Recent Reports** list using `reports/index.json`.
   - Provide buttons for **Start / Stop / Ports / Generate Report / 12:1 / 6:2 / Back**.
 - **Live metric update flow**:
@@ -181,7 +187,7 @@ This section gives a single-page overview of how the main pieces of the app work
       - Normal (60–200 bpm),
       - Tight (high BPM, up to 300 bpm).
     - Converts peak indices to R‑R intervals (ms):
-      - \( \mathrm{RR\_ms} = \Delta\text{peaks} \times 1000 / fs \)
+      - \( \mathrm{RR_ms} = \Delta\text{peaks} \times 1000 / fs \)
       - Only keeps 200–6000 ms (10–300 bpm).
     - Heart rate:
       - \( \mathrm{HR} = 60000 / \mathrm{median}(RR\_\mathrm{valid}) \)
@@ -194,7 +200,7 @@ This section gives a single-page overview of how the main pieces of the app work
   - **QRS duration** (`calculate_qrs_duration`):
     - Uses an 80 ms window around R to locate Q and S minima.
     - QRS duration:
-      - \( \mathrm{QRS\_ms} = (S - Q)/fs \times 1000 \)
+      - \( \mathrm{QRS_ms} = (S - Q)/fs \times 1000 \)
       - Typically 80–120 ms.
   - **ST segment** (`calculate_st_interval`):
     - Filters Lead II, finds R, estimates J‑point at R+40 ms, measures ST at J+60 ms.
@@ -204,7 +210,7 @@ This section gives a single-page overview of how the main pieces of the app work
       - Finds Q up to 40 ms before R.
       - Finds T‑end as the point where the signal returns near baseline within 500 ms after R.
       - QT in ms:
-        - \( \mathrm{QT\_ms} \in [200,600] \) if valid.
+        - \( \mathrm{QT_ms} \in [200,600] \) if valid.
     - `calculate_qtc_interval(heart_rate, qt_interval)`:
       - Bazett's formula:
         - \( \mathrm{QTc} = \frac{QT}{\sqrt{RR}} \), where \( RR = 60/\mathrm{HR} \) (seconds).
@@ -254,6 +260,7 @@ This section gives a single-page overview of how the main pieces of the app work
 This overview should give you a single reference for how the signup, dashboard, 12‑lead engine, and expanded‑lead analysis all work together, including the key formulas and methods involved.
 
 ### Generating Reports
+
 - Click "Generate Report" on the dashboard
 - Choose a filename and location (e.g., Downloads)
 - The app also stores a managed copy in `reports/` and updates `reports/index.json`
@@ -291,6 +298,7 @@ The application calculates and displays the following metrics in real-time:
 ## Recent Updates
 
 ### Codebase Refactoring and Modularization
+
 - **Modular Architecture**: Complete restructuring with dedicated modules for core functionality, configuration, and utilities
 - **Error Handling**: Comprehensive error handling with custom exception classes and graceful fallbacks
 - **Logging System**: Centralized logging with rotation, performance monitoring, and debug information
@@ -299,6 +307,7 @@ The application calculates and displays the following metrics in real-time:
 - **Clean Organization**: Unused files moved to clutter directory, proper Python package structure
 
 ### Medical-Grade ECG Filtering System
+
 - **Advanced Filtering Pipeline**: Implemented 8-stage filtering system for professional medical device-quality signals
 - **Wiener Filter**: Statistical noise reduction optimized for ECG signals
 - **Gaussian Smoothing**: Multi-stage smoothing for clean waveform appearance
@@ -306,6 +315,7 @@ The application calculates and displays the following metrics in real-time:
 - **Real-time Smoothing**: Individual data point smoothing for live data processing
 
 ### Expanded Lead View
+
 - **Detailed Analysis**: Click any ECG lead to open expanded analysis view
 - **PQRST Labeling**: Automatic detection and labeling of cardiac waveform components
 - **Enhanced Metrics**: Comprehensive metrics display with improved visibility
@@ -313,7 +323,9 @@ The application calculates and displays the following metrics in real-time:
 - **Responsive UI**: Optimized layout and sizing for better user experience
 
 ### Signal Quality Improvements
+
 ### Dashboard Recent Reports & Report Management
+
 - Added "Recent Reports" panel with scrollbar and app-themed styling
 - Reports are saved both to the selected path and to `reports/`
 - `reports/index.json` maintains metadata for the last 10 reports for quick access
@@ -367,21 +379,22 @@ The application calculates and displays the following metrics in real-time:
 ### 🎯 Quick Start Guides
 
 **For Developers:**
+
 1. Read [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) - Complete system overview
 2. Check [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - File organization
 3. Review [PROJECT_STATUS_UPDATE_NOV2025.md](PROJECT_STATUS_UPDATE_NOV2025.md) - Current status
 
 **For Admins:**
+
 1. Read [AWS_S3_STEP_BY_STEP_GUIDE.md](AWS_S3_STEP_BY_STEP_GUIDE.md) - Cloud setup
 2. Configure `.env` file with AWS credentials
 3. Access Admin Panel with `admin`/`adminsd` credentials
 
 **For Users:**
+
 1. Install dependencies: `pip install -r requirements.txt`
 2. Run: `python src/main.py`
 3. Login or register to start monitoring
-
-
 
 ## Windows EXE Build (Recommended)
 
@@ -390,16 +403,17 @@ Use the standardized onedir build flow for best cross-system compatibility:
 ```powershell
 .\.venv\Scripts\Activate.ps1
 pip install -r src\requirements.txt
-python build_exe.py --name ECGMonitor
+python build_exe.py --name CardioX
 ```
 
-- This creates `dist\ECGMonitor\ECGMonitor.exe` (with dependencies in `_internal`).
-- Share the **entire `dist\ECGMonitor\` folder**, not just the `.exe`.
-- For startup debugging, build with console: `python build_exe.py --name ECGMonitor --console`.
+- This creates `dist\CardioX\CardioX.exe` (with dependencies in `_internal`).
+- Share the **entire `dist\CardioX\` folder**, not just the `.exe`.
+- For startup debugging, build with console: `python build_exe.py --name CardioX --console`.
 
 ## Cloud Integration (AWS S3)
 
 ### Features
+
 - ✅ Automatic report upload every 5 seconds
 - ✅ User signup data backup
 - ✅ Admin panel for report management
@@ -407,6 +421,7 @@ python build_exe.py --name ECGMonitor
 - ✅ Presigned URLs for secure downloads
 
 ### Setup
+
 1. Create AWS account and S3 bucket
 2. Create IAM user with S3 permissions
 3. Copy `.env.example` to `.env`
@@ -414,6 +429,7 @@ python build_exe.py --name ECGMonitor
 5. See [AWS_S3_STEP_BY_STEP_GUIDE.md](AWS_S3_STEP_BY_STEP_GUIDE.md) for details
 
 ### Cost
+
 - **100 reports:** ~$0.003/month
 - **10,000 reports:** ~$0.28/month
 - **100,000 reports:** ~$2.80/month
@@ -423,6 +439,7 @@ python build_exe.py --name ECGMonitor
 Access with credentials: `admin` / `adminsd`
 
 ### Features
+
 - **Reports Tab:**
   - View all S3 reports (PDF + JSON)
   - Download reports
@@ -465,16 +482,19 @@ See [PROJECT_STATUS_UPDATE_NOV2025.md](PROJECT_STATUS_UPDATE_NOV2025.md) for com
 ## Support
 
 ### Documentation
+
 - **Technical Issues:** See [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) → Troubleshooting
 - **Cloud Setup:** See [AWS_S3_STEP_BY_STEP_GUIDE.md](AWS_S3_STEP_BY_STEP_GUIDE.md)
 - **Feature Status:** See [PROJECT_STATUS_UPDATE_NOV2025.md](PROJECT_STATUS_UPDATE_NOV2025.md)
 
 ### Bug Reports
+
 - GitHub Issues: https://github.com/YourUsername/modularecg/issues
 - Email: support@example.com
 
 ### Community
-- Discord: https://discord.gg/ecgmonitor
+
+- Discord: https://discord.gg/cardiox
 - Slack: #ecg-monitor
 
 ## License

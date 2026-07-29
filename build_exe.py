@@ -1,5 +1,5 @@
 """
-Deterministic Windows build script for ECG Monitor executable.
+Deterministic Windows build script for CardioX executable.
 
 Goals:
 Produce consistent output across machines.
@@ -10,8 +10,8 @@ Usage:
     python build_exe.py
     python build_exe.py --onefile        # optional, less stable for this app
     python build_exe.py --console        # debug startup crashes
-    python build_exe.py --name ECGMonitor
-    python build_exe.py --onefile --runtime-tmpdir "C:\\Temp\\ECGMonitor"
+    python build_exe.py --name CardioX
+    python build_exe.py --onefile --runtime-tmpdir "C:\\Temp\\CardioX"
 """
 
 from __future__ import annotations
@@ -263,8 +263,8 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
 def main() -> int:
     _encode_stdio_utf8_on_windows()
 
-    parser = argparse.ArgumentParser(description="Build ECG Monitor executable with PyInstaller")
-    parser.add_argument("--name", default="ECGMonitor", help="Output application name")
+    parser = argparse.ArgumentParser(description="Build CardioX executable with PyInstaller")
+    parser.add_argument("--name", default="CardioX", help="Output application name")
     parser.add_argument("--onefile", action="store_true", help="Build as onefile (not recommended)")
     parser.add_argument("--console", action="store_true", help="Build with console for debugging")
     parser.add_argument(
@@ -277,7 +277,7 @@ def main() -> int:
         default=None,
         help=(
             "Where PyInstaller onefile extracts runtime files. "
-            "Example (Windows): TEMP\\ECGMonitor (use your TEMP environment variable when running the command). "
+            "Example (Windows): TEMP\\CardioX (use your TEMP environment variable when running the command). "
             "If omitted, PyInstaller default is used."
         ),
     )
@@ -300,13 +300,13 @@ def main() -> int:
         runtime_tmpdir = Path(runtime_tmpdir_raw)
         if not runtime_tmpdir.is_absolute():
             raise SystemExit(
-                "ERROR: --runtime-tmpdir must be an absolute path (e.g. C:\\Temp\\ECGMonitor). "
+                "ERROR: --runtime-tmpdir must be an absolute path (e.g. C:\\Temp\\CardioX). "
                 "Omit --runtime-tmpdir to use the per-user temp directory on each PC."
             )
         args.insert(5, f"--runtime-tmpdir={runtime_tmpdir}")
 
     print("=" * 70)
-    print("Building ECG Monitor executable")
+    print("Building CardioX executable")
     print(f"Project root : {project_root}")
     print(f"Mode         : {'onefile' if ns.onefile else 'onedir (recommended)'}")
     print(f"Console      : {'ON' if ns.console else 'OFF'}")

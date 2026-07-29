@@ -1418,7 +1418,7 @@ class Dashboard(QWidget):
 
         grid.addWidget(reports_card, 2, 2, 1, 1)
         
-        # --- ECG Monitor Metrics Cards ---
+        # --- CardioX Metrics Cards ---
         metrics_card = QFrame()
         metrics_card.setStyleSheet("background: white; border-radius: 16px;")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)

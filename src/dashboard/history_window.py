@@ -81,7 +81,7 @@ def _get_RhythmUltra_serial() -> str:
     return serial or "DM ECG V1.0 A010"
 
 HL7_VERSION = "2.5.1"
-HL7_APP_NAME = "ECGMONITOR"
+HL7_APP_NAME = "CardioX"
 HL7_REPORT_DIR = os.path.join(REPORTS_DIR, "hl7")
 
 
@@ -521,7 +521,7 @@ class SendEmailDialog(QDialog):
         self.body = QTextEdit()
         self.body.setPlainText(
             f"Dear Doctor,\n\nPlease find attached the ECG report for patient: {patient_name}.\n\n"
-            f"Regards,\nECG Monitor"
+            f"Regards,\nCardioX"
         )
         self.body.setFixedHeight(120)
 

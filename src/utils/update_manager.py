@@ -107,7 +107,7 @@ def _latest_release_for_channel(repo: str, channel: str) -> dict[str, Any] | Non
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "ECGMonitor-Updater",
+        "User-Agent": "CardioX-Updater",
     }
     response = requests.get(url, headers=headers, timeout=3)
     response.raise_for_status()
@@ -304,9 +304,9 @@ def check_and_install_update(parent=None, quiet: bool = False) -> bool:
     if not asset_url:
         return False
 
-    temp_dir = Path(tempfile.gettempdir()) / "ecg_monitor_updates"
+    temp_dir = Path(tempfile.gettempdir()) / "cardiox_updates"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    installer_name = latest.get("asset_name") or "ECGMonitor-Setup.exe"
+    installer_name = latest.get("asset_name") or "CardioX-Setup.exe"
     installer_path = temp_dir / installer_name
 
     try:

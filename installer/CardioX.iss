@@ -1,8 +1,8 @@
 #ifndef MyAppName
-  #define MyAppName "ECG Monitor"
+  #define MyAppName "CardioX"
 #endif
 #ifndef MyAppExeName
-  #define MyAppExeName "ECGMonitor.exe"
+  #define MyAppExeName "CardioX.exe"
 #endif
 #ifndef MyAppPublisher
   #define MyAppPublisher "Deckmount Electronics"
@@ -14,7 +14,7 @@
   #define MyAppChannel "stable"
 #endif
 #ifndef MyAppDistDir
-  #define MyAppDistDir "..\dist\ECGMonitor"
+  #define MyAppDistDir "..\dist\CardioX"
 #endif
 #ifndef MyAppOutputDir
   #define MyAppOutputDir "..\dist_installer"
@@ -27,7 +27,7 @@
 #endif
 
 ; =====================================================================
-; CardioX ECG Monitor Inno Setup Installer Script
+; CardioX CardioX Inno Setup Installer Script
 ; Designed for Deckmount Electronics Pvt. Ltd.
 ; =====================================================================
 
@@ -92,11 +92,11 @@ begin
   if JustAfterAnUninstallStep = usPostUninstall then
   begin
     AppDataDir := ExpandConstant('{userappdata}\Deckmount');
-    LocalAppDataDir := ExpandConstant('{userlocalappdata}\Deckmount\ECGMonitor');
+    LocalAppDataDir := ExpandConstant('{userlocalappdata}\Deckmount\CardioX');
     
     if DirExists(LocalAppDataDir) or DirExists(AppDataDir) then
     begin
-      DeleteData := MsgBox('Do you want to delete your CardioX ECG Monitor local configurations, local patient databases, generated reports, and license activation files?', mbConfirmation, MB_YESNO);
+      DeleteData := MsgBox('Do you want to delete your CardioX CardioX local configurations, local patient databases, generated reports, and license activation files?', mbConfirmation, MB_YESNO);
       if DeleteData = idYes then
       begin
         // Remove LOCALAPPDATA runtime directory (reports, logs, config, users, database)

@@ -1981,7 +1981,7 @@ def _sync_report_package_to_backend(
         device_serial = str((patient or {}).get('serial_number') or data.get('machine_serial') or signup_details.get('serial_id') or 'UNKNOWN')
         device_info = {
             'machine_serial': data.get('machine_serial', ''),
-            'app': 'ecg_monitor',
+            'app': 'cardiox',
             'report_type': report_type,
             'report_file': os.path.abspath(filename),
         }

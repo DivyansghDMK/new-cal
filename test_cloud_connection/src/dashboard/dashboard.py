@@ -293,7 +293,7 @@ class Dashboard(QWidget):
         self._rr_stability_counter = 0
         print("🔒 Stable RR tracking initialized")
         
-        self.setWindowTitle("ECG Monitor Dashboard")
+        self.setWindowTitle("CardioX Dashboard")
         self.setGeometry(100, 100, 1300, 900)
         self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         self.setWindowState(Qt.WindowMaximized)
@@ -368,7 +368,7 @@ class Dashboard(QWidget):
         
         # --- Header ---
         header = QHBoxLayout()
-        logo = QLabel("ECG Monitor")
+        logo = QLabel("CardioX")
         logo.setFont(QFont("Arial", 24, QFont.Bold))
         logo.setStyleSheet("color: #ff6600;")
         logo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -1186,7 +1186,7 @@ class Dashboard(QWidget):
 
         grid.addWidget(reports_card, 2, 2, 1, 1)
         
-        # --- ECG Monitor Metrics Cards ---
+        # --- CardioX Metrics Cards ---
         metrics_card = QFrame()
         metrics_card.setStyleSheet("background: white; border-radius: 16px;")
         metrics_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)

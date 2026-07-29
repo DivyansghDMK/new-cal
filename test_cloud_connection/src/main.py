@@ -821,7 +821,7 @@ def main():
         crash_logger = get_crash_logger()
         crash_logger.log_info("Application starting", "APP_START")
         
-        logger.info("Starting ECG Monitor Application")
+        logger.info("Starting CardioX Application")
 
         # =========================================================
         # START BACKGROUND UPLOAD SERVICE (GLOBAL)
@@ -853,7 +853,7 @@ def main():
             logger.error(f"❌ Failed to start background services: {e}")
 
         app = QApplication(sys.argv)
-        app.setApplicationName("ECG Monitor")
+        app.setApplicationName("CardioX")
         app.setApplicationVersion("1.3")
 
         # ── Pre-warm heavy imports in background ──────────────────────
@@ -919,7 +919,7 @@ def main():
                         _splash = QSplashScreen(_splash_pix,
                                                 Qt.WindowStaysOnTopHint)
                         _splash.showMessage(
-                            "  Loading ECG Monitor…  Please wait",
+                            "  Loading CardioX…  Please wait",
                             Qt.AlignCenter | Qt.AlignBottom,
                             QColor("#ff6600"))
                         _splash.show()

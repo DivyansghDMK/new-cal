@@ -9,7 +9,7 @@ CardioX is a clinical-grade, hardware-integrated desktop application designed fo
 ### 1. Rebranded Premium Medical Identity (CardioX)
 - **Harmonious Theme:** Tailored UI utilizing orange, tech blue, and medical teal colors.
 - **Custom Visual Assets:** High-resolution transparent logo (`assets/cardiox_logo.png`) and fully compliant multi-resolution Windows icon (`assets/cardiox_logo.ico`).
-- **Windows Taskbar Integration:** Declares an explicit Windows `AppUserModelID` (`CardioX.ECGMonitor.1.1.0`) so the OS correctly clusters the custom CardioX taskbar icon instead of fallback Python interpreter icons.
+- **Windows Taskbar Integration:** Declares an explicit Windows `AppUserModelID` (`CardioX.1.1.0`) so the OS correctly clusters the custom CardioX taskbar icon instead of fallback Python interpreter icons.
 - **Clean Dashboard Layout:** Hides the "Comprehensive ECG" button (`self.holter_btn`) to keep the dashboard focused entirely on core workflows.
 
 ### 2. Dedicated Hardware Lock (Device Authorization)
@@ -62,7 +62,7 @@ CardioX uses a unified release pipeline script to compile the application and ge
 
 ### Build Details:
 1. **PyInstaller Compilation:** Packages python scripts into a standalone executable. Uses `--icon=assets/cardiox_logo.ico` to embed the square padded multi-resolution logo directly into the output binary (`dist\CARDIOX\CARDIOX.exe`).
-2. **Inno Setup Integration:** Invokes Inno Setup compiler (`ISCC.exe`) using [ECGMonitor.iss](file:///c:/Users/DELL/Documents/QW/qww/installer/ECGMonitor.iss) to package the setup program, apply shortcut icon mappings (Desktop, Start Menu, Uninstaller), and create the final installer.
+2. **Inno Setup Integration:** Invokes Inno Setup compiler (`ISCC.exe`) using [CardioX.iss](file:///c:/Users/DELL/Documents/QW/qww/installer/CardioX.iss) to package the setup program, apply shortcut icon mappings (Desktop, Start Menu, Uninstaller), and create the final installer.
 3. **Installer Output:** Generates the ready-to-run installation executable at `dist\installers\Setup_CARDIOX_1.1.0.exe`.
 
 ---

@@ -103,7 +103,7 @@ _META_FILE: Path = _TOKEN_DIR / "cardiox_meta.json"
 _AUDIT_LOG_FILE: Path = _TOKEN_DIR / "audit_log.jsonl"
 
 # Legacy cache dir (kept for backward compat — old key file)
-_LEGACY_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
+_LEGACY_CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "CardioX"
 _LEGACY_KEY_FILE: Path = _LEGACY_CACHE_DIR / "license.key"
 _LEGACY_CACHE_FILE: Path = _LEGACY_CACHE_DIR / "license.cache"
 _DEVICE_ID_FILE: Path = _LEGACY_CACHE_DIR / "device.id"  # no longer used; kept to remove on upgrade

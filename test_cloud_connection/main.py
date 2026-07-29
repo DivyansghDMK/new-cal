@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ECG Monitor Application Launcher
-This script launches the ECG Monitor application from the root directory.
+CardioX Application Launcher
+This script launches the CardioX application from the root directory.
 """
 
 import sys

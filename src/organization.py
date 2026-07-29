@@ -2,7 +2,7 @@
 Organization Management Module
 
 This module handles organization creation, storage, and role selection functionality
-for the ECG Monitor application.
+for the CardioX application.
 """
 
 import os

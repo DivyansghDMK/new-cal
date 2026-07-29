@@ -343,7 +343,7 @@ def apply_dft_filter(signal: np.ndarray, sampling_rate: float, dft_filter: str) 
         return signal
 
 
-def process_ecg_monitor_grade(ecg: np.ndarray, fs: float = 500.0, apply_sharpening: bool = False) -> np.ndarray:
+def process_cardiox_grade(ecg: np.ndarray, fs: float = 500.0, apply_sharpening: bool = False) -> np.ndarray:
     """
     Complete monitor-grade ECG processing pipeline with all corrections.
     

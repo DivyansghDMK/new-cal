@@ -30,7 +30,7 @@ class ECGAuthAPI:
         if runtime_dir:
             base = Path(runtime_dir)
         else:
-            base = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Deckmount" / "ECGMonitor"
+            base = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Deckmount" / "CardioX"
         base.mkdir(parents=True, exist_ok=True)
         return base / "ecg_auth_session.json"
 
