@@ -5,7 +5,7 @@ This folder contains an **Inno Setup** installer script that creates a standard 
 ## Prerequisites
 
 - Build the app with the recommended PyInstaller **ONEDIR** output:
-  - `python build_exe.py --name ECGMonitor`
+  - `python build_exe.py --name CardioX`
 - Install **Inno Setup** (so you have `ISCC.exe` available).
 
 ## Build the installer
@@ -13,7 +13,7 @@ This folder contains an **Inno Setup** installer script that creates a standard 
 From the project root in PowerShell:
 
 ```powershell
-python build_exe.py --name ECGMonitor
+python build_exe.py --name CardioX
 .\installer\build_installer.ps1
 ```
 
@@ -23,6 +23,6 @@ The setup EXE is written to:
 
 ## What gets installed
 
-- Everything under `dist\ECGMonitor\` is installed to `C:\Program Files\ECG Monitor\` by default.
+- Everything under `dist\CardioX\` is installed to `C:\Program Files\CardioX\` by default.
 - Start Menu shortcut (and optional Desktop shortcut) is created with working directory set to the install folder.
 
