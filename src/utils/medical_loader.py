@@ -1,10 +1,25 @@
 import sys
+import os
 import math
 import time as _time
 from pathlib import Path
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QWidget
 from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QLinearGradient, QPixmap
+
+
+def _get_assets_dir() -> Path:
+    """Return the assets directory whether running from source or as a frozen EXE.
+
+    PyInstaller bundles the ``assets/`` folder at the root of ``sys._MEIPASS``,
+    so we must use that root when frozen instead of navigating relative to
+    ``__file__``.
+    """
+    if hasattr(sys, "_MEIPASS"):
+        # Frozen EXE: PyInstaller extracts all bundled data into sys._MEIPASS
+        return Path(sys._MEIPASS) / "assets"
+    # Development: __file__ is src/utils/medical_loader.py → go 2 levels up
+    return Path(__file__).resolve().parents[2] / "assets"
 
 
 class AnimatedECG(QWidget):
@@ -173,7 +188,7 @@ class MedicalLoader(QDialog):
         logo_icon.setFixedSize(52, 52)
         logo_icon.setAlignment(Qt.AlignCenter)
         logo_icon.setStyleSheet("background: transparent; border: none;")
-        icon_path = Path(__file__).resolve().parents[2] / "assets" / "cardiox_logo.png"
+        icon_path = _get_assets_dir() / "cardiox_logo.png"
         pixmap = QPixmap(str(icon_path))
         if not pixmap.isNull():
             logo_icon.setPixmap(pixmap.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
