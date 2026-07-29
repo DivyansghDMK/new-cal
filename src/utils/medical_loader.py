@@ -1,9 +1,10 @@
 import sys
 import math
 import time as _time
+from pathlib import Path
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QWidget
 from PyQt5.QtCore import Qt, QTimer, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QLinearGradient
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPainterPath, QLinearGradient, QPixmap
 
 
 class AnimatedECG(QWidget):
@@ -166,14 +167,26 @@ class MedicalLoader(QDialog):
 
         # Logo / Title
         title_layout = QHBoxLayout()
+        title_layout.setSpacing(12)
+
+        logo_icon = QLabel()
+        logo_icon.setFixedSize(52, 52)
+        logo_icon.setAlignment(Qt.AlignCenter)
+        logo_icon.setStyleSheet("background: transparent; border: none;")
+        icon_path = Path(__file__).resolve().parents[2] / "assets" / "cardiox_logo.png"
+        pixmap = QPixmap(str(icon_path))
+        if not pixmap.isNull():
+            logo_icon.setPixmap(pixmap.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            logo_icon.setText(" ? ")
+            logo_icon.setStyleSheet("color: white; background-color: #E8650A; border-radius: 8px; font-size: 24px; padding: 4px; border: none;")
         logo = QLabel("CardioX")
         logo.setStyleSheet("color: white; font-size: 32px; font-weight: bold; background: transparent; border: none;")
         
         icon_lbl = QLabel(" ⚡ ")
-        icon_lbl.setStyleSheet("color: white; background-color: #E8650A; border-radius: 8px; font-size: 24px; padding: 4px; border: none;")
         
         title_layout.addStretch()
-        title_layout.addWidget(icon_lbl)
+        title_layout.addWidget(logo_icon)
         title_layout.addWidget(logo)
         title_layout.addStretch()
         layout.addLayout(title_layout)

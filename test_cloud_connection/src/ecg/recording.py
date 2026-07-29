@@ -2521,7 +2521,7 @@ class ECGMenu(QGroupBox):
             axes[idx].set_yticks([])  
         
         # Compact title
-        fig.suptitle('12-Lead ECG Monitor', fontsize=14, fontweight='bold', y=0.95)
+        fig.suptitle('12-Lead CardioX', fontsize=14, fontweight='bold', y=0.95)
         
         def update_plot():
             nonlocal current_index
@@ -2557,7 +2557,7 @@ class ECGMenu(QGroupBox):
                 axes[idx].spines['right'].set_visible(False)
             
             # Compact title with sample info
-            fig.suptitle(f'ECG Monitor - Sample: {current_index}/{num_samples-1}', 
+            fig.suptitle(f'CardioX - Sample: {current_index}/{num_samples-1}', 
                          fontsize=12, fontweight='bold', y=0.95)
             
             # Tighter layout - less wasted space

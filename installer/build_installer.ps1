@@ -1,6 +1,6 @@
 Param(
   [string]$InnoSetupISCC = "",
-  [string]$IssPath = (Join-Path $PSScriptRoot "ECGMonitor.iss")
+  [string]$IssPath = (Join-Path $PSScriptRoot "CardioX.iss")
 )
 
 $ErrorActionPreference = "Stop"

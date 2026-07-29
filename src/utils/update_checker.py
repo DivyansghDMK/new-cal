@@ -1,7 +1,7 @@
 """
 src/utils/update_checker.py
 ============================
-Background update-availability checker for ECG Monitor.
+Background update-availability checker for CardioX.
 
 Flow
 ----
@@ -104,7 +104,7 @@ def check_for_update(current_version: str, channel: str = "stable") -> Optional[
     url = f"{server_url}/api/v1/latest-version?channel={channel}"
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ECGMonitor-UpdateChecker/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "CardioX-UpdateChecker/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status != 200:
                 try:

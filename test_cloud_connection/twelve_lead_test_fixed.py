@@ -696,7 +696,7 @@ class ECGTestPage(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Minimum size for usability
         
-        self.setWindowTitle("12-Lead ECG Monitor")
+        self.setWindowTitle("12-Lead CardioX")
         self.stacked_widget = stacked_widget  # Save reference for navigation
 
         self.settings_manager = SettingsManager()
@@ -4294,7 +4294,7 @@ class ECGTestPage(QWidget):
 
     def show_help(self):
         help_text = """
-        <h3>12-Lead ECG Monitor Help</h3>
+        <h3>12-Lead CardioX Help</h3>
         <p><b>Getting Started:</b></p>
         <ul>
         <li>Configure serial port and baud rate in System Setup</li>
@@ -4311,7 +4311,7 @@ class ECGTestPage(QWidget):
         </ul>
         """
         msg = QMessageBox(self)
-        msg.setWindowTitle("Help - 12-Lead ECG Monitor")
+        msg.setWindowTitle("Help - 12-Lead CardioX")
         msg.setText(help_text)
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()

@@ -3,7 +3,7 @@ Build Windows setup.exe (Inno Setup) from an existing PyInstaller onedir build.
 
 Usage:
     python build_setup.py
-    python build_setup.py --name ECGMonitor --version 1.0.0
+    python build_setup.py --name CardioX --version 1.0.0
     python build_setup.py --iscc "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
 """
 
@@ -44,8 +44,8 @@ def _default_version() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build ECGMonitor setup.exe with Inno Setup")
-    parser.add_argument("--name", default="ECGMonitor", help="App name / exe name without extension")
+    parser = argparse.ArgumentParser(description="Build CardioX setup.exe with Inno Setup")
+    parser.add_argument("--name", default="CardioX", help="App name / exe name without extension")
     parser.add_argument("--version", default=_default_version(), help="Installer version label")
     parser.add_argument("--channel", default="stable", help="Update channel label")
     parser.add_argument("--repository", default="", help="GitHub repository in owner/name form")
@@ -58,14 +58,14 @@ def main() -> int:
     project_root = Path(__file__).resolve().parent
     dist_dir = Path(ns.dist_dir).resolve() if ns.dist_dir else (project_root / "dist" / ns.name).resolve()
     output_dir = Path(ns.output_dir).resolve() if ns.output_dir else (project_root / "dist" / "installers").resolve()
-    iss_file = (project_root / "installer" / "ECGMonitor.iss").resolve()
+    iss_file = (project_root / "installer" / "CardioX.iss").resolve()
 
     if not iss_file.exists():
         print(f"Installer script not found: {iss_file}")
         return 1
     if not dist_dir.exists():
         print(f"Build output not found: {dist_dir}")
-        print("Run: python build_exe.py --name ECGMonitor")
+        print("Run: python build_exe.py --name CardioX")
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)

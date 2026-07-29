@@ -88,7 +88,7 @@ class TestLoginBypassRemoved(unittest.TestCase):
 
     def test_no_admin_bypass_in_main_login(self):
         main_path = os.path.join(_SRC, "main.py")
-        with open(main_path, "r") as f:
+        with open(main_path, "r", encoding="utf-8") as f:
             source = f.read()
         # The old bypass checked admin credentials before license validation.
         # It must NOT exist anymore.
@@ -97,7 +97,7 @@ class TestLoginBypassRemoved(unittest.TestCase):
 
     def test_no_hardcoded_divyansh_in_login_flow(self):
         main_path = os.path.join(_SRC, "main.py")
-        with open(main_path, "r") as f:
+        with open(main_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         # Find the handle_login method and check there's no 'divyansh' or
         # 'admin' hardcoded password comparison in that function.

@@ -1269,7 +1269,7 @@ def _sync_report_package_to_backend(filename, patient, data, metrics_payload, us
         device_serial = str((patient or {}).get('serial_number') or data.get('machine_serial') or signup_details.get('serial_id') or 'UNKNOWN')
         sid = backend.start_session(device_serial=device_serial, device_info={
             'machine_serial': data.get('machine_serial', ''),
-            'app': 'ecg_monitor',
+            'app': 'cardiox',
             'report_type': '12_lead_ecg_6_2',
             'report_file': os.path.abspath(filename),
         })

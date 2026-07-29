@@ -1,5 +1,5 @@
 param(
-  [string]$Name = "ECGMonitor",
+  [string]$Name = "CardioX",
   [string]$Version = "",
   [string]$Channel = "stable",
   [string]$Repository = "",
@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($Repository)) {
 
 $versionFile = Join-Path $PSScriptRoot "src\version.py"
 $versionContent = @"
-"""Build-time version metadata for ECG Monitor."""
+"""Build-time version metadata for CardioX."""
 
 APP_VERSION = "$Version"
 UPDATE_CHANNEL = "$Channel"

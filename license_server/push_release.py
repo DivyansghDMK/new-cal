@@ -2,7 +2,7 @@
 """
 license_server/push_release.py
 ================================
-Admin CLI — publish a new ECG Monitor release to the license server.
+Admin CLI — publish a new CardioX release to the license server.
 
 Run this AFTER you have:
   1. Verified the new build works correctly.
@@ -13,7 +13,7 @@ Usage
   python push_release.py \\
     --version 2026.05.21.1003 \\
     --notes "New arrhythmia rules, HRV improvements" \\
-    --url "https://github.com/DivyansghDMK/qww_new/releases/download/stable-2026.05.21.1003/ECGMonitorSetup.exe"
+    --url "https://github.com/DivyansghDMK/qww_new/releases/download/stable-2026.05.21.1003/CardioXSetup.exe"
 
 Optional flags
 --------------
@@ -92,7 +92,7 @@ def _push(server_url: str, admin_token: str, payload: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Publish a new ECG Monitor release to the license server.",
+        description="Publish a new CardioX release to the license server.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -193,7 +193,7 @@ def main() -> None:
     action_label = "ROLLBACK" if args.force else "Publish Release"
     print()
     print(f"  +--------------------------------------------------+")
-    print(f"  |   ECG Monitor  --  {action_label:<30}|")
+    print(f"  |   CardioX  --  {action_label:<30}|")
     print(f"  +--------------------------------------------------+")
     print(f"  Server  : {server_url}")
     print(f"  Version : {args.version}  [{args.channel}]")

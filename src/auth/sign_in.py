@@ -342,7 +342,7 @@ class LoginRegisterDialog(QDialog):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(600, 400)  # Minimum size for usability
         
-        self.setWindowTitle("ECG Monitor - Sign In / Sign Up")
+        self.setWindowTitle("CardioX - Sign In / Sign Up")
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
         self.setStyleSheet("""
             QDialog { background: #fff; border-radius: 18px; }

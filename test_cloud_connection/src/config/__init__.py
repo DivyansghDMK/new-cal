@@ -1,3 +1,3 @@
 """
-Configuration module for ECG Monitor Application
+Configuration module for CardioX Application
 """

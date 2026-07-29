@@ -1691,7 +1691,7 @@ class HolterMainWindow(QDialog):
                  live_source=None,
                  duration_hours: int = 24):
         super().__init__(parent)
-        self.setWindowTitle("Holter ECG Monitor & Analysis")
+        self.setWindowTitle("Holter CardioX & Analysis")
         self.setMinimumSize(1024, 680)
         # Use the screen the window will appear on (works across multiple screens)
         try:
