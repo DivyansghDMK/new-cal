@@ -1910,7 +1910,16 @@ class ECGTestPage(QWidget):
                     }
             except Exception as _fme:
                 print(f"Error snapshotting frozen metrics: {_fme}")
-            # ──────────────────────────────────────────────────────────────
+            try:
+                limb_conn = getattr(self, "_lead_connection_state", {}) or {}
+                lead_off = bool(getattr(self, "_lead_off_latched", False))
+                if isinstance(self._frozen_report_metrics, dict):
+                    if lead_off or limb_conn.get("V5", True) is False:
+                        self._frozen_report_metrics["rv5"] = 0.0
+                    if lead_off or limb_conn.get("V1", True) is False:
+                        self._frozen_report_metrics["sv1"] = 0.0
+            except Exception as _fm_lead_err:
+                print(f"Error sanitizing frozen RV5/SV1 metrics: {_fm_lead_err}")
 
             self._style_freeze_button("Resume", enabled=True)
             if hasattr(self, "stop_btn") and self.stop_btn:
@@ -7703,6 +7712,19 @@ class ECGTestPage(QWidget):
                     os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
                     'assets', 'DeckmountLogo.png'),
             }
+
+        try:
+            limb_conn = getattr(self, "_lead_connection_state", {}) or {}
+            lead_off = bool(getattr(self, "_lead_off_latched", False))
+            if isinstance(frozen, dict):
+                if lead_off or limb_conn.get("V5", True) is False:
+                    frozen["rv5"] = 0.0
+                if lead_off or limb_conn.get("V1", True) is False:
+                    frozen["sv1"] = 0.0
+                frozen["rv5_mv"] = float(frozen.get("rv5", 0.0) or 0.0)
+                frozen["sv1_mv"] = float(frozen.get("sv1", 0.0) or 0.0)
+        except Exception as _lead_sanitize_err:
+            print(f" Warning: could not sanitize frozen RV5/SV1: {_lead_sanitize_err}")
 
         username = ''
         try:

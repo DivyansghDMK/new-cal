@@ -94,10 +94,19 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
         rv5_mv = data.get('rv5_mv') if data.get('rv5_mv') is not None else data.get('rv5')
         sv1_mv = data.get('sv1_mv') if data.get('sv1_mv') is not None else data.get('sv1')
 
-    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "0.000 mV"
-    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "0.000 mV"
-    
-    # RV5+SV1
+    # If the source lead is missing, zero only the matching metric.
+    if data.get('_rv5_source_present') is False:
+        rv5_mv = 0.0
+    if data.get('_sv1_source_present') is False:
+        sv1_mv = 0.0
+
+    if rv5_mv is None:
+        rv5_mv = 0.0
+    if sv1_mv is None:
+        sv1_mv = 0.0
+
+    rv5_text = f"{rv5_mv:.3f} mV"
+    sv1_text = f"{sv1_mv:.3f} mV"    # RV5+SV1
     rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if (rv5_mv is not None and sv1_mv is not None and hr_val_check > 0) else 0.0
     rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV"
     
@@ -1935,6 +1944,17 @@ def _collect_12_lead_payload(ecg_test_page, sampling_rate, ecg_data_file=None, w
         return {}, fs
 
 
+
+
+def _lead_has_signal(lead_samples) -> bool:
+    """Return True when a lead has any non-zero samples worth treating as present."""
+    try:
+        arr = np.asarray(lead_samples, dtype=float)
+        if arr.size == 0:
+            return False
+        return not np.allclose(arr, 0.0)
+    except Exception:
+        return False
 def _sync_report_package_to_backend(
     filename,
     patient,
@@ -2221,6 +2241,36 @@ def generate_ecg_report(
     
     if not saved_ecg_data:
         print(" Warning: No saved ECG data available - beats will not be calculation-based")
+
+    # Track whether the source leads are actually present so missing leads can
+    # be rendered as 0.000 instead of inheriting the other lead's value.
+    rv5_source_present = None
+    sv1_source_present = None
+    try:
+        if saved_ecg_data and isinstance(saved_ecg_data, dict):
+            saved_leads = saved_ecg_data.get("leads") or {}
+            if isinstance(saved_leads, dict):
+                if rv5_source_present is None:
+                    v5_samples = saved_leads.get("V5") or saved_leads.get("Lead_V5")
+                    if v5_samples is not None:
+                        rv5_source_present = _lead_has_signal(v5_samples)
+                if sv1_source_present is None:
+                    v1_samples = saved_leads.get("V1") or saved_leads.get("Lead_V1")
+                    if v1_samples is not None:
+                        sv1_source_present = _lead_has_signal(v1_samples)
+
+        if ecg_test_page and hasattr(ecg_test_page, 'data') and isinstance(ecg_test_page.data, (list, tuple)):
+            if rv5_source_present is None and len(ecg_test_page.data) > 10:
+                rv5_source_present = _lead_has_signal(ecg_test_page.data[10])
+            if sv1_source_present is None and len(ecg_test_page.data) > 6:
+                sv1_source_present = _lead_has_signal(ecg_test_page.data[6])
+    except Exception as _lead_state_err:
+        print(f" Lead presence detection skipped: {_lead_state_err}")
+
+    if isinstance(data, dict):
+        data["_rv5_source_present"] = rv5_source_present
+        data["_sv1_source_present"] = sv1_source_present
+
 
     # Get conclusions from frozen report request, dashboard/JSON, or expanded view.
     # Background PDF generation runs in a child process, so live widgets are not
@@ -3906,6 +3956,19 @@ def generate_ecg_report(
     # Calculate axis values for data dictionary
     rv5_mv = data.get('rv5_mv') if data.get('rv5_mv') is not None else (data.get('rv5') or 0.0)
     sv1_mv = data.get('sv1_mv') if data.get('sv1_mv') is not None else (data.get('sv1') or 0.0)
+
+    # If we know a source lead is absent, force that metric to zero instead of
+    # leaking the other lead's value into the missing slot.
+    if data.get('_rv5_source_present') is False:
+        rv5_mv = 0.0
+    if data.get('_sv1_source_present') is False:
+        sv1_mv = 0.0
+
+    if rv5_mv is None:
+        rv5_mv = 0.0
+    if sv1_mv is None:
+        sv1_mv = 0.0
+
     data['rv5_mv'] = rv5_mv
     data['sv1_mv'] = sv1_mv
     data['p_axis'] = sanitized_p_axis
@@ -4481,3 +4544,8 @@ def generate_ecg_report(
 #     
 #     # Generate report
 #     generate_ecg_report("test_ecg_report.pdf")
+
+
+
+
+
