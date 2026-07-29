@@ -84,8 +84,9 @@ _hr_pending:     Dict[str, Optional[int]] = {}
 _hr_pending_ts:  Dict[str, float]         = {}
 _reference_metric_state: Dict[str, Dict[str, float]] = {}
 
-_STARTUP_LOCKOUT_BEATS = 5
+_STARTUP_LOCKOUT_BEATS = 12   # cover ~6-10s initialization transient at 60-100 BPM
 _STARTUP_RR_MAX_MS     = 6500   # covers 10 BPM (RR=6000ms)
+_STARTUP_RR_MIN_MS     = 300    # 200 BPM — startup spikes above this are artifacts
 _STARTUP_ECTOPIC_TOL   = 0.10
 _NORMAL_ECTOPIC_TOL    = 0.20
 
@@ -925,7 +926,12 @@ def calculate_hr_rr(lead_data: np.ndarray, fs: float = 500.0,
         is_startup = _hr_beat_count[key] <= _STARTUP_LOCKOUT_BEATS
 
         if is_startup:
-            valid = valid[valid <= _STARTUP_RR_MAX_MS]
+            # During startup the buffer was initialized with flat 2048 values.
+            # The flat→signal edge at capture start creates fake R-peaks with
+            # extremely short RR intervals (230ms = 260 BPM).  Reject both
+            # too-long (< 10 BPM) AND too-short (> 200 BPM) intervals until
+            # we have enough real beats to trust the detector.
+            valid = valid[(valid >= _STARTUP_RR_MIN_MS) & (valid <= _STARTUP_RR_MAX_MS)]
             if len(valid) < 2:
                 return _fallback()
 

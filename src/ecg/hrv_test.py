@@ -903,21 +903,19 @@ class HRVTestWindow(QWidget):
                                   f"{int(self.duration_minutes)}-minute capture completed successfully!")
     
     def _refresh_holter_bpm_label(self):
-        """Called every 3 s by _bpm_refresh_timer. Reads stable BPM and updates HR label."""
-        try:
-            if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
-                return
-            bpm = self._bpm_ctrl.current_bpm()
-            if bpm <= 0:
-                bpm = getattr(self, 'last_heart_rate', 0) or 0
-            if bpm > 0 and hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
-                bpm_int = int(round(bpm))
-                self.metric_labels['heart_rate'].setText(f"{bpm_int} BPM")
-                self._last_displayed_bpm = bpm_int
-                # Keep last_heart_rate in sync for report generation
-                self.last_heart_rate = bpm_int
-        except Exception as _e:
-            print(f"[HRVTestWindow] _refresh_holter_bpm_label error: {_e}")
+        """Called every 2 s by _bpm_refresh_timer.
+        HolterBPMController runs in background for arrhythmia detection.
+        We no longer use its BPM value for the HR display or report — the
+        calculate_ecg_metrics() pipeline (same as 12-lead) is the authoritative
+        source. This method is intentionally a no-op for HR display.
+        """
+        # NOTE: Do NOT write HolterBPM to metric_labels['heart_rate'] or
+        # self.last_heart_rate here. The update_metrics() method (called by
+        # the metrics_timer every 500 ms) already writes the correct ECG-derived
+        # BPM from calculate_hr_rr() to self.last_heart_rate and the HR label.
+        # Writing HolterBPM here would overwrite the correct value with a
+        # different (often much higher) estimate from a different algorithm.
+        pass
 
     def update_plot(self):
         """Update the plot with new data"""
@@ -1769,7 +1767,10 @@ class HRVTestWindow(QWidget):
     
     def update_metrics(self):
         """Calculate and update ECG metrics from selected lead data using same methods as 12-lead test"""
-        if not self.is_capturing or len(self.captured_data) < 200:
+        if not self.is_capturing or len(self.captured_data) < max(1500, int((self.sampling_rate or 500.0) * 3.0)):
+            # Wait for at least 3 seconds of real ECG data before computing BPM.
+            # The buffer starts filled with flat 2048 ADC values; computing too early
+            # causes the flat→signal edge to generate fake R-peaks at ~260 BPM.
             return
         
         try:
@@ -1786,19 +1787,18 @@ class HRVTestWindow(QWidget):
                 self.ecg_calculator.sampling_rate = current_fs
 
                 # TRIGGER STABLE MEDIAN-BEAT ANALYSIS (Same as 12-lead test)
-                # KEY FIX: Sync the headless ecg_calculator with the current Holter BPM
-                # so calculate_ecg_metrics() uses the right rr_ms when computing QTc.
-                # Without this, the headless instance ignores hardware BPM changes.
+                # Use calculate_ecg_metrics() (same as 12-lead) as primary HR source.
+                # HolterBPMController is only used as a last-resort fallback when
+                # calculate_ecg_metrics returns 0 (signal too short / no R-peaks).
                 _bpm_active = (self._bpm_ctrl is not None and self._bpm_ctrl.is_running)
-                _current_bpm = 0
+                _holter_bpm = 0
                 if _bpm_active:
                     try:
-                        _current_bpm = self._bpm_ctrl.current_bpm()
-                        if _current_bpm > 0:
-                            # Sync last_heart_rate so calculate_ecg_metrics picks up the right rr_ms
-                            self.ecg_calculator.last_heart_rate = int(round(_current_bpm))
+                        _holter_bpm = self._bpm_ctrl.current_bpm()
                     except Exception:
                         pass
+                # Do NOT pre-seed ecg_calculator.last_heart_rate from HolterBPM here;
+                # let calculate_ecg_metrics() derive HR from the actual RR intervals.
 
                 # ECGTestPage.calculate_ecg_metrics() updates its internal metric attrs
                 try:
@@ -1840,12 +1840,25 @@ class HRVTestWindow(QWidget):
                 # Important: feed the shared display updater with the calculator's
                 # own stabilized HR, because 12-lead uses that same path when
                 # deciding how QT/QTc should be rendered/clamped.
-                display_hr = _current_bpm if _current_bpm > 0 else _attr_to_num('last_heart_rate', 0)
-                if display_hr <= 0 and hr_val not in ('0', '--', ''):
+                # ── PRIMARY: Use calculate_ecg_metrics() HR (same as 12-lead) ─────
+                # hr_val comes from metrics.get('heart_rate') which is the result of
+                # calculate_hr_rr() → Pan-Tompkins R-peaks → median(RR) → BPM.
+                # This is exactly the same algorithm as the 12-lead display.
+                display_hr = 0
+                if hr_val not in ('0', '--', ''):
                     try:
                         display_hr = int(round(float(hr_val)))
                     except Exception:
                         display_hr = 0
+                # If calculate_ecg_metrics returned 0 (no R-peaks yet), fall back to
+                # last stable value, then HolterBPM as last resort.
+                if display_hr <= 0:
+                    display_hr = _attr_to_num('last_heart_rate', 0)
+                if display_hr <= 0 and _holter_bpm > 0:
+                    display_hr = int(round(_holter_bpm))
+                if display_hr <= 0 and getattr(self, '_last_displayed_bpm', 0) > 0:
+                    display_hr = int(self._last_displayed_bpm)
+
                 display_pr = _attr_to_num('pr_interval', 0)
                 display_qrs = _attr_to_num('last_qrs_duration', 0)
                 display_qt = _attr_to_num('last_qt_interval', 0)
@@ -1857,8 +1870,9 @@ class HRVTestWindow(QWidget):
                     display_hr = int(round(display_hr))
                     self.ecg_calculator.last_heart_rate = display_hr
                     self._last_displayed_bpm = display_hr
-                elif getattr(self, '_last_displayed_bpm', 0) > 0:
-                    display_hr = int(self._last_displayed_bpm)
+                    # Keep self.last_heart_rate in sync — HRV report reads from UI label
+                    # which now reflects the correct ECG-derived value.
+                    self.last_heart_rate = display_hr
 
                 self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
                     self.metric_labels,
@@ -1871,7 +1885,7 @@ class HRVTestWindow(QWidget):
                     display_qtcf,
                     getattr(self, '_last_metric_update_ts', 0.0),
                     rr_interval=display_rr,
-                    skip_heart_rate=(_bpm_active and _current_bpm > 0),
+                    skip_heart_rate=False,  # always update HR label with ECG-derived value
                 )
 
                 if 'heart_rate' in self.metric_labels:

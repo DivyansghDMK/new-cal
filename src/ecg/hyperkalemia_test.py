@@ -974,26 +974,19 @@ class HyperkalemiaTestWindow(QWidget):
         self.timer_label.setText("Time: 00:00")
 
     def _refresh_holter_bpm_label(self):
-        """Called every 3 s by _bpm_refresh_timer.
-        Reads the stable 30-second-window BPM from HolterBPMController and
-        writes it to the heart_rate metric label.
-        Also stores the value in self.last_heart_rate so reports match the display.
+        """Called every 2 s by _bpm_refresh_timer.
+        HolterBPMController runs in background for arrhythmia detection.
+        We no longer use its BPM value for the HR display or report — the
+        calculate_ecg_metrics() pipeline (same as 12-lead) is the authoritative
+        source. This method is intentionally a no-op for HR display.
         """
-        try:
-            if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
-                return
-            bpm = self._bpm_ctrl.current_bpm()
-            if bpm <= 0:
-                bpm = getattr(self, 'last_heart_rate', 0) or 0
-            if bpm > 0:
-                bpm_int = int(round(bpm))
-                if hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText(f"{bpm_int} BPM")
-                # Always persist so report generation uses the stable Holter BPM
-                self._last_displayed_bpm = bpm_int
-                self.last_heart_rate = bpm_int
-        except Exception as _e:
-            print(f"[HyperkalemiaTestWindow] _refresh_holter_bpm_label error: {_e}")
+        # NOTE: Do NOT write HolterBPM to metric_labels['heart_rate'] or
+        # self.last_heart_rate here. The update_metrics() method (called by
+        # the metrics_timer every 500 ms) already writes the correct ECG-derived
+        # BPM from calculate_hr_rr() to self.last_heart_rate and the HR label.
+        # Writing HolterBPM here would overwrite the correct value with a
+        # different (often much higher) estimate from a different algorithm.
+        pass
 
     def confirm_stop(self):
         reply = QMessageBox.question(
@@ -1298,7 +1291,10 @@ class HyperkalemiaTestWindow(QWidget):
         """Calculate and update ECG metrics using same stable methods as 12-lead dashboard"""
         if not self.is_capturing:
             return
-        if self.active_samples < max(200, int((self.sampling_rate or 500.0) * 0.5)):
+        # Wait for at least 3 seconds of real ECG data before computing BPM.
+        # The buffer starts filled with flat 2048 ADC values; computing too early
+        # causes the flat→signal edge to generate fake R-peaks at ~260 BPM.
+        if self.active_samples < max(1500, int((self.sampling_rate or 500.0) * 3.0)):
             return
         
         try:
@@ -1311,17 +1307,18 @@ class HyperkalemiaTestWindow(QWidget):
                 self.ecg_calculator.sampling_rate = current_fs
 
                 # TRIGGER STABLE MEDIAN-BEAT ANALYSIS
-                # KEY FIX: Sync the headless ecg_calculator with the current Holter BPM
-                # so calculate_ecg_metrics() uses the right rr_ms when computing QTc.
+                # Use calculate_ecg_metrics() (same as 12-lead) as primary HR source.
+                # HolterBPMController is only used as a last-resort fallback when
+                # calculate_ecg_metrics returns 0 (signal too short / no R-peaks).
                 _bpm_active = (self._bpm_ctrl is not None and self._bpm_ctrl.is_running)
-                _current_bpm = 0
+                _holter_bpm = 0
                 if _bpm_active:
                     try:
-                        _current_bpm = self._bpm_ctrl.current_bpm()
-                        if _current_bpm > 0:
-                            self.ecg_calculator.last_heart_rate = int(round(_current_bpm))
+                        _holter_bpm = self._bpm_ctrl.current_bpm()
                     except Exception:
                         pass
+                # Do NOT pre-seed ecg_calculator.last_heart_rate from HolterBPM here;
+                # let calculate_ecg_metrics() derive HR from the actual RR intervals.
 
                 try:
                     original_buffers = {}
@@ -1372,12 +1369,25 @@ class HyperkalemiaTestWindow(QWidget):
 
                 print(f"Heart Rate: {hr_val} BPM, PR Interval: {pr_val} ms, QRS Duration: {qrs_val} ms, QTC Interval: {qtc_val} ms")
 
-                display_hr = _current_bpm if _current_bpm > 0 else _attr_to_num('last_heart_rate', 0)
-                if display_hr <= 0 and hr_val not in ('0', '--', ''):
+                # ── PRIMARY: Use calculate_ecg_metrics() HR (same as 12-lead) ─────
+                # hr_val comes from metrics.get('heart_rate') which is the result of
+                # calculate_hr_rr() → Pan-Tompkins R-peaks → median(RR) → BPM.
+                # This is exactly the same algorithm as the 12-lead display.
+                display_hr = 0
+                if hr_val not in ('0', '--', ''):
                     try:
                         display_hr = int(round(float(hr_val)))
                     except Exception:
                         display_hr = 0
+                # If calculate_ecg_metrics returned 0 (no R-peaks yet), fall back to
+                # last stable value, then HolterBPM as last resort.
+                if display_hr <= 0:
+                    display_hr = _attr_to_num('last_heart_rate', 0)
+                if display_hr <= 0 and _holter_bpm > 0:
+                    display_hr = int(round(_holter_bpm))
+                if display_hr <= 0 and getattr(self, '_last_displayed_bpm', 0) > 0:
+                    display_hr = int(self._last_displayed_bpm)
+
                 display_pr = _attr_to_num('pr_interval', 0)
                 display_qrs = _attr_to_num('last_qrs_duration', 0)
                 display_qt = _attr_to_num('last_qt_interval', 0)
@@ -1389,8 +1399,8 @@ class HyperkalemiaTestWindow(QWidget):
                     display_hr = int(round(display_hr))
                     self.ecg_calculator.last_heart_rate = display_hr
                     self._last_displayed_bpm = display_hr
-                elif getattr(self, '_last_displayed_bpm', 0) > 0:
-                    display_hr = int(self._last_displayed_bpm)
+                    # Keep self.last_heart_rate in sync — this is what hyper_metric.json uses
+                    self.last_heart_rate = display_hr
 
                 self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
                     self.metric_labels,
@@ -1403,7 +1413,7 @@ class HyperkalemiaTestWindow(QWidget):
                     display_qtcf,
                     getattr(self, '_last_metric_update_ts', 0.0),
                     rr_interval=display_rr,
-                    skip_heart_rate=(_bpm_active and _current_bpm > 0),
+                    skip_heart_rate=False,  # always update HR label with ECG-derived value
                 )
 
                 if 'heart_rate' in self.metric_labels:
@@ -1853,10 +1863,14 @@ class HyperkalemiaTestWindow(QWidget):
                     except Exception:
                         return 0
 
-                # Prefer the stable Holter BPM (what the display shows) over the
-                # short-window analysis_results value.
+                # Use the ECG-derived HR (same as 12-lead) stored in last_heart_rate.
+                # self.last_heart_rate is now maintained by update_metrics() via
+                # calculate_hr_rr() — NOT by HolterBPMController.
+                # Fallback chain: last_heart_rate → _last_displayed_bpm → analysis_results.
                 if hasattr(self, 'last_heart_rate') and self.last_heart_rate > 0:
                     hr = int(self.last_heart_rate)
+                elif getattr(self, '_last_displayed_bpm', 0) > 0:
+                    hr = int(self._last_displayed_bpm)
                 else:
                     hr = _safe_int(metrics_source.get("heart_rate", 0))
                 pr = _safe_int(metrics_source.get("pr_interval_ms", 0))

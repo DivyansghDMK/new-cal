@@ -929,9 +929,8 @@ class Dashboard(QWidget):
         visitors_layout.setContentsMargins(14, 12, 14, 12)
         visitors_layout.setSpacing(6)
 
-        from datetime import datetime
-        current_month = datetime.now().month
-        current_year = datetime.now().year
+        current_month = datetime.datetime.now().month
+        current_year = datetime.datetime.now().year
 
         # --- Header row: title + total badge ---
         import calendar
@@ -1260,9 +1259,9 @@ class Dashboard(QWidget):
 
         # Highlight last ECG usage date in red
         from PyQt5.QtGui import QTextCharFormat, QColor
+        from datetime import date as _date_cls
         last_ecg_file = 'last_ecg_date.json'
-        import datetime
-        today = datetime.date.today()
+        today = _date_cls.today()
         # Try to load last ECG date from file
         last_ecg_date = None
         if os.path.exists(last_ecg_file):
@@ -1528,8 +1527,7 @@ class Dashboard(QWidget):
         footer_layout.addWidget(self._footer_clock)
 
         def _tick_clock():
-            from datetime import datetime
-            self._footer_clock.setText(datetime.now().strftime("%H:%M:%S"))
+            self._footer_clock.setText(datetime.datetime.now().strftime("%H:%M:%S"))
 
         _tick_clock()
         self._footer_clock_timer = QTimer(self)
@@ -1754,7 +1752,7 @@ class Dashboard(QWidget):
         try:
             from PyQt5.QtCore import QDate
             from PyQt5.QtGui import QTextCharFormat, QColor
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             
             # Check if user has signup_date (new user)
             signup_date_str = self.user_details.get('signup_date') or self.user_details.get('registered_at')
@@ -1773,7 +1771,7 @@ class Dashboard(QWidget):
                     # ISO format with time: "2024-01-15 10:30:00" or "2024-01-15T10:30:00"
                     signup_date_str = signup_date_str.split('T')[0].split(' ')[0]
                 
-                signup_date_obj = datetime.strptime(signup_date_str, "%Y-%m-%d").date()
+                signup_date_obj = datetime.datetime.strptime(signup_date_str, "%Y-%m-%d").date()
                 signup_qdate = QDate(signup_date_obj.year, signup_date_obj.month, signup_date_obj.day)
             except Exception as e:
                 print(f"Error parsing signup date: {e}")
@@ -4163,7 +4161,7 @@ class Dashboard(QWidget):
         
         # Get current heart rate from metric card
         try:
-            if 'heart_rate' in self.metric_labels:
+            if hasattr(self, 'metric_labels') and 'heart_rate' in self.metric_labels:
                 hr_text = self.metric_labels['heart_rate'].text()
                 # Normalize text (e.g., "86 bpm", "86 BPM", "86")
                 if hr_text:
@@ -4335,9 +4333,7 @@ class Dashboard(QWidget):
             self.apply_language(value)
 
     def _compute_greeting(self) -> str:
-        from datetime import datetime
-
-        hour = datetime.now().hour
+        hour = datetime.datetime.now().hour
         if hour < 12:
             return "Good Morning"
         if hour < 18:
@@ -4914,7 +4910,6 @@ class Dashboard(QWidget):
             try:
                 import os
                 import json
-                from datetime import datetime
                 import re
 
                 if findings:
@@ -4949,7 +4944,7 @@ class Dashboard(QWidget):
                         clean_recommendations.append(text)
 
                     conclusions_data = {
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "findings": clean_findings,
                         "recommendations": clean_recommendations
                     }
