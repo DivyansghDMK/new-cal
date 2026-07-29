@@ -1,4 +1,4 @@
-﻿"""
+"""
 Expanded Lead View - Detailed ECG lead analysis with PQRST labeling and metrics
 This module provides an expanded view of individual ECG leads with comprehensive analysis.
 """
@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox
 )
 from PyQt5.QtGui import QFont, QColor
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent
 from utils.platform_compat import is_low_spec_mode
 from scipy.signal import find_peaks, butter, filtfilt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -479,6 +479,7 @@ class ExpandedLeadView(QDialog):
         self.is_live = False
         
         self.setWindowTitle(f"Detailed Analysis - {lead_name}")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         # Make dialog responsive from ~13\" laptops up to 27\" monitors
         # IMPORTANT (multi‑monitor/macOS): Prefer the SAME SCREEN as the parent window,
         # instead of always using QApplication.primaryScreen() which may be the TV.
@@ -617,36 +618,44 @@ class ExpandedLeadView(QDialog):
         
         parent_layout.addWidget(header_frame)
 
-    # Mouse wheel event for amplification
+    # ── Mouse wheel — amplification ─────────────────────────────────────
 
-    def wheelEvent(self, event):
-        """Handle mouse wheel scrolling for amplification"""
+    def _apply_wheel_delta(self, delta: int) -> None:
+        """Apply one wheel tick to the amplification and refresh the plot."""
         try:
-            # Get scroll direction
-            delta = event.angleDelta().y()
-            
-            # Calculate amplification change
             if delta > 0:
-                # Scroll up = amplify (zoom in)
-                self.amplification *= 1.1
+                self.amplification *= 1.1   # scroll up  → zoom in
+            elif delta < 0:
+                self.amplification /= 1.1   # scroll down → zoom out
             else:
-                # Scroll down = deamplify (zoom out)
-                self.amplification /= 1.1
-            
-            # Clamp amplification to limits
-            self.amplification = max(self.min_amplification, 
-                                    min(self.max_amplification, self.amplification))
-            
-            # Update the plot
+                return
+            self.amplification = max(self.min_amplification,
+                                     min(self.max_amplification, self.amplification))
             self.update_plot()
-            
-            # Update amplification display if it exists
             if hasattr(self, 'amp_label'):
                 self.amp_label.setText(f"{self.amplification:.2f}x")
-            
-            event.accept()
         except Exception as e:
-            print(f"Error in wheel event: {e}")
+            print(f"Error applying wheel delta: {e}")
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel scrolling for amplification (dialog-level fallback)."""
+        self._apply_wheel_delta(event.angleDelta().y())
+        event.accept()
+
+    def eventFilter(self, obj, event):
+        """Forward wheel events from the pyqtgraph PlotWidget to the dialog.
+
+        pyqtgraph's PlotWidget intercepts QWheelEvent before it can propagate
+        up to QDialog.wheelEvent, even when mouse interaction is disabled via
+        setMouseEnabled(x=False, y=False).  Installing this filter on the
+        plot_widget lets us capture the wheel event at the source and route it
+        to our amplification handler instead.
+        """
+        if event.type() == QEvent.Wheel:
+            self._apply_wheel_delta(event.angleDelta().y())
+            event.accept()
+            return True   # stop propagation — we handled it
+        return super().eventFilter(obj, event)
     
     def create_ecg_plot(self, parent_layout):
         """Create the ECG plot area"""
@@ -676,6 +685,14 @@ class ExpandedLeadView(QDialog):
         self.plot_widget.setMenuEnabled(False)
         self.plot_widget.hideButtons()
         self.plot_widget.setMouseEnabled(x=False, y=False)
+        # Install event filter so wheel events are forwarded to this dialog
+        # instead of being silently swallowed by pyqtgraph.
+        self.plot_widget.installEventFilter(self)
+        # Also install on the inner viewport (the actual QGraphicsView child)
+        try:
+            self.plot_widget.viewport().installEventFilter(self)
+        except Exception:
+            pass
         self.plot_widget.setClipToView(True)
         try:
             self.plot_widget.setDownsampling(auto=True, mode='peak')
