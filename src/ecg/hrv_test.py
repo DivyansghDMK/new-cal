@@ -271,6 +271,15 @@ class HRVTestWindow(QWidget):
         header.addWidget(self.title_label)
         header.addStretch()
         
+        # Lead connection status label (mirrors 12-lead behavior, placed left of status label)
+        self.lead_status_label = QLabel("")
+        self.lead_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lead_status_label.setStyleSheet(
+            "color: #c62828; font-size: 12px; font-weight: bold; padding: 5px; background: transparent;"
+        )
+        self.lead_status_label.hide()  # Hidden until leads go off
+        header.addWidget(self.lead_status_label)
+
         # Status label
         self.status_label = QLabel("Status: Ready")
         self.status_label.setFont(QFont("Segoe UI", 12))
@@ -284,7 +293,7 @@ class HRVTestWindow(QWidget):
         header.addWidget(self.timer_label)
         
         layout.addLayout(header)
-        
+
         # Control buttons
         controls = QHBoxLayout()
         controls.setSpacing(16)
@@ -1772,6 +1781,64 @@ class HRVTestWindow(QWidget):
             # The buffer starts filled with flat 2048 ADC values; computing too early
             # causes the flat→signal edge to generate fake R-peaks at ~260 BPM.
             return
+
+        # ── ALL-LEADS-DISCONNECTED: Reset intervals to 0 ──
+        # Check if the selected lead signal is flat (all leads disconnected).
+        # Lead-off visual display (flat line on canvas) is kept intact by the
+        # packet loop — this block ONLY resets metric labels and state.
+        try:
+            import numpy as _np
+            _recent_vals = [d['value'] for d in list(self.captured_data)[-500:]]
+            _lead_std = float(_np.std(_recent_vals)) if len(_recent_vals) >= 10 else 999.0
+            _all_disconnected = _lead_std < 5.0
+        except Exception:
+            _all_disconnected = False
+
+        if _all_disconnected:
+            # Reset internal metric state
+            if self.ecg_calculator:
+                self.ecg_calculator.last_heart_rate   = 0
+                self.ecg_calculator.last_rr_interval  = 0
+                self.ecg_calculator.pr_interval        = 0
+                self.ecg_calculator.last_qrs_duration  = 0
+                self.ecg_calculator.last_qt_interval   = 0
+                self.ecg_calculator.last_qtc_interval  = 0
+                for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
+                    if hasattr(self.ecg_calculator, _buf):
+                        getattr(self.ecg_calculator, _buf).clear()
+            self.last_heart_rate = 0
+            self._last_displayed_bpm = 0
+            # Show the lead-off warning label (same as 12-lead)
+            try:
+                if hasattr(self, 'lead_status_label') and self.lead_status_label is not None:
+                    self.lead_status_label.setText("No ECG signal detected. Check patient leads.")
+                    self.lead_status_label.show()
+            except Exception:
+                pass
+            # Push zeros to the display labels
+            try:
+                if 'heart_rate' in self.metric_labels:
+                    self.metric_labels['heart_rate'].setText("0 BPM")
+                if 'rr_interval' in self.metric_labels:
+                    self.metric_labels['rr_interval'].setText("0 ms")
+                if 'pr_interval' in self.metric_labels:
+                    self.metric_labels['pr_interval'].setText("0 ms")
+                if 'qrs_duration' in self.metric_labels:
+                    self.metric_labels['qrs_duration'].setText("0 ms")
+                if 'qtc_interval' in self.metric_labels:
+                    self.metric_labels['qtc_interval'].setText("0/0 ms")
+            except Exception:
+                pass
+            return  # Skip normal metric computation while all leads are off
+
+        # Leads are active — clear the warning label if it was shown
+        try:
+            if hasattr(self, 'lead_status_label') and self.lead_status_label is not None:
+                if self.lead_status_label.isVisible():
+                    self.lead_status_label.hide()
+                    self.lead_status_label.setText("")
+        except Exception:
+            pass
         
         try:
             current_fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
