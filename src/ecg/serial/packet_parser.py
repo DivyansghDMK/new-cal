@@ -13,6 +13,9 @@ PACKET_REGEX = re.compile(r"(?i)(E8(?:[0-9A-F\s]{2,})?8E)")
 
 _DEBUG_PACKETS = os.getenv("ECG_DEBUG_PACKETS", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
 
+# Latch to bridge hardware chatter when RL is disconnected
+_rl_chatter_history = []
+
 
 def hex_string_to_bytes(hex_str: str) -> bytes:
     """Convert hex string to bytes"""
@@ -74,9 +77,22 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     ra_present = (raw[7] & 0x20) != 0   # RA — Lead II MSB bit5
     ll_present = (raw[7] & 0x40) != 0   # LL — Lead II MSB bit6
 
+    # Bridge RL chatter: RL loss causes LA and LL to rapidly chatter.
+    # If they both drop simultaneously even briefly, hold the RL absent state for 25 packets (50ms).
+    global _rl_chatter_history
+    if not la_present and not ll_present:
+        _rl_chatter_history.append(True)
+    else:
+        _rl_chatter_history.append(False)
+    
+    if len(_rl_chatter_history) > 25:
+        _rl_chatter_history.pop(0)
+        
+    rl_absent = any(_rl_chatter_history)
+
     def is_flat(name: str) -> bool:
-        # RA absent -> everything invalid
-        if not ra_present:
+        # RA or RL absent -> everything invalid
+        if not ra_present or rl_absent:
             return True
 
         # LA absent
@@ -104,7 +120,7 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
         lead_values[name] = None if is_flat(name) else raw_values[name]
 
     # ── Derived limb leads ────────────────────────────────────────────────────
-    # Mirror Kotlin exactly: flat leads contribute 0 (= ADC 2048) to the math,
+    # Flat leads contribute 0 (= ADC 2048) to the math,
     # so derived leads remain valid whenever RA is present (at least one limb
     # lead can carry a real signal).
     #
@@ -120,7 +136,7 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     i_flat  = is_flat("I")
     ii_flat = is_flat("II")
 
-    if not ra_present:
+    if not ra_present or rl_absent:
         # Everything is invalid — no derived leads possible
         lead_values["III"] = None
         lead_values["aVR"] = None
@@ -129,7 +145,7 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     else:
         # Use raw ADC for flat leads (2048 = 0 mV), real value otherwise.
         # This lets derived leads compute even when one limb is disconnected,
-        # exactly as Kotlin does with FLAT_LINE_MV = 0.0f.
+        # with FLAT_LINE_MV = 0.0f.
         i_val  = raw_values["I"]  if not i_flat  else 2048
         ii_val = raw_values["II"] if not ii_flat else 2048
 
