@@ -103,29 +103,47 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     for name in LEAD_NAMES_DIRECT:
         lead_values[name] = None if is_flat(name) else raw_values[name]
 
-    # Derived limb leads — only calculate when source leads are connected
-    lead_i  = lead_values.get("I")
-    lead_ii = lead_values.get("II")
+    # ── Derived limb leads ────────────────────────────────────────────────────
+    # Mirror Kotlin exactly: flat leads contribute 0 (= ADC 2048) to the math,
+    # so derived leads remain valid whenever RA is present (at least one limb
+    # lead can carry a real signal).
+    #
+    # Connectivity rules (match Kotlin Step 5 / Step 7):
+    #   III  = II − I      valid if BOTH I and II are connected
+    #   aVR  = −(I+II)/2   valid if I OR II connected
+    #   aVL  = I − II/2    valid if I connected
+    #   aVF  = II − I/2    valid if II connected
+    #
+    # If RA is absent every lead is flat → ra_present gate covers the
+    # "everything invalid" case without extra checks here.
 
-    if lead_i is not None and lead_ii is not None:
-        # ── BUG-15 FIX: Correct Goldberger/Einthoven formulas ────────────────
-        # OLD (wrong): aVL = (I - III) / 2,  aVF = (II + III) / 2
-        # NEW (correct Goldberger):
-        lead_iii = lead_ii - lead_i                    # Einthoven's law ✅
-        avr      = -(lead_i + lead_ii) / 2             # Goldberger ✅
-        avl      = lead_i  - lead_ii / 2               # Goldberger ✅ (was wrong)
-        avf      = lead_ii - lead_i  / 2               # Goldberger ✅ (was wrong)
+    i_flat  = is_flat("I")
+    ii_flat = is_flat("II")
 
-        lead_values["III"] = int(round(lead_iii))
-        lead_values["aVR"] = int(round(avr))
-        lead_values["aVL"] = int(round(avl))
-        lead_values["aVF"] = int(round(avf))
-    else:
-        # If source limb leads are disconnected, derived leads are also invalid
+    if not ra_present:
+        # Everything is invalid — no derived leads possible
         lead_values["III"] = None
         lead_values["aVR"] = None
         lead_values["aVL"] = None
         lead_values["aVF"] = None
+    else:
+        # Use raw ADC for flat leads (2048 = 0 mV), real value otherwise.
+        # This lets derived leads compute even when one limb is disconnected,
+        # exactly as Kotlin does with FLAT_LINE_MV = 0.0f.
+        i_val  = raw_values["I"]  if not i_flat  else 2048
+        ii_val = raw_values["II"] if not ii_flat else 2048
+
+        lead_iii = ii_val - i_val
+        avr      = -(i_val + ii_val) / 2
+        avl      = i_val - ii_val / 2
+        avf      = ii_val - i_val / 2
+
+        # III, aVR, aVL, aVF all show when at least one limb lead is present
+        any_limb = not i_flat or not ii_flat
+        lead_values["III"] = int(round(lead_iii)) if any_limb else None
+        lead_values["aVR"] = int(round(avr))      if any_limb else None
+        lead_values["aVL"] = int(round(avl))      if any_limb else None
+        lead_values["aVF"] = int(round(avf))      if any_limb else None
 
     if _DEBUG_PACKETS:
         print("Derived:", {
