@@ -950,6 +950,10 @@ class ECGTestPage(QWidget):
         self._LEAD_OFF_LATCH_OFF_PACKETS = 50
         # Consider "global lead-off" when most leads are off.
         self._LEAD_OFF_GLOBAL_THRESHOLD = 10
+        # Fast LL(F) disconnection flag: updated every packet without debounce.
+        # Used by update_metrics to immediately suppress BPM on LL removal,
+        # preventing the 0↔BPM flicker seen during the 25-packet debounce window.
+        self._ll_disconnected = False
         self._prev_p_axis = None  # Track P-axis for safety assertions
         self._prev_qrs_axis = None
         self._prev_t_axis = None
@@ -2302,7 +2306,11 @@ class ECGTestPage(QWidget):
         limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
 
         _is_flat_line_ii = (len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0) and not limb_active
-        if not limb_conn.get('II', True): # LL(F) disconnected
+        # LL(F) disconnection: use the fast per-packet flag rather than
+        # _lead_connection_state['II'] which only flips after 25 consecutive
+        # missing packets. Without this, BPM flickers between 0 and a real
+        # value during that debounce window when LL is removed.
+        if getattr(self, '_ll_disconnected', False):
             _is_flat_line_ii = True
         
         if _is_flat_line_ii:
@@ -6580,6 +6588,7 @@ class ECGTestPage(QWidget):
         self._lead_off_latched = False
         self._lead_off_latch_on_count = 0
         self._lead_off_latch_off_count = 0
+        self._ll_disconnected = False
         self._set_lead_status_idle()
         self._frozen_report_snapshot = None
         self._frozen_report_metrics = None
@@ -6997,14 +7006,19 @@ class ECGTestPage(QWidget):
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
                 return
 
-            # If leads are OFF or any lead is disconnected, force BPM to 0 immediately
-            if getattr(self, "_lead_off_latched", False) or any(not connected for connected in getattr(self, "_lead_connection_state", {}).values()):
             # Only force BPM to 0 when the primary limb leads are actually lost.
             # Partial lead disconnects should keep the last stable BPM visible so the
             # dashboard does not flicker between 0 and the real value.
-                limb_conn = getattr(self, "_lead_connection_state", {})
-                limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-            if getattr(self, "_lead_off_latched", False) or not limb_active:
+            # _ll_disconnected is a fast per-packet flag (no debounce) so LL removal
+            # is caught immediately, before _lead_connection_state['II'] flips.
+            limb_conn = getattr(self, "_lead_connection_state", {})
+            limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+            ll_off = getattr(self, '_ll_disconnected', False)
+            if getattr(self, "_lead_off_latched", False) or not limb_active or ll_off:
+                # Reset internal state so the BPM engine stops propagating values,
+                # but do NOT write "0" to the label here — update_metrics owns that
+                # write via its flatline path. Writing it from two timer callbacks
+                # at different rates is what causes the 0↔BPM flicker on display.
                 try:
                     self.last_rr_interval = 0
                 except Exception:
@@ -7013,8 +7027,6 @@ class ECGTestPage(QWidget):
                     self.last_heart_rate = 0
                 except Exception:
                     pass
-                if hasattr(self, "metric_labels") and "heart_rate" in self.metric_labels:
-                    self.metric_labels["heart_rate"].setText("  0")
                 return
 
             rr_ms = getattr(self, 'last_rr_interval', 0)
@@ -10338,6 +10350,12 @@ class ECGTestPage(QWidget):
 
                         global_threshold = 12  # Only latch global OFF if ALL 12 leads are off
                         limb_active = (packet.get('I') is not None) or (packet.get('II') is not None)
+
+                        # Fast LL(F) flag: Lead II None means LL electrode is off.
+                        # Updated every packet with no debounce so update_metrics can
+                        # suppress BPM immediately — before _lead_connection_state's
+                        # 25-packet debounce window has elapsed.
+                        self._ll_disconnected = (packet.get('II') is None)
                         if limb_active:
                             self._lead_off_latched = False
                             self._lead_off_latch_on_count = 0
