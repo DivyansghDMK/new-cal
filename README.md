@@ -82,6 +82,28 @@ A simulated hardware mode is supported. If no device is connected, static `.ecgh
 
 ## 📋 Changelog
 
+### 🔧 [2026-07-30] — Lead Disconnection & Signal Handling Fixes
+
+#### ❌ Bug Fixed: V1–V6 chest leads showing garbage noise when RA (Right Arm) lead is disconnected
+
+**Root Cause:** Chest leads (V1–V6) are measured against Wilson's Central Terminal (WCT = `(RA + LA + LL) / 3`). When RA or limb leads disconnect, WCT floats and breaks. However, because physical chest electrodes remain attached, the hardware returned `connected = True`, passing chaotic floating ADC noise to V1–V6 while limb leads were flatlined.
+
+**Fix Applied (`src/ecg/serial/packet_parser.py`):**
+- When limb source leads (`I`, `II`) are disconnected (`None`), the parser now explicitly invalidates all chest leads (`V1` through `V6` set to `None`).
+- Replaced garbage noise waveforms on chest leads with clean flatlines and added them to the red "Leads Off" indicator, aligning PC behavior with the Android app.
+
+#### ❌ Bug Fixed: HRV and Hyperkalemia tests holding stale metrics during lead disconnection
+
+**Root Cause:** Unlike the 12-lead ECG view, the HRV and Hyperkalemia test modules did not automatically force calculated interval metrics (`HR`, `RR`, `PR`, `QRS`, `QT`, `QTc`) to zero when all patient leads were disconnected.
+
+**Fix Applied (`src/ecg/hrv_test.py`, `src/ecg/hyperkalemia_test.py`):**
+- Updated `update_metrics()` in both tests to check lead connection and signal variance (< 5.0 std-dev).
+- When all leads disconnect: internal metric attributes reset to 0, smoothing buffers clear, and display labels show `0 BPM` / `0 ms`.
+- Added `"No ECG signal detected. Check patient leads."` warning label in bold red placed to the left of the status indicator in top header bar (matching 12-lead screen).
+- Maintained raw data buffering so canvas flatline visual representation remains intact.
+
+---
+
 ### 🔧 [2026-07-29] — BPM Accuracy & Stability Fixes
 
 #### ❌ Bug Fixed: HRV & Hyperkalemia showing wrong BPM on display and PDF report

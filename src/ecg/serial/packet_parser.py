@@ -94,6 +94,15 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
         lead_values["aVR"] = None
         lead_values["aVL"] = None
         lead_values["aVF"] = None
+        
+        # If limb leads are off, WCT (Wilson's Central Terminal) is broken.
+        # Force all chest leads to flatline instead of plotting garbage noise.
+        lead_values["V1"] = None
+        lead_values["V2"] = None
+        lead_values["V3"] = None
+        lead_values["V4"] = None
+        lead_values["V5"] = None
+        lead_values["V6"] = None
 
     if _DEBUG_PACKETS:
         print("Derived:", {
