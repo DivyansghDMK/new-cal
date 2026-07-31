@@ -2302,6 +2302,8 @@ class ECGTestPage(QWidget):
         limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
 
         _is_flat_line_ii = (len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 5.0) and not limb_active
+        if not limb_conn.get('II', True): # LL(F) disconnected
+            _is_flat_line_ii = True
         
         if _is_flat_line_ii:
             # Reset everything to 0 ONLY when all primary limb leads are disconnected
