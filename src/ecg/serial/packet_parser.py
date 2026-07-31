@@ -13,6 +13,9 @@ PACKET_REGEX = re.compile(r"(?i)(E8(?:[0-9A-F\s]{2,})?8E)")
 
 _DEBUG_PACKETS = os.getenv("ECG_DEBUG_PACKETS", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
 
+# Latch to bridge hardware chatter when RL is disconnected
+_rl_chatter_history = []
+
 
 def hex_string_to_bytes(hex_str: str) -> bytes:
     """Convert hex string to bytes"""
@@ -48,6 +51,8 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     packet_counter = raw[1] & 0x3F  # Counter is in lower 6 bits (0-63)
 
     lead_values: Dict[str, Optional[int]] = {}
+    raw_values: Dict[str, int] = {}
+    raw_connected: Dict[str, bool] = {}
     idx = 5  # first MSB position
 
     if _DEBUG_PACKETS:
@@ -59,50 +64,102 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
         idx += 2
 
         value, connected = decode_lead(msb, lsb)
+        raw_values[name] = value
+        raw_connected[name] = connected
 
         if _DEBUG_PACKETS:
             print(f"{name}: MSB={msb:02X}, LSB={lsb:02X}, value={value}, connected={connected}")
 
-        # BUG-19 FIX: respect the connected flag.
-        # When connected=False, electrode is off → return None so display shows "LEAD OFF"
-        # instead of plotting garbage ADC noise as an ECG waveform.
-        if connected:
-            lead_values[name] = value
-        else:
-            lead_values[name] = None  # Caller must handle None (show flat line / LEAD OFF indicator)
+    # ── Electrode presence bits ──────────────────────────────────────────
+    # bit = 1 → electrode IS present/connected. LA/RA/LL reuse the same MSB
+    # bytes as leads I/II, but LL is a separate bit (0x40) never read above.
+    la_present = (raw[5] & 0x20) != 0   # LA — Lead I  MSB bit5
+    ra_present = (raw[7] & 0x20) != 0   # RA — Lead II MSB bit5
+    ll_present = (raw[7] & 0x40) != 0   # LL — Lead II MSB bit6
 
-    # Derived limb leads — only calculate when source leads are connected
-    lead_i  = lead_values.get("I")
-    lead_ii = lead_values.get("II")
-
-    if lead_i is not None and lead_ii is not None:
-        # ── BUG-15 FIX: Correct Goldberger/Einthoven formulas ────────────────
-        # OLD (wrong): aVL = (I - III) / 2,  aVF = (II + III) / 2
-        # NEW (correct Goldberger):
-        lead_iii = lead_ii - lead_i                    # Einthoven's law ✅
-        avr      = -(lead_i + lead_ii) / 2             # Goldberger ✅
-        avl      = lead_i  - lead_ii / 2               # Goldberger ✅ (was wrong)
-        avf      = lead_ii - lead_i  / 2               # Goldberger ✅ (was wrong)
-
-        lead_values["III"] = int(round(lead_iii))
-        lead_values["aVR"] = int(round(avr))
-        lead_values["aVL"] = int(round(avl))
-        lead_values["aVF"] = int(round(avf))
+    # Bridge RL chatter: RL loss causes LA and LL to rapidly chatter.
+    # If they both drop simultaneously even briefly, hold the RL absent state for 25 packets (50ms).
+    global _rl_chatter_history
+    if not la_present and not ll_present:
+        _rl_chatter_history.append(True)
     else:
-        # If source limb leads are disconnected, derived leads are also invalid
+        _rl_chatter_history.append(False)
+    
+    if len(_rl_chatter_history) > 25:
+        _rl_chatter_history.pop(0)
+        
+    rl_absent = any(_rl_chatter_history)
+
+    def is_flat(name: str) -> bool:
+        # RA or RL absent -> everything invalid
+        if not ra_present or rl_absent:
+            return True
+
+        # LA absent
+        if not la_present and name in (
+            "I", "V1", "V2", "V3", "V4", "V5", "V6"
+        ):
+            return True
+
+        # LL absent
+        if not ll_present and name in (
+            "II", "V1", "V2", "V3", "V4", "V5", "V6"
+        ):
+            return True
+
+        # Individual chest lead disconnected
+        if name in ("V1", "V2", "V3", "V4", "V5", "V6") and not raw_connected[name]:
+            return True
+
+        return False
+
+    # BUG-19 FIX: respect the full RA/LA/LL cascade, not just each lead's own bit.
+    # When a lead is flat, return None so display shows "LEAD OFF" instead of
+    # plotting garbage ADC noise as an ECG waveform.
+    for name in LEAD_NAMES_DIRECT:
+        lead_values[name] = None if is_flat(name) else raw_values[name]
+
+    # ── Derived limb leads ────────────────────────────────────────────────────
+    # Flat leads contribute 0 (= ADC 2048) to the math,
+    # so derived leads remain valid whenever RA is present (at least one limb
+    # lead can carry a real signal).
+    #
+    # Connectivity rules (match Kotlin Step 5 / Step 7):
+    #   III  = II − I      valid if BOTH I and II are connected
+    #   aVR  = −(I+II)/2   valid if I OR II connected
+    #   aVL  = I − II/2    valid if I connected
+    #   aVF  = II − I/2    valid if II connected
+    #
+    # If RA is absent every lead is flat → ra_present gate covers the
+    # "everything invalid" case without extra checks here.
+
+    i_flat  = is_flat("I")
+    ii_flat = is_flat("II")
+
+    if not ra_present or rl_absent:
+        # Everything is invalid — no derived leads possible
         lead_values["III"] = None
         lead_values["aVR"] = None
         lead_values["aVL"] = None
         lead_values["aVF"] = None
-        
-        # If limb leads are off, WCT (Wilson's Central Terminal) is broken.
-        # Force all chest leads to flatline instead of plotting garbage noise.
-        lead_values["V1"] = None
-        lead_values["V2"] = None
-        lead_values["V3"] = None
-        lead_values["V4"] = None
-        lead_values["V5"] = None
-        lead_values["V6"] = None
+    else:
+        # Use raw ADC for flat leads (2048 = 0 mV), real value otherwise.
+        # This lets derived leads compute even when one limb is disconnected,
+        # with FLAT_LINE_MV = 0.0f.
+        i_val  = raw_values["I"]  if not i_flat  else 2048
+        ii_val = raw_values["II"] if not ii_flat else 2048
+
+        lead_iii = ii_val - i_val
+        avr      = -(i_val + ii_val) / 2
+        avl      = i_val - ii_val / 2
+        avf      = ii_val - i_val / 2
+
+        # III, aVR, aVL, aVF all show when at least one limb lead is present
+        any_limb = not i_flat or not ii_flat
+        lead_values["III"] = int(round(lead_iii)) if any_limb else None
+        lead_values["aVR"] = int(round(avr))      if any_limb else None
+        lead_values["aVL"] = int(round(avl))      if any_limb else None
+        lead_values["aVF"] = int(round(avf))      if any_limb else None
 
     if _DEBUG_PACKETS:
         print("Derived:", {

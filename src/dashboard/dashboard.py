@@ -3724,9 +3724,13 @@ class Dashboard(QWidget):
     
     def reset_dashboard_metrics_to_zero(self):
         """Reset all dashboard metric labels to 0 ONLY when all primary ECG signals are disconnected."""
-        limb_conn = getattr(self.ecg_test_page, "_lead_connection_state", {}) if hasattr(self, 'ecg_test_page') and self.ecg_test_page else {}
+        ecg_page = getattr(self, 'ecg_test_page', None) if hasattr(self, 'ecg_test_page') else None
+        limb_conn = getattr(ecg_page, "_lead_connection_state", {}) if ecg_page else {}
         limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-        if limb_active and hasattr(self, '_dashboard_last_valid') and self._dashboard_last_valid:
+        # Also treat LL removal as a limb-off condition immediately (fast flag,
+        # no 25-packet debounce) so the dashboard doesn't flash "0 BPM" briefly.
+        ll_off = getattr(ecg_page, '_ll_disconnected', False) if ecg_page else False
+        if (limb_active and not ll_off) and hasattr(self, '_dashboard_last_valid') and self._dashboard_last_valid:
             # Keep displaying last valid metrics if primary limb leads are connected
             return
         if hasattr(self, "metric_labels") and isinstance(self.metric_labels, dict):
@@ -3779,10 +3783,14 @@ class Dashboard(QWidget):
                 def is_valid(val):
                     return val not in ('', '0', '00', '0.0', '--', 'None', 'None ms')
 
-                # Only consider OFF if both primary limb leads (Lead I & Lead II) are disconnected
+                # Only consider OFF if both primary limb leads (Lead I & Lead II) are disconnected.
+                # Also check _ll_disconnected (fast per-packet flag) so LL removal is caught
+                # immediately — _lead_connection_state['II'] has a 25-packet debounce lag
+                # that lets "0 BPM" flash on the dashboard before the latch gate fires.
                 limb_conn = getattr(self.ecg_test_page, "_lead_connection_state", {})
                 limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-                if getattr(self.ecg_test_page, "_lead_off_latched", False) or not limb_active:
+                ll_off = getattr(self.ecg_test_page, '_ll_disconnected', False)
+                if getattr(self.ecg_test_page, "_lead_off_latched", False) or not limb_active or ll_off:
                     self.reset_dashboard_metrics_to_zero()
                     return
 
