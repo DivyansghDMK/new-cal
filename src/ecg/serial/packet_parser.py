@@ -48,6 +48,8 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     packet_counter = raw[1] & 0x3F  # Counter is in lower 6 bits (0-63)
 
     lead_values: Dict[str, Optional[int]] = {}
+    raw_values: Dict[str, int] = {}
+    raw_connected: Dict[str, bool] = {}
     idx = 5  # first MSB position
 
     if _DEBUG_PACKETS:
@@ -59,17 +61,47 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
         idx += 2
 
         value, connected = decode_lead(msb, lsb)
+        raw_values[name] = value
+        raw_connected[name] = connected
 
         if _DEBUG_PACKETS:
             print(f"{name}: MSB={msb:02X}, LSB={lsb:02X}, value={value}, connected={connected}")
 
-        # BUG-19 FIX: respect the connected flag.
-        # When connected=False, electrode is off → return None so display shows "LEAD OFF"
-        # instead of plotting garbage ADC noise as an ECG waveform.
-        if connected:
-            lead_values[name] = value
-        else:
-            lead_values[name] = None  # Caller must handle None (show flat line / LEAD OFF indicator)
+    # ── Electrode presence bits ──────────────────────────────────────────
+    # bit = 1 → electrode IS present/connected. LA/RA/LL reuse the same MSB
+    # bytes as leads I/II, but LL is a separate bit (0x40) never read above.
+    la_present = (raw[5] & 0x20) != 0   # LA — Lead I  MSB bit5
+    ra_present = (raw[7] & 0x20) != 0   # RA — Lead II MSB bit5
+    ll_present = (raw[7] & 0x40) != 0   # LL — Lead II MSB bit6
+
+    def is_flat(name: str) -> bool:
+        # RA absent -> everything invalid
+        if not ra_present:
+            return True
+
+        # LA absent
+        if not la_present and name in (
+            "I", "V1", "V2", "V3", "V4", "V5", "V6"
+        ):
+            return True
+
+        # LL absent
+        if not ll_present and name in (
+            "II", "V1", "V2", "V3", "V4", "V5", "V6"
+        ):
+            return True
+
+        # Individual chest lead disconnected
+        if name in ("V1", "V2", "V3", "V4", "V5", "V6") and not raw_connected[name]:
+            return True
+
+        return False
+
+    # BUG-19 FIX: respect the full RA/LA/LL cascade, not just each lead's own bit.
+    # When a lead is flat, return None so display shows "LEAD OFF" instead of
+    # plotting garbage ADC noise as an ECG waveform.
+    for name in LEAD_NAMES_DIRECT:
+        lead_values[name] = None if is_flat(name) else raw_values[name]
 
     # Derived limb leads — only calculate when source leads are connected
     lead_i  = lead_values.get("I")
@@ -94,15 +126,6 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
         lead_values["aVR"] = None
         lead_values["aVL"] = None
         lead_values["aVF"] = None
-        
-        # If limb leads are off, WCT (Wilson's Central Terminal) is broken.
-        # Force all chest leads to flatline instead of plotting garbage noise.
-        lead_values["V1"] = None
-        lead_values["V2"] = None
-        lead_values["V3"] = None
-        lead_values["V4"] = None
-        lead_values["V5"] = None
-        lead_values["V6"] = None
 
     if _DEBUG_PACKETS:
         print("Derived:", {
