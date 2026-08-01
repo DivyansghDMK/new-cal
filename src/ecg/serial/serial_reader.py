@@ -1002,6 +1002,22 @@ class DeviceStartWorker(QThread):
     def port_to_use(self):
         """The port that was actually used (available after connected signal)."""
         return self._port_to_use
+    @staticmethod
+    def _should_retry_with_scan(error: Exception) -> bool:
+        """Retry auto-scan only for stale/invalid configured-port failures."""
+        error_str = str(error).lower()
+        retry_markers = (
+            "cannot configure port",
+            "a device attached to the system is not functioning",
+            "access is denied",
+            "clearcommerror failed",
+            "[errno 6]",
+            "device not configured",
+            "element not found",
+            "port is closed",
+        )
+        return any(marker in error_str for marker in retry_markers)
+
 
     def run(self):
         """Background work: port scan (if needed) -> open -> VERSION/START -> (if version ok) SERIAL -> connected."""
@@ -1053,11 +1069,11 @@ class DeviceStartWorker(QThread):
             try:
                 reader.start()
             except Exception as start_exc:
-                # If a configured (but wrong) port was used, retry by scanning all ports.
-                if scan_needed:
+                # Only retry if a configured port failed for the stale/disconnected
+                # device cases we want to recover from. Keep every other scenario
+                # unchanged so we do not alter normal COM-port handling.
+                if scan_needed or not self._should_retry_with_scan(start_exc):
                     raise
-
-                print(f" [Worker] Start failed on configured port {port_to_use}: {start_exc}")
                 print(" [Worker] Retrying with full auto-scan across all serial ports…")
 
                 scan_result = SerialStreamReader.scan_and_detect_port(

@@ -8305,11 +8305,37 @@ class ECGTestPage(QWidget):
         # Go back to dashboard (assumes dashboard is at index 0)
         self.stacked_widget.setCurrentIndex(0)
 
+    @staticmethod
+    def _friendly_connection_message(extra_msg: str) -> str:
+        """Turn low-level serial failures into a user-friendly reconnect prompt."""
+        if not extra_msg:
+            return ""
+
+        lower_msg = extra_msg.lower()
+        if not lower_msg.startswith("failed to connect to any serial port:"):
+            return extra_msg
+
+        device_disconnect_markers = (
+            "cannot configure port",
+            "a device attached to the system is not functioning",
+            "write timeout",
+            "access is denied",
+            "clearcommerror failed",
+            "permissionerror(13",
+        )
+        if any(marker in lower_msg for marker in device_disconnect_markers):
+            return (
+                "ECG device connection was interrupted. Please check the USB cable, "
+                "device power, and reconnect the ECG device. CardioX will try again "
+                "automatically."
+            )
+        return extra_msg
+
     def show_connection_warning(self, extra_msg=""):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Connection Required")
-        msg.setText(extra_msg if extra_msg else "")
+        msg.setText(self._friendly_connection_message(extra_msg))
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
 
