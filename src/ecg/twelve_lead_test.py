@@ -954,6 +954,12 @@ class ECGTestPage(QWidget):
         # Used by update_metrics to immediately suppress BPM on LL removal,
         # preventing the 0↔BPM flicker seen during the 25-packet debounce window.
         self._ll_disconnected = False
+        self._la_report_cooldown_armed = False
+        self._ll_report_cooldown_armed = False
+        # Tracks whether the RA/RL "electrode disconnected" popup has already
+        # been shown for the current lead-off event, so it fires once per
+        # disconnection rather than every packet while latched.
+        self._ra_rl_popup_shown = False
         self._prev_p_axis = None  # Track P-axis for safety assertions
         self._prev_qrs_axis = None
         self._prev_t_axis = None
@@ -1636,6 +1642,24 @@ class ECGTestPage(QWidget):
         self._update_generate_report_button_state()
         if reason:
             print(f" Generate Report cooldown started ({seconds}s, reason: {reason})")
+
+    def _start_report_cooldown_on_lead_disconnect(self, lead_names):
+        """Start the Generate Report cooldown when LA or LL disconnects."""
+        if not hasattr(self, "generate_report_btn"):
+            return
+
+        leads = {str(name).strip().upper() for name in (lead_names or []) if str(name).strip()}
+        if not leads:
+            return
+
+        if leads == {"LA", "LL"}:
+            reason = "LA/LL disconnect"
+        elif "LA" in leads:
+            reason = "LA disconnect"
+        else:
+            reason = "LL disconnect"
+
+        self._start_generate_report_cooldown(seconds=10, reason=reason)
 
     def _capture_report_snapshot(self, window_sec: float = 7.0):
         """Store the most recent window of waveform data for report generation."""
@@ -4931,6 +4955,16 @@ class ECGTestPage(QWidget):
                 self._y_range_update_count[lead_index] = 0
             if lead_index < len(self._flatline_alert_shown):
                 self._flatline_alert_shown[lead_index] = False
+            if lead_name in ('I', 'II'):
+                self._lead_off_latched = False
+                self._lead_off_latch_on_count = 0
+                self._lead_off_latch_off_count = 0
+                self._ra_rl_popup_shown = False
+                if lead_name == 'II':
+                    self._ll_disconnected = False
+                    self._ll_report_cooldown_armed = False
+                if lead_name == 'I':
+                    self._la_report_cooldown_armed = False
         except Exception:
             pass
 
@@ -6518,6 +6552,45 @@ class ECGTestPage(QWidget):
         
         return None, "No suitable ports found"
 
+    def _handle_ra_rl_disconnect(self):
+        """RA/RL electrode loss makes every lead invalid (see packet_parser's
+        ra_present/rl_absent gating). Rather than silently flatlining the
+        display, alert the user with a blocking popup and return them to the
+        outer dashboard. Fires once per disconnection event; start_acquisition
+        resets the guard flag so the next session (or the next reconnect) can
+        trigger it again.
+        """
+        if getattr(self, "_ra_rl_popup_shown", False):
+            return
+        self._ra_rl_popup_shown = True
+
+        try:
+            self.stop_acquisition()
+        except Exception as e:
+            print(f" Error stopping acquisition on RA/RL disconnect: {e}")
+
+        popup_title = "Warning"
+        popup_text = "ECG Electrode disconnected, please check electrode connection"
+        try:
+            # Reuse the app's styled dialog for a consistent look; imported
+            # lazily to avoid a circular import at module load time.
+            from dashboard.dashboard import StyledMessageBox
+            StyledMessageBox.show_message(self, popup_title, popup_text, is_critical=True)
+        except Exception as e:
+            print(f" Falling back to QMessageBox for electrode disconnect alert: {e}")
+            try:
+                QMessageBox.critical(self, popup_title, popup_text)
+            except Exception as e2:
+                print(f" Error showing electrode disconnect popup: {e2}")
+
+        # Send the user back to the outer dashboard, same as other
+        # device-disconnect flows (e.g. check_device_connection).
+        if hasattr(self, "dashboard_instance") and self.dashboard_instance:
+            try:
+                self.dashboard_instance.go_to_dashboard()
+            except Exception as e:
+                print(f" Error returning to dashboard after RA/RL disconnect: {e}")
+
     # ---------------------- Start Button Functionality ----------------------
 
     def start_acquisition(self):
@@ -6589,6 +6662,16 @@ class ECGTestPage(QWidget):
         self._lead_off_latch_on_count = 0
         self._lead_off_latch_off_count = 0
         self._ll_disconnected = False
+        self._la_report_cooldown_armed = False
+        self._ll_report_cooldown_armed = False
+        # Reset the packet-parser RL chatter history for a fresh session.
+        try:
+            parse_packet.__globals__["_rl_chatter_history"] = []
+        except Exception:
+            pass
+        # Fresh session: allow the electrode-disconnected popup to fire again
+        # if RA/RL drop out during this run.
+        self._ra_rl_popup_shown = False
         self._set_lead_status_idle()
         self._frozen_report_snapshot = None
         self._frozen_report_metrics = None
@@ -8222,11 +8305,37 @@ class ECGTestPage(QWidget):
         # Go back to dashboard (assumes dashboard is at index 0)
         self.stacked_widget.setCurrentIndex(0)
 
+    @staticmethod
+    def _friendly_connection_message(extra_msg: str) -> str:
+        """Turn low-level serial failures into a user-friendly reconnect prompt."""
+        if not extra_msg:
+            return ""
+
+        lower_msg = extra_msg.lower()
+        if not lower_msg.startswith("failed to connect to any serial port:"):
+            return extra_msg
+
+        device_disconnect_markers = (
+            "cannot configure port",
+            "a device attached to the system is not functioning",
+            "write timeout",
+            "access is denied",
+            "clearcommerror failed",
+            "permissionerror(13",
+        )
+        if any(marker in lower_msg for marker in device_disconnect_markers):
+            return (
+                "ECG device connection was interrupted. Please check the USB cable, "
+                "device power, and reconnect the ECG device. CardioX will try again "
+                "automatically."
+            )
+        return extra_msg
+
     def show_connection_warning(self, extra_msg=""):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Connection Required")
-        msg.setText(extra_msg if extra_msg else "")
+        msg.setText(self._friendly_connection_message(extra_msg))
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
 
@@ -10349,11 +10458,34 @@ class ECGTestPage(QWidget):
                             raw_off_count = 0
 
                         global_threshold = 12  # Only latch global OFF if ALL 12 leads are off
-                        limb_active = (packet.get('I') is not None) or (packet.get('II') is not None)
+                        raw_ra_present = bool(packet.get('__ra_present__', True))
+                        raw_la_present = bool(packet.get('__la_present__', True))
+                        raw_ll_present = bool(packet.get('__ll_present__', True))
+                        raw_limb_active = raw_ra_present and (raw_la_present or raw_ll_present)
+                        limb_active = raw_limb_active or ((packet.get('I') is not None) or (packet.get('II') is not None))
+
+                        # Start the same 10-second report lockout immediately when LA or LL drops.
+                        # This greys out Generate Report right away on accidental lead removal,
+                        # before the broader lead-off debounce logic fully kicks in.
+                        lead_disconnects = []
+                        if raw_la_present:
+                            self._la_report_cooldown_armed = False
+                        elif not getattr(self, "_la_report_cooldown_armed", False):
+                            self._la_report_cooldown_armed = True
+                            lead_disconnects.append("LA")
+
+                        if raw_ll_present:
+                            self._ll_report_cooldown_armed = False
+                        elif not getattr(self, "_ll_report_cooldown_armed", False):
+                            self._ll_report_cooldown_armed = True
+                            lead_disconnects.append("LL")
+
+                        if lead_disconnects:
+                            self._start_report_cooldown_on_lead_disconnect(lead_disconnects)
 
                         # Fast LL(F) flag: Lead II None means LL electrode is off.
                         # Updated every packet with no debounce so update_metrics can
-                        # suppress BPM immediately — before _lead_connection_state's
+                        # suppress BPM immediately ? before _lead_connection_state's
                         # 25-packet debounce window has elapsed.
                         self._ll_disconnected = (packet.get('II') is None)
                         if limb_active:
@@ -10367,10 +10499,12 @@ class ECGTestPage(QWidget):
                         latch_on_packets = int(getattr(self, "_LEAD_OFF_LATCH_ON_PACKETS", 5))
                         latch_off_packets = int(getattr(self, "_LEAD_OFF_LATCH_OFF_PACKETS", 50))
 
+                        _newly_latched = False
                         if not getattr(self, "_lead_off_latched", False):
                             if not limb_active and self._lead_off_latch_on_count >= latch_on_packets:
                                 self._lead_off_latched = True
                                 self._lead_off_latch_off_count = 0
+                                _newly_latched = True
                         else:
                             if limb_active or raw_off_count < global_threshold:
                                 self._lead_off_latch_off_count = int(getattr(self, "_lead_off_latch_off_count", 0)) + 1
@@ -10380,6 +10514,15 @@ class ECGTestPage(QWidget):
                                 self._lead_off_latched = False
                                 self._lead_off_latch_on_count = 0
                                 self._lead_off_latch_off_count = 0
+
+                        # ── RA/RL electrode disconnected: alert the user and return to the
+                        # outer dashboard, rather than silently letting the trace flatline. ──
+                        if _newly_latched:
+                            self._handle_ra_rl_disconnect()
+                            # The page/state was just torn down (acquisition stopped and we
+                            # navigated away); stop processing any remaining packets from
+                            # this batch against a page that's no longer active.
+                            break
 
                         # ── Feed packet to HolterBPMController (fast, non-blocking) ───────
                         try:
