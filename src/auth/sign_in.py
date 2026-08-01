@@ -606,7 +606,7 @@ class LoginRegisterDialog(QDialog):
         password = self.reg_password.text()
         confirm = self.reg_confirm.text()
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", ""):
+        if serial_id in ("RhythmUltra device connection lost. Please reconnect the device", ""):
             serial_id = ""
         fullname = self.reg_fullname.text()
         age = self.reg_age.text()

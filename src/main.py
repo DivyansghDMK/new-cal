@@ -1,4 +1,4 @@
-"""
+﻿"""
 CardioX Main Entry Point — src/main.py
 ======================================
 PURPOSE & ARCHITECTURE:
@@ -1282,7 +1282,7 @@ class LoginRegisterDialog(QDialog):
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet() + " color: #27ae60; font-weight: bold;")
         else:
             if hasattr(self, 'reg_serial'):
-                self.reg_serial.setText("Please connect your RhythmUltra device")
+                self.reg_serial.setText("RhythmUltra device connection lost. Please reconnect the device")
                 self.reg_serial.setReadOnly(True)
                 self.reg_serial.setStyleSheet(self.reg_serial.styleSheet().replace(" color: #27ae60; font-weight: bold;", ""))
 
@@ -2256,7 +2256,7 @@ class LoginRegisterDialog(QDialog):
 
     def handle_register(self):
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUltra device", ""):
+        if serial_id in ("RhythmUltra device connection lost. Please reconnect the device", "RhythmUltra device connection lost. Please reconnect the device", ""):
             serial_id = ""
         name = self.reg_name.text().strip()
         doctor = self.reg_doctor.text().strip()
@@ -2374,7 +2374,7 @@ class LoginRegisterDialog(QDialog):
         phone = self.reg_phone.text().strip()
         password = self.reg_password.text()
         serial_id = self.reg_serial.text().strip()
-        if serial_id in ("Please connect your RhythmUltra device", "Please connect your RhythmUltra device", "RUM") or not serial_id:
+        if serial_id in ("RhythmUltra device connection lost. Please reconnect the device", "RhythmUltra device connection lost. Please reconnect the device", "RUM") or not serial_id:
             serial_id = ""
 
         ok, msg = self.sign_in_logic.register_user_with_details(
