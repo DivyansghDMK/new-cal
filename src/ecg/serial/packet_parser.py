@@ -116,6 +116,12 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     # BUG-19 FIX: respect the full RA/LA/LL cascade, not just each lead's own bit.
     # When a lead is flat, return None so display shows "LEAD OFF" instead of
     # plotting garbage ADC noise as an ECG waveform.
+    # Expose raw electrode presence bits for the UI so it can detect a
+    # reconnection before the debounced lead values fully recover.
+    lead_values["__ra_present__"] = ra_present
+    lead_values["__la_present__"] = la_present
+    lead_values["__ll_present__"] = ll_present
+
     for name in LEAD_NAMES_DIRECT:
         lead_values[name] = None if is_flat(name) else raw_values[name]
 
