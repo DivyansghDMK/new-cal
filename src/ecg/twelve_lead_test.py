@@ -954,6 +954,8 @@ class ECGTestPage(QWidget):
         # Used by update_metrics to immediately suppress BPM on LL removal,
         # preventing the 0↔BPM flicker seen during the 25-packet debounce window.
         self._ll_disconnected = False
+        self._la_report_cooldown_armed = False
+        self._ll_report_cooldown_armed = False
         # Tracks whether the RA/RL "electrode disconnected" popup has already
         # been shown for the current lead-off event, so it fires once per
         # disconnection rather than every packet while latched.
@@ -1640,6 +1642,24 @@ class ECGTestPage(QWidget):
         self._update_generate_report_button_state()
         if reason:
             print(f" Generate Report cooldown started ({seconds}s, reason: {reason})")
+
+    def _start_report_cooldown_on_lead_disconnect(self, lead_names):
+        """Start the Generate Report cooldown when LA or LL disconnects."""
+        if not hasattr(self, "generate_report_btn"):
+            return
+
+        leads = {str(name).strip().upper() for name in (lead_names or []) if str(name).strip()}
+        if not leads:
+            return
+
+        if leads == {"LA", "LL"}:
+            reason = "LA/LL disconnect"
+        elif "LA" in leads:
+            reason = "LA disconnect"
+        else:
+            reason = "LL disconnect"
+
+        self._start_generate_report_cooldown(seconds=10, reason=reason)
 
     def _capture_report_snapshot(self, window_sec: float = 7.0):
         """Store the most recent window of waveform data for report generation."""
@@ -4942,6 +4962,9 @@ class ECGTestPage(QWidget):
                 self._ra_rl_popup_shown = False
                 if lead_name == 'II':
                     self._ll_disconnected = False
+                    self._ll_report_cooldown_armed = False
+                if lead_name == 'I':
+                    self._la_report_cooldown_armed = False
         except Exception:
             pass
 
@@ -6639,6 +6662,8 @@ class ECGTestPage(QWidget):
         self._lead_off_latch_on_count = 0
         self._lead_off_latch_off_count = 0
         self._ll_disconnected = False
+        self._la_report_cooldown_armed = False
+        self._ll_report_cooldown_armed = False
         # Reset the packet-parser RL chatter history for a fresh session.
         try:
             parse_packet.__globals__["_rl_chatter_history"] = []
@@ -10412,6 +10437,25 @@ class ECGTestPage(QWidget):
                         raw_ll_present = bool(packet.get('__ll_present__', True))
                         raw_limb_active = raw_ra_present and (raw_la_present or raw_ll_present)
                         limb_active = raw_limb_active or ((packet.get('I') is not None) or (packet.get('II') is not None))
+
+                        # Start the same 10-second report lockout immediately when LA or LL drops.
+                        # This greys out Generate Report right away on accidental lead removal,
+                        # before the broader lead-off debounce logic fully kicks in.
+                        lead_disconnects = []
+                        if raw_la_present:
+                            self._la_report_cooldown_armed = False
+                        elif not getattr(self, "_la_report_cooldown_armed", False):
+                            self._la_report_cooldown_armed = True
+                            lead_disconnects.append("LA")
+
+                        if raw_ll_present:
+                            self._ll_report_cooldown_armed = False
+                        elif not getattr(self, "_ll_report_cooldown_armed", False):
+                            self._ll_report_cooldown_armed = True
+                            lead_disconnects.append("LL")
+
+                        if lead_disconnects:
+                            self._start_report_cooldown_on_lead_disconnect(lead_disconnects)
 
                         # Fast LL(F) flag: Lead II None means LL electrode is off.
                         # Updated every packet with no debounce so update_metrics can
