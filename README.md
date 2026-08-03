@@ -76,11 +76,60 @@ CardioX uses a unified release pipeline script to compile the application and ge
 A simulated hardware mode is supported. If no device is connected, static `.ecgh` datasets can be replayed to demonstrate trace rendering, clinical algorithms, and PDF report generation.
 
 ---
-**Status:** 🟢 Production Ready | **Last Updated:** July 2026
+**Status:** 🟢 Production Ready | **Last Updated:** August 2026
+
+---
+
+## 🧪 Running Tests
+
+The project includes a headless unit test suite (no display or hardware required):
+
+```powershell
+# Install pytest if not present
+pip install pytest
+
+# Run the full test suite
+python -m pytest tests/ -v
+
+# Run only the history/hyperkalemia tests
+python -m pytest tests/test_history_and_hyperkalemia.py -v
+
+# Run only the production deployment tests
+python -m pytest tests/test_cardiox_prod.py -v
+```
+
+> **Current Coverage:** 180 tests across 21 test classes covering authentication, signal processing, PDF generation, offline queue, connectivity, and clinical metric classification.
 
 ---
 
 ## 📋 Changelog
+
+### 🔧 [2026-08-03] — History Table & Unit Test Improvements
+
+#### ✅ Change: Removed "Findings" column from ECG Report History table
+
+- **Reason:** Findings text is per-report, variable length, and already visible inside the in-app PDF preview panel. The column was cluttering the table and creating horizontal scroll on smaller displays.
+- **Change Applied (`src/dashboard/history_window.py`):**
+  - `_build_table()`: Column count reduced from 10 → 9; `"Findings"` removed from header labels.
+  - `_configure_table_columns()`: Removed col-9 stretch rule; `Patient Name` (col 4) is now the only stretch column.
+  - `_add_row()`: Removed `findings_text` from the values list so column indices remain correctly aligned.
+
+#### ✅ Added: `tests/test_history_and_hyperkalemia.py` — 104 new unit tests
+
+New test file covering 11 sections:
+- `TestFormatIndianPhone` — 13 edge cases (None, empty, prefixes, integers, Unicode-safe)
+- `TestBeatsInBoxes` — 10 cases (ECG paper-speed math, zero guards, proportionality)
+- `TestSafeFloat` — 11 cases (type coercion, unit strings, list input, defaults)
+- `TestECGGridConstants` — 10 cases (A4 landscape dims, box sizes, sampling-rate guards)
+- `TestHistoryRowValuesCount` — 10 cases (9-column assertion, Findings removal, fallbacks)
+- `TestHistoryDateParsing` — 8 cases (malformed dates, partial dates, sort order)
+- `TestHistorySearchFilter` — 8 cases (case-insensitive, Unicode, XSS-safe, list findings)
+- `TestInferReportType` — 8 cases (filename-based inference, explicit override, case)
+- `TestRiskSeverityClassifier` — 11 cases (critical/warning/normal keywords, list fields)
+- `TestCircularBufferUnwrap` — 7 cases (ptr boundaries, NumPy arrays, length invariants)
+- `TestFindingsSummaryTruncation` — 8 cases (60-char cap, ellipsis, empty list)
+
+---
 
 ### 🔧 [2026-07-30] — Lead Disconnection & Signal Handling Fixes
 

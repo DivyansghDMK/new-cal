@@ -1867,10 +1867,10 @@ class HistoryWindow(QDialog):
 
     def _build_table(self, layout):
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
             "Date", "Time", "Org.", "Doctor", "Patient Name",
-            "Org. Name", "Org. Address", "Type", "Status", "Findings",
+            "Org. Name", "Org. Address", "Type", "Status",
         ])
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
@@ -1901,15 +1901,12 @@ class HistoryWindow(QDialog):
             6: 150,  # Org. Address
             7: 90,   # Type
             8: 86,   # Status
-            # col 9 (Findings) → Stretch below
         }
         for col in range(self.table.columnCount()):
             if col in fixed_columns:
                 hh.setSectionResizeMode(col, QHeaderView.Interactive)
                 self.table.setColumnWidth(col, fixed_columns[col])
             elif col == 4:
-                hh.setSectionResizeMode(col, QHeaderView.Stretch)
-            elif col == 9:  # Findings — stretch to fill remaining space
                 hh.setSectionResizeMode(col, QHeaderView.Stretch)
             else:
                 hh.setSectionResizeMode(col, QHeaderView.Interactive)
@@ -2333,7 +2330,6 @@ class HistoryWindow(QDialog):
             org_addr,
             entry.get("report_type", ""),
             status,
-            findings_text,  # col 9 — Findings
         ]
 
         # ── Determine row risk level for color coding ─────────────────────────
