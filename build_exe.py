@@ -239,6 +239,7 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--collect-submodules=core",
         "--hidden-import=PyQt5",
         "--hidden-import=PyQt5.sip",
+        "--hidden-import=PyQt5.QtNetwork",
         "--hidden-import=fitz",
         "--hidden-import=pymupdf",
         # PyYAML is required by clinical_config.py to load arrhythmia thresholds.

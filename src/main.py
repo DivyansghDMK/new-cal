@@ -223,6 +223,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QProgressBar
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl, QRegularExpression, QThread, pyqtSignal
+from PyQt5.QtNetwork import QLocalSocket, QLocalServer
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QDesktopServices, QFont, QPixmap, QIntValidator, QRegularExpressionValidator
@@ -2521,6 +2522,60 @@ def main():
             except Exception as e:
                 print(f"[MainApp] Failed to set AppUserModelID: {e}")
 
+        # ── Single-instance detection using QLocalSocket/QLocalServer ──
+        # Prevents multiple CardioX instances and allows restoring minimized window
+        SERVER_NAME = "CardioX-SingleInstance"
+        
+        # Try to connect to existing server (another instance is running)
+        socket = QLocalSocket()
+        socket.connectToServer(SERVER_NAME)
+        if socket.waitForConnected(1000):
+            # Another instance is running - send message to restore it
+            print("[MainApp] CardioX is already running. Sending restore request...")
+            socket.write(b"RESTORE")
+            socket.waitForBytesWritten(1000)
+            socket.disconnectFromServer()
+            sys.exit(0)
+        
+        # No existing instance - create server to listen for future instances
+        local_server = QLocalServer()
+        if not local_server.listen(SERVER_NAME):
+            print(f"[MainApp] Failed to start local server: {local_server.errorString()}")
+            QMessageBox.warning(
+                None,
+                "CardioX Error",
+                "Failed to initialize single-instance server.\n\nPlease ensure no other CardioX instances are running."
+            )
+            sys.exit(1)
+        
+        # Store reference to server for restoration
+        _local_server = local_server
+        
+        def handle_new_connection():
+            """Called when another instance tries to start - restore this window"""
+            connection = _local_server.nextPendingConnection()
+            connection.readyRead.connect(lambda: on_socket_ready_read(connection))
+        
+        def on_socket_ready_read(socket):
+            """Process incoming message from another instance"""
+            if socket.readAll() == b"RESTORE":
+                # Find the main window from top-level widgets
+                from PyQt5.QtWidgets import QApplication
+                for widget in QApplication.topLevelWidgets():
+                    if widget.isVisible() and not widget.isWindowType():
+                        continue
+                    # Restore the first visible top-level window (usually the main window)
+                    if widget.isWindow() and widget.objectName() != "UpdateBanner":
+                        widget.showNormal()
+                        widget.raise_()
+                        widget.activateWindow()
+                        break
+            socket.disconnectFromServer()
+            socket.deleteLater()
+        
+        local_server.newConnection.connect(handle_new_connection)
+        # ──────────────────────────────────────────────────────────────
+
         app = QApplication(sys.argv)
         app.setApplicationName("CardioX")
         app.setApplicationVersion(APP_VERSION)
@@ -2847,6 +2902,11 @@ def main():
                                 pass
 
                     dashboard.show()
+                    # Ensure window appears normally after UAC or initial launch
+                    dashboard.showNormal()
+                    dashboard.raise_()
+                    dashboard.activateWindow()
+                    _QApp.processEvents()
 
 
 

@@ -3928,18 +3928,18 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     header_y_shift = 5.2 * mm_unit
     
     # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(13.85, 545.50 + header_y_shift, f"Name: {full_name}",
+    patient_name_label = String(11.85, 546.50 + header_y_shift, f"Name: {full_name}",
                                 fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_name_label)
     
-    patient_age_label = String(13.85, 530.99 + header_y_shift, f"Age: {age}",
+    patient_age_label = String(11.85, 532.50 + header_y_shift, f"Age: {age}",
                                fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_age_label)
     
-    patient_gender_label = String(13.85, 516.05 + header_y_shift, f"Gender: {gender}",
+    patient_gender_label = String(11.85, 518.50 + header_y_shift, f"Gender: {gender}",
                                   fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_gender_label)
-    master_drawing.add(String(13.85, 501.32 + header_y_shift, "Report Type: Hyperkalemia Test",
+    master_drawing.add(String(11.85, 504.32 + header_y_shift, "Report Type: Hyperkalemia Test",
                               fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
     
     # RIGHT SIDE: Date/Time
@@ -3949,12 +3949,12 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         time_part = parts[1] if len(parts) > 1 else ""
     else:
         date_part, time_part = "", ""
-    master_drawing.add(String(13.85, 486.15 + header_y_shift, f"Date & Time: {date_part} {time_part}".rstrip(),
+    master_drawing.add(String(11.85, 490.15 + header_y_shift, f"Date & Time: {date_part} {time_part}".rstrip(),
                               fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
     
     # contact block on landscape page
-    contact_block_x = 590
-    contact_block_top_y = 545.90 + header_y_shift
+    contact_block_x = 579
+    contact_block_top_y = 546.40 + header_y_shift
 
     def _fit_hk_text(text, max_w=200):
         t = str(text or "").strip()
@@ -4098,19 +4098,19 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         print(f" Axis calc error: {_err}")
     
     # LEFT COLUMN - HR, PR, QRS, RR, QT
-    hr_label = String(309.29, 545.83 + header_y_shift, f"HR   : {HR} bpm", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    hr_label = String(309.29, 546.83 + header_y_shift, f"HR   : {HR} bpm", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(hr_label)
     
-    pr_label = String(309.29, 530.66 + header_y_shift, f"PR   : {PR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    pr_label = String(309.29, 532.66 + header_y_shift, f"PR   : {PR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(pr_label)
     
-    qrs_label = String(309.29, 516.49 + header_y_shift, f"QRS : {QRS} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    qrs_label = String(309.29, 518.49 + header_y_shift, f"QRS : {QRS} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qrs_label)
     
-    rr_label = String(309.29, 500.88 + header_y_shift, f"RR   : {RR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    rr_label = String(309.29, 503.88 + header_y_shift, f"RR   : {RR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(rr_label)
     
-    qt_label = String(309.29, 486.25 + header_y_shift, f"QT   : {QT} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    qt_label = String(309.29, 489.99 + header_y_shift, f"QT   : {QT} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qt_label)
     
     # RIGHT COLUMN - temporarily hidden per request
@@ -4123,14 +4123,14 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # rv5_sv1_sum_label = String(420, 510, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     # master_drawing.add(rv5_sv1_sum_label)
     
-    qtc_label = String(442.10, 545.90 + header_y_shift, f"QTc  : {QTc} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    qtc_label = String(436.90, 546.90 + header_y_shift, f"QTc  : {QTc} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qtc_label)
 
-    qtcf_label = String(442.37, 530.66 + header_y_shift, f"QTCF : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF : --", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    qtcf_label = String(437.50, 532.66 + header_y_shift, f"QTCF : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF : --", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
     if EST_K > 0:
-        k_label = String(442.37, 516.49 + header_y_shift, f"Est. K+: {EST_K:.1f} mmol/L", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+        k_label = String(437.50, 519.40 + header_y_shift, f"Est. K+: {EST_K:.1f} mmol/L", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(k_label)
     
     # ST removed per user request
@@ -4149,7 +4149,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         filter_band = "Filter: Off"
     master_drawing.add(String(
-        13.85, 471.98 + header_y_shift,
+        11.85, 476.98 + header_y_shift,
         f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=9,
         fontName=FONT_TYPE,
@@ -4169,25 +4169,25 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     doctor = doctor or ""
     label_text = "Doctor Name: "
 
-    reference_y = 86
-    doctor_name_y = 70
-    doctor_sign_y = 56
+    reference_y = 81
+    doctor_name_y = 66
+    doctor_sign_y = 52
 
-    reference_label = String(13, reference_y, "Reference Report Confirmed by",
+    reference_label = String(12, reference_y, "Reference Report Confirmed by",
                               fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(reference_label)
 
-    doctor_name_label = String(13, doctor_name_y, "Doctor Name: ",
+    doctor_name_label = String(12, doctor_name_y, "Doctor Name: ",
                               fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 13 + stringWidth(label_text, FONT_TYPE, 10) + 6
+        value_x = 11 + stringWidth(label_text, FONT_TYPE, 10) + 6
         doctor_name_value = String(value_x, doctor_name_y, doctor,
                                 fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
-    doctor_sign_label = String(13, doctor_sign_y, "Doctor Sign: ",
+    doctor_sign_label = String(12, doctor_sign_y, "Doctor Sign: ",
                               fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
