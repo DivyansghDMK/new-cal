@@ -43,14 +43,7 @@ for _m in _QT_STUBS:
     if _m not in sys.modules:
         sys.modules[_m] = MagicMock()
 
-for _dep in ["boto3", "botocore", "requests", "serial", "twilio",
-             "reportlab", "reportlab.lib", "reportlab.lib.pagesizes",
-             "reportlab.lib.units", "reportlab.lib.styles",
-             "reportlab.lib.colors", "reportlab.platypus",
-             "reportlab.graphics.shapes", "reportlab.pdfbase.pdfmetrics",
-             "matplotlib", "matplotlib.pyplot", "matplotlib.backends",
-             "matplotlib.backends.backend_qt5agg", "matplotlib.figure",
-             "fitz", "pymupdf"]:
+for _dep in ["boto3", "botocore", "requests", "serial", "twilio", "fitz", "pymupdf"]:
     if _dep not in sys.modules:
         sys.modules[_dep] = MagicMock()
 

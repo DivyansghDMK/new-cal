@@ -1943,14 +1943,23 @@ class ECGTestPage(QWidget):
                 print(f"Error snapshotting frozen metrics: {_fme}")
             try:
                 limb_conn = getattr(self, "_lead_connection_state", {}) or {}
+                limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
                 lead_off = bool(getattr(self, "_lead_off_latched", False))
                 if isinstance(self._frozen_report_metrics, dict):
+                    if lead_off or not limb_active:
+                        self._frozen_report_metrics["HR"] = 0
+                        self._frozen_report_metrics["RR"] = 0
+                        self._frozen_report_metrics["PR"] = 0
+                        self._frozen_report_metrics["QRS"] = 0
+                        self._frozen_report_metrics["QT"] = 0
+                        self._frozen_report_metrics["QTc"] = 0
+                        self._frozen_report_metrics["QTcF"] = 0
                     if lead_off or limb_conn.get("V5", True) is False:
                         self._frozen_report_metrics["rv5"] = 0.0
                     if lead_off or limb_conn.get("V1", True) is False:
                         self._frozen_report_metrics["sv1"] = 0.0
             except Exception as _fm_lead_err:
-                print(f"Error sanitizing frozen RV5/SV1 metrics: {_fm_lead_err}")
+                print(f"Error sanitizing frozen metrics: {_fm_lead_err}")
 
             self._style_freeze_button("Resume", enabled=True)
             if hasattr(self, "stop_btn") and self.stop_btn:
@@ -2021,6 +2030,13 @@ class ECGTestPage(QWidget):
         # fresh live data after Resume, not the old frozen 180 BPM capture.
         self._frozen_report_snapshot = None
         # ──────────────────────────────────────────────────────────────────
+
+        # If leads are currently disconnected when resuming, force metric labels to zero
+        limb_conn = getattr(self, "_lead_connection_state", {}) or {}
+        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
+        lead_off = bool(getattr(self, "_lead_off_latched", False))
+        if lead_off or not limb_active:
+            self.reset_metrics_to_zero(force=True)
 
         self._style_freeze_button("Freeze", enabled=True)
         if hasattr(self, "stop_btn") and self.stop_btn:
@@ -2601,11 +2617,10 @@ class ECGTestPage(QWidget):
                     rr_ms = np.median(valid_rr)
                     estimated_bpm = 60000.0 / rr_ms if rr_ms > 0 else 60
             else:
-                # No valid RR intervals in the physiological range; keep previous rr_ms
-                # and fall back to a safe default BPM.
-                estimated_bpm = 60
+                # No valid RR intervals in the physiological range; reset to 0 BPM
+                estimated_bpm = 0
         else:
-            estimated_bpm = 60
+            estimated_bpm = 0
         
         # Adaptive minimum beat requirement based on BPM and available data window
         # At low BPM (< 40), we need longer windows, so reduce minimum beats
@@ -4320,7 +4335,7 @@ class ECGTestPage(QWidget):
             if len(r_peaks) < 8:
                 return getattr(self, '_prev_p_axis', 0) or 0
             
-            pr_ms = getattr(self, 'pr_interval', 160)
+            pr_ms = getattr(self, 'pr_interval', 0)
             axis_deg = calculate_p_axis_from_median(self.data, self.leads, r_peaks, fs, pr_ms=pr_ms)
             if axis_deg is not None:
                 self._prev_p_axis = axis_deg
@@ -5164,12 +5179,14 @@ class ECGTestPage(QWidget):
         except Exception as e:
             print(f" Error updating elapsed time: {e}")
 
-    def reset_metrics_to_zero(self):
-        """Reset all ECG metric labels to zero/initial state ONLY when all limb leads are disconnected."""
-        limb_conn = getattr(self, "_lead_connection_state", {})
-        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-        if limb_active and hasattr(self, 'last_heart_rate') and getattr(self, 'last_heart_rate', 0) > 0:
-            return
+    def reset_metrics_to_zero(self, force=False):
+        """Reset all ECG metric labels to zero/initial state when limb leads are disconnected."""
+        if not force:
+            limb_conn = getattr(self, "_lead_connection_state", {})
+            lead_off_latched = getattr(self, "_lead_off_latched", False)
+            limb_active = (limb_conn.get('I', True) or limb_conn.get('II', True)) and not lead_off_latched
+            if limb_active and hasattr(self, 'last_heart_rate') and getattr(self, 'last_heart_rate', 0) > 0:
+                return
         try:
             if hasattr(self, 'metric_labels') and isinstance(self.metric_labels, dict):
                 if 'heart_rate' in self.metric_labels:
