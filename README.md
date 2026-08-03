@@ -98,25 +98,43 @@ python -m pytest tests/test_history_and_hyperkalemia.py -v
 python -m pytest tests/test_cardiox_prod.py -v
 ```
 
-> **Current Coverage:** 180 tests across 21 test classes covering authentication, signal processing, PDF generation, offline queue, connectivity, and clinical metric classification.
+> **Current Coverage:** 180 tests across 21 test classes covering authentication, signal processing, PDF generation, offline queue, connectivity, and clinical metric classification — **100% PASSING**.
 
 ---
 
 ## 📋 Changelog
 
-### 🔧 [2026-08-03] — History Table & Unit Test Improvements
+### 🔧 [2026-08-03] — Security, Report Formatting, 12-Lead Freeze/Resume & Dashboard Fixes
 
-#### ✅ Change: Removed "Findings" column from ECG Report History table
+#### ✅ Security Hardening & Loophole Audit
+- **Admin Panel Authentication (`src/dashboard/admin_reports.py`):** Strictly enforced custom environment passwords (`ADMIN_PASSWORD` / `CARDIOX_ADMIN_PASS`) in `_check_admin_credentials()` without hardcoded fallback bypasses.
+- **Phone Number Validation (`src/ecg/hyperkalemia_ecg_report_generator.py`):** Updated `format_indian_phone()` to require a 10-digit count before adding `+91-`. Preserves raw input for invalid digit counts to prevent malformed numbers.
+- **Division-by-Zero Protection (`src/ecg/hyperkalemia_ecg_report_generator.py`):** Added `speed_mm_per_s <= 0` guard to `beats_in_boxes()`.
+- **Locale & Unit Parsing (`src/ecg/hyperkalemia_ecg_report_generator.py`):** Enhanced `_safe_float()` to handle comma decimal separators (`"72,5"`) and trailing unit strings (`"72 BPM"`).
+- **Patient Data Privacy (`.gitignore`):** Added `ecg_history.json` to `.gitignore` to prevent local patient history records from being committed.
 
-- **Reason:** Findings text is per-report, variable length, and already visible inside the in-app PDF preview panel. The column was cluttering the table and creating horizontal scroll on smaller displays.
-- **Change Applied (`src/dashboard/history_window.py`):**
-  - `_build_table()`: Column count reduced from 10 → 9; `"Findings"` removed from header labels.
-  - `_configure_table_columns()`: Removed col-9 stretch rule; `Patient Name` (col 4) is now the only stretch column.
-  - `_add_row()`: Removed `findings_text` from the values list so column indices remain correctly aligned.
+#### ✅ Hyperkalemia Report Generator Formatting Sync
+- **Layout Alignment (`src/ecg/hyperkalemia_ecg_report_generator.py`):** Synchronized all Page 2 landscape coordinates with commit `0e0d8e1`:
+  - Patient info X-offset: `13.85` → `11.85`. Adjusted Y positions for Name, Age, Gender, Report Type, Date/Time.
+  - Organization contact block: X `590` → `579`, Y `545.90` → `546.40`.
+  - Vital parameters: Left column HR/PR/QRS/RR/QT Y alignments; Right column QTc/QTCF/Est. K+ X/Y alignments.
+  - Doctor signature footer: Shifted reference, doctor name, and signature lines down by 5-6 points and aligned X offsets.
+
+#### ✅ 12-Lead ECG Freeze/Resume & Lead-Off Metric Fixes
+- **Lead Off Reset (`src/ecg/twelve_lead_test.py`):** Corrected `reset_metrics_to_zero()` logic to check `_lead_off_latched`, ensuring metric labels (`heart_rate`, `pr_interval`, `qrs_duration`, `qtc_interval`) reset to 0 immediately when leads disconnect.
+- **Resume Button Reset (`src/ecg/twelve_lead_test.py`):** Added an explicit lead-off check in `_resume_live_view()` so clicking **Resume** while leads are disconnected instantly resets top-bar metrics to `0 BPM` / `0 ms` / `--` and keeps the lead disconnection alert active.
+- **Frozen Report Sanitization (`src/ecg/twelve_lead_test.py`):** Updated `_freeze_current_view()` to force `0` for all interval metrics when frozen during lead disconnection.
+- **Fallback Elimination (`src/ecg/twelve_lead_test.py`):** Replaced default `60 BPM` and `160/148 ms PR` fallback values with `0` when fewer than 2 R-peaks are detected or when signal is flat.
+
+#### ✅ Dashboard Sticky Metric Cache & Interpretation Fixes
+- **Sticky Cache Invalidation (`src/dashboard/dashboard.py`):** Fixed `_dashboard_last_valid` cache that was retaining old PR values (e.g. `151 ms`) upon device reconnect or 0 BPM. Invalidated cached metrics whenever live HR is 0.
+- **0 BPM Interpretation Guard (`src/dashboard/dashboard.py`):** Added `if hr <= 0:` guard in `update_ecg_interpretation()`. The dashboard interpretation box now displays *"Waiting for stable ECG data..."* when HR is 0 BPM instead of outputting false PR status or *"Normal Sinus Rhythm"*.
+
+#### ✅ History Table Cleanup
+- **Removed "Findings" Column (`src/dashboard/history_window.py`):** Column count reduced from 10 → 9; `"Findings"` removed from table headers and value list to eliminate horizontal scrolling. Findings text remains visible inside the in-app PDF preview panel.
 
 #### ✅ Added: `tests/test_history_and_hyperkalemia.py` — 104 new unit tests
-
-New test file covering 11 sections:
+New test file covering 11 test suites:
 - `TestFormatIndianPhone` — 13 edge cases (None, empty, prefixes, integers, Unicode-safe)
 - `TestBeatsInBoxes` — 10 cases (ECG paper-speed math, zero guards, proportionality)
 - `TestSafeFloat` — 11 cases (type coercion, unit strings, list input, defaults)
