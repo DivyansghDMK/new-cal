@@ -2325,7 +2325,7 @@ class HistoryWindow(QDialog):
             org_name,
             doc,
             entry.get("patient_name", "") or (
-                (entry.get("first_name", "") + " " + entry.get("last_name", "")).strip()),
+                (str(entry.get("first_name") or "") + " " + str(entry.get("last_name") or "")).strip()),
             org_name,
             org_addr,
             entry.get("report_type", ""),

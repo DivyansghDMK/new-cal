@@ -30,7 +30,13 @@ from .history_dialog import HistoryDialog
 def _check_admin_credentials(username: str, password: str) -> bool:
     expected_user = os.getenv('ADMIN_USERNAME', os.getenv('CARDIOX_ADMIN_USER', 'admin')).strip().lower()
     expected_pass = os.getenv('ADMIN_PASSWORD', os.getenv('CARDIOX_ADMIN_PASS', 'divyansh'))
-    return username.strip().lower() == expected_user and (password == expected_pass or password in ('divyansh', 'admin'))
+    if username.strip().lower() != expected_user:
+        return False
+    # If env var is explicitly provided, enforce it strictly; otherwise check against default fallback
+    has_env_pass = bool(os.getenv('ADMIN_PASSWORD') or os.getenv('CARDIOX_ADMIN_PASS'))
+    if has_env_pass:
+        return password == expected_pass
+    return password == expected_pass or password in ('divyansh', 'admin')
 
 
 def _customer_channels_candidates() -> list[Path]:
