@@ -92,7 +92,7 @@ begin
   if JustAfterAnUninstallStep = usPostUninstall then
   begin
     AppDataDir := ExpandConstant('{userappdata}\Deckmount');
-    LocalAppDataDir := ExpandConstant('{userlocalappdata}\Deckmount\CardioX');
+    LocalAppDataDir := ExpandConstant('{localappdata}\Deckmount\CardioX');
     
     if DirExists(LocalAppDataDir) or DirExists(AppDataDir) then
     begin
