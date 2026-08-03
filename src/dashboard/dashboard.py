@@ -2392,14 +2392,14 @@ class Dashboard(QWidget):
             qtc_raw = self.metric_labels.get('qtc_interval', QLabel()).text() or '--/--'
 
             if hasattr(self, '_dashboard_last_valid') and self._dashboard_last_valid:
-                if (hr in ('--', '0', '00', '') or hr == '0') and 'heart_rate' in self._dashboard_last_valid:
-                    hr = self._dashboard_last_valid['heart_rate'].replace(' ', '').replace('BPM', '')
-                if (pr in ('--', '0', '00', '') or pr == '0') and 'pr_interval' in self._dashboard_last_valid:
-                    pr = self._dashboard_last_valid['pr_interval'].replace(' ', '').replace('ms', '')
-                if (qrs in ('--', '0', '00', '') or qrs == '0') and 'qrs_duration' in self._dashboard_last_valid:
-                    qrs = self._dashboard_last_valid['qrs_duration'].replace(' ', '').replace('ms', '')
-                if (qtc_raw in ('--', '--/--', '0', '0/0', '') or qtc_raw == '0') and 'qtc_interval' in self._dashboard_last_valid:
-                    qtc_raw = self._dashboard_last_valid['qtc_interval']
+                hr_num = int(float(hr)) if hr and hr not in ('--', '0', '00', '') else 0
+                if hr_num > 0:
+                    if (pr in ('--', '0', '00', '') or pr == '0') and 'pr_interval' in self._dashboard_last_valid:
+                        pr = self._dashboard_last_valid['pr_interval'].replace(' ', '').replace('ms', '')
+                    if (qrs in ('--', '0', '00', '') or qrs == '0') and 'qrs_duration' in self._dashboard_last_valid:
+                        qrs = self._dashboard_last_valid['qrs_duration'].replace(' ', '').replace('ms', '')
+                    if (qtc_raw in ('--', '--/--', '0', '0/0', '') or qtc_raw == '0') and 'qtc_interval' in self._dashboard_last_valid:
+                        qtc_raw = self._dashboard_last_valid['qtc_interval']
             
             # Parse QT/QTc
             qt = '--'
@@ -3722,17 +3722,22 @@ class Dashboard(QWidget):
         except Exception as e:
             print(f"❌ Periodic sync error: {e}")
     
-    def reset_dashboard_metrics_to_zero(self):
-        """Reset all dashboard metric labels to 0 ONLY when all primary ECG signals are disconnected."""
+    def reset_dashboard_metrics_to_zero(self, force=False):
+        """Reset all dashboard metric labels to 0."""
         ecg_page = getattr(self, 'ecg_test_page', None) if hasattr(self, 'ecg_test_page') else None
         limb_conn = getattr(ecg_page, "_lead_connection_state", {}) if ecg_page else {}
-        limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
-        # Also treat LL removal as a limb-off condition immediately (fast flag,
-        # no 25-packet debounce) so the dashboard doesn't flash "0 BPM" briefly.
+        lead_off_latched = getattr(ecg_page, "_lead_off_latched", False) if ecg_page else False
+        limb_active = (limb_conn.get('I', True) or limb_conn.get('II', True)) and not lead_off_latched
         ll_off = getattr(ecg_page, '_ll_disconnected', False) if ecg_page else False
-        if (limb_active and not ll_off) and hasattr(self, '_dashboard_last_valid') and self._dashboard_last_valid:
-            # Keep displaying last valid metrics if primary limb leads are connected
-            return
+
+        if not force and (limb_active and not ll_off) and hasattr(self, '_dashboard_last_valid') and self._dashboard_last_valid:
+            live_hr = getattr(ecg_page, 'last_heart_rate', 0) or 0
+            if live_hr > 0:
+                return
+
+        if hasattr(self, '_dashboard_last_valid'):
+            self._dashboard_last_valid.clear()
+
         if hasattr(self, "metric_labels") and isinstance(self.metric_labels, dict):
             if 'heart_rate' in self.metric_labels:
                 self.metric_labels['heart_rate'].setText("0 BPM")
@@ -3746,7 +3751,7 @@ class Dashboard(QWidget):
             if 'qt_interval' in self.metric_labels:
                 self.metric_labels['qt_interval'].setText("0 ms")
             if 'qtc_interval' in self.metric_labels:
-                self.metric_labels['qtc_interval'].setText("0 ms")
+                self.metric_labels['qtc_interval'].setText("--")
         if hasattr(self, 'conclusion_box'):
             self.conclusion_box.setHtml("""
                 <p style='color: #888; font-style: italic;'>
@@ -3754,6 +3759,7 @@ class Dashboard(QWidget):
                 Metrics are being analyzed. Please wait a few seconds.
                 </p>
             """)
+        self._last_valid_conclusion_html = None
 
     def update_dashboard_metrics_from_ecg(self):
         try:
@@ -3791,36 +3797,59 @@ class Dashboard(QWidget):
                 limb_active = limb_conn.get('I', True) or limb_conn.get('II', True)
                 ll_off = getattr(self.ecg_test_page, '_ll_disconnected', False)
                 if getattr(self.ecg_test_page, "_lead_off_latched", False) or not limb_active or ll_off:
-                    self.reset_dashboard_metrics_to_zero()
+                    self.reset_dashboard_metrics_to_zero(force=True)
                     return
 
-                if is_valid(hr_raw):
+                hr_num = int(float(hr_raw)) if is_valid(hr_raw) else 0
+                if hr_num > 0:
                     self._dashboard_last_valid['heart_rate'] = f"{hr_raw} BPM"
-                if 'heart_rate' in self.metric_labels and 'heart_rate' in self._dashboard_last_valid:
-                    self.metric_labels['heart_rate'].setText(self._dashboard_last_valid['heart_rate'])
+                    if 'heart_rate' in self.metric_labels:
+                        self.metric_labels['heart_rate'].setText(self._dashboard_last_valid['heart_rate'])
+                else:
+                    self.metric_labels.get('heart_rate', QLabel()).setText("0 BPM")
+                    self.reset_dashboard_metrics_to_zero(force=True)
+                    return
 
-                if is_valid(pr_raw):
+                if is_valid(pr_raw) and hr_num > 0:
                     self._dashboard_last_valid['pr_interval'] = f"{pr_raw} ms"
-                if 'pr_interval' in self.metric_labels and 'pr_interval' in self._dashboard_last_valid:
-                    self.metric_labels['pr_interval'].setText(self._dashboard_last_valid['pr_interval'])
+                    if 'pr_interval' in self.metric_labels:
+                        self.metric_labels['pr_interval'].setText(self._dashboard_last_valid['pr_interval'])
+                else:
+                    self._dashboard_last_valid.pop('pr_interval', None)
+                    if 'pr_interval' in self.metric_labels:
+                        self.metric_labels['pr_interval'].setText("0 ms")
 
-                if is_valid(qrs_raw):
+                if is_valid(qrs_raw) and hr_num > 0:
                     self._dashboard_last_valid['qrs_duration'] = f"{qrs_raw} ms"
-                if 'qrs_duration' in self.metric_labels and 'qrs_duration' in self._dashboard_last_valid:
-                    self.metric_labels['qrs_duration'].setText(self._dashboard_last_valid['qrs_duration'])
+                    if 'qrs_duration' in self.metric_labels:
+                        self.metric_labels['qrs_duration'].setText(self._dashboard_last_valid['qrs_duration'])
+                else:
+                    self._dashboard_last_valid.pop('qrs_duration', None)
+                    if 'qrs_duration' in self.metric_labels:
+                        self.metric_labels['qrs_duration'].setText("0 ms")
 
                 key = 'st_interval' if 'st_interval' in self.metric_labels else 'st_segment'
-                if is_valid(p_raw):
+                if is_valid(p_raw) and hr_num > 0:
                     self._dashboard_last_valid[key] = f"{p_raw} ms"
-                if key in self.metric_labels and key in self._dashboard_last_valid:
-                    self.metric_labels[key].setText(self._dashboard_last_valid[key])
+                    if key in self.metric_labels:
+                        self.metric_labels[key].setText(self._dashboard_last_valid[key])
+                else:
+                    self._dashboard_last_valid.pop(key, None)
+                    if key in self.metric_labels:
+                        self.metric_labels[key].setText("0 ms")
 
-                if is_valid(qt_raw) and is_valid(qtc_raw):
+                if is_valid(qt_raw) and is_valid(qtc_raw) and hr_num > 0:
                     self._dashboard_last_valid['qtc_interval'] = f"{qt_raw}/{qtc_raw} ms"
-                elif is_valid(qtc_raw):
+                elif is_valid(qtc_raw) and hr_num > 0:
                     self._dashboard_last_valid['qtc_interval'] = f"{qtc_raw} ms"
-                if 'qtc_interval' in self.metric_labels and 'qtc_interval' in self._dashboard_last_valid:
-                    self.metric_labels['qtc_interval'].setText(self._dashboard_last_valid['qtc_interval'])
+                else:
+                    self._dashboard_last_valid.pop('qtc_interval', None)
+
+                if 'qtc_interval' in self.metric_labels:
+                    if 'qtc_interval' in self._dashboard_last_valid:
+                        self.metric_labels['qtc_interval'].setText(self._dashboard_last_valid['qtc_interval'])
+                    else:
+                        self.metric_labels['qtc_interval'].setText("--")
 
                 self._last_metrics_update_ts = _time.time()
                 # Ensure dashboard interpretation updates as soon as live metrics arrive.
@@ -4646,11 +4675,16 @@ class Dashboard(QWidget):
                 hr = int(hr_text.replace(' BPM', '').replace(' bpm', '').strip()) if hr_text and hr_text != '00' else 0
             except:
                 hr = 0
-            
-            try:
-                pr = int(pr_text.replace(' ms', '').strip()) if pr_text and pr_text != '0 ms' else 0
-            except:
-                pr = 0
+
+            if hr <= 0 or not self.is_ecg_active():
+                if hasattr(self, 'conclusion_box'):
+                    self.conclusion_box.setHtml("""
+                        <p style='color: #888; font-style: italic;'>
+                        Waiting for stable ECG data...<br><br>
+                        Metrics are being analyzed. Please wait a few seconds.
+                        </p>
+                    """)
+                return
             
             try:
                 qrs = int(qrs_text.replace(' ms', '').strip()) if qrs_text and qrs_text != '0 ms' else 0
