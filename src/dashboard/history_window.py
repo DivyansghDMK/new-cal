@@ -1405,7 +1405,7 @@ class HistoryWindow(QDialog):
         # Columns: Date | Time | Patient | Type | Doctor | Presigned URL
         self.rev_table = QTableWidget(0, 6)
         self.rev_table.setHorizontalHeaderLabels(
-            ["Date", "Time", "Patient", "Type", "Doctor", "Presigned / Preview URL"]
+            ["Date", "Time", "Report Name", "Type", "Doctor", "Presigned / Preview URL"]
         )
         self.rev_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.rev_table.setEditTriggers(QTableWidget.NoEditTriggers)
