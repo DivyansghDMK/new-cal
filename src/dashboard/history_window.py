@@ -1662,6 +1662,7 @@ class HistoryWindow(QDialog):
 
             # Fill table — Date | Time | Patient | Type | Doctor | Presigned URL
             self.rev_table.setRowCount(0)
+            self.rev_table.setSortingEnabled(False)
             for entry in data:
                 # Try all known URL field names from the API
                 purl = (
@@ -1693,6 +1694,8 @@ class HistoryWindow(QDialog):
                         item.setForeground(QColor("#111111"))
                         item.setToolTip(v)   # full presigned URL on hover
                     self.rev_table.setItem(r, c, item)
+                    
+            self.rev_table.setSortingEnabled(True) 
 
             if data:
                 self.rev_status_lbl.setText(
