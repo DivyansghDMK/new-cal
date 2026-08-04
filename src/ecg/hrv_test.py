@@ -705,6 +705,10 @@ class HRVTestWindow(QWidget):
             self.report_btn.setEnabled(False)
             self.lead_combo.setEnabled(False)
 
+            # Reset RA/RL/LL guard flag for this new capture session
+            self._ra_rl_ll_popup_shown = False
+            self._ra_rl_ll_disconnected_count = 0
+
             # Reset the visible metric labels immediately at capture start so the
             # display waits for fresh HRV calculations instead of showing old values.
             if 'heart_rate' in self.metric_labels:
@@ -760,6 +764,43 @@ class HRVTestWindow(QWidget):
                 category="HRV_TEST_ERROR"
             )
     
+    def _handle_ra_rl_ll_disconnect(self):
+        """
+        RA/RL/LL(F) electrode loss makes every lead invalid (same as 12-lead test).
+        Alert the user with a blocking popup, send STOP command, and close window.
+        Fires once per disconnection event.
+        """
+        if getattr(self, "_ra_rl_ll_popup_shown", False):
+            return  # Guard: fire only once per disconnection
+        
+        self._ra_rl_ll_popup_shown = True
+
+        popup_title = "Warning"
+        popup_text = "ECG Electrode disconnected, please check electrode connection"
+        
+        try:
+            # Show blocking popup (waits for user to click OK)
+            from dashboard.dashboard import StyledMessageBox
+            StyledMessageBox.show_message(self, popup_title, popup_text, is_critical=True)
+        except Exception as e:
+            print(f" Falling back to QMessageBox for electrode disconnect alert: {e}")
+            try:
+                QMessageBox.critical(self, popup_title, popup_text)
+            except Exception as e2:
+                print(f" Error showing electrode disconnect popup: {e2}")
+        
+        # After user clicks OK, send STOP command and clean up
+        try:
+            self.stop_capture(device_disconnected=True)
+        except Exception as e:
+            print(f" Error stopping capture on RA/RL/LL disconnect: {e}")
+        
+        # Close test window and return to dashboard
+        try:
+            self.close()
+        except Exception as e:
+            print(f" Error closing HRV window after RA/RL/LL disconnect: {e}")
+
     def stop_capture(self, device_disconnected=False, device_not_sending=False):
         """Stop capturing data"""
         # UPDATE STATE: Test stopped
@@ -952,6 +993,40 @@ class HRVTestWindow(QWidget):
             
             # Use new packet-based reading from SerialStreamReader
             packets = self.serial_reader.read_packets(max_packets=max_packets)
+            
+            # ── RA/RL/LL(F) LEAD DISCONNECTION DETECTION ────────────────────────
+            # Check if RA, RL, or LL(F) electrodes are disconnected (same as 12-lead test)
+            # These are critical electrodes - if they're off, ALL leads are invalid
+            try:
+                if packets and len(packets) > 0:
+                    # Check the most recent packet for RA/RL/LL presence flags
+                    last_packet = packets[-1]
+                    ra_present = last_packet.get("__ra_present__", True)
+                    rl_absent = not last_packet.get("__rl_present__", True)
+                    ll_present = last_packet.get("__ll_present__", True)
+                    
+                    # Track RA/RL/LL state for debouncing
+                    if not hasattr(self, '_ra_rl_ll_disconnected_count'):
+                        self._ra_rl_ll_disconnected_count = 0
+                    
+                    # If RA is absent OR RL is absent OR LL is absent, increment counter
+                    if not ra_present or rl_absent or not ll_present:
+                        self._ra_rl_ll_disconnected_count += 1
+                        
+                        # Require 5 consecutive packets (~10ms) before triggering alert
+                        if self._ra_rl_ll_disconnected_count >= 5:
+                            # Check guard flag (fire only once per event)
+                            if not getattr(self, '_ra_rl_ll_popup_shown', False):
+                                print("⚠️ Critical electrode (RA/RL/LL) disconnected during HRV test!")
+                                self._handle_ra_rl_ll_disconnect()
+                                self._plot_update_in_progress = False
+                                return
+                    else:
+                        # Reset counter if all electrodes are connected
+                        self._ra_rl_ll_disconnected_count = 0
+            except Exception as e:
+                print(f" Error checking RA/RL/LL status: {e}")
+            
             if not packets and hasattr(self.serial_reader, 'is_device_silent') and self.serial_reader.is_device_silent(3.0):
                 if not getattr(self, '_silent_data_warned', False):
                     QMessageBox.warning(

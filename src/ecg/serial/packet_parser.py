@@ -121,6 +121,7 @@ def parse_packet(raw: bytes) -> Dict[str, Optional[int]]:
     lead_values["__ra_present__"] = ra_present
     lead_values["__la_present__"] = la_present
     lead_values["__ll_present__"] = ll_present
+    lead_values["__rl_present__"] = not rl_absent  # RL present = NOT rl_absent
 
     for name in LEAD_NAMES_DIRECT:
         lead_values[name] = None if is_flat(name) else raw_values[name]

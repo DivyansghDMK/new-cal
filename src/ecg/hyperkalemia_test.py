@@ -773,6 +773,10 @@ class HyperkalemiaTestWindow(QWidget):
                 except Exception:
                     pass
 
+            # Reset critical lead (RA/RL/LL/LA) guard flag for this new capture session
+            self._critical_lead_popup_shown = False
+            self._critical_lead_disconnected_count = 0
+
             # Reset adaptive scaling
             self.y_centers = {lead: 0.0 for lead in self.lead_data.keys()}
             self.y_ranges = {lead: 200.0 for lead in self.lead_data.keys()}
@@ -863,6 +867,43 @@ class HyperkalemiaTestWindow(QWidget):
                 category="HYPERKALEMIA_TEST_ERROR"
             )
     
+    def _handle_critical_lead_disconnect(self):
+        """
+        RA/RL/LL(F)/LA(L) electrode loss makes every lead invalid (same as 12-lead test).
+        Alert the user with a blocking popup, send STOP command, and close window.
+        Fires once per disconnection event.
+        """
+        if getattr(self, "_critical_lead_popup_shown", False):
+            return  # Guard: fire only once per disconnection
+        
+        self._critical_lead_popup_shown = True
+
+        popup_title = "Warning"
+        popup_text = "ECG Electrode disconnected, please check electrode connection"
+        
+        try:
+            # Show blocking popup (waits for user to click OK)
+            from dashboard.dashboard import StyledMessageBox
+            StyledMessageBox.show_message(self, popup_title, popup_text, is_critical=True)
+        except Exception as e:
+            print(f" Falling back to QMessageBox for electrode disconnect alert: {e}")
+            try:
+                QMessageBox.critical(self, popup_title, popup_text)
+            except Exception as e2:
+                print(f" Error showing electrode disconnect popup: {e2}")
+        
+        # After user clicks OK, send STOP command and clean up
+        try:
+            self.stop_capture(device_disconnected=True)
+        except Exception as e:
+            print(f" Error stopping capture on critical lead disconnect: {e}")
+        
+        # Close test window and return to dashboard
+        try:
+            self.close()
+        except Exception as e:
+            print(f" Error closing Hyperkalemia window after critical lead disconnect: {e}")
+
     def stop_capture(self, device_disconnected=False, device_not_sending=False):
         """Stop capturing data"""
         # UPDATE STATE: Test stopped
@@ -1049,13 +1090,49 @@ class HyperkalemiaTestWindow(QWidget):
             self.stop_capture(device_disconnected=True)
             self._plot_update_in_progress = False
             return
+        
+        # ── RA/RL/LL(F)/LA(L) LEAD DISCONNECTION DETECTION ──────────────────
+        # Check if RA, RL, LL, or LA electrodes are disconnected (same as 12-lead test)
+        # These are critical electrodes - if they're off, ALL leads are invalid
+        try:
+            packets = self.serial_reader.read_packets(max_packets=100)
+            
+            if packets and len(packets) > 0:
+                # Check the most recent packet for RA/RL/LL/LA presence flags
+                last_packet = packets[-1]
+                ra_present = last_packet.get("__ra_present__", True)
+                rl_absent = not last_packet.get("__rl_present__", True)
+                ll_present = last_packet.get("__ll_present__", True)
+                la_present = last_packet.get("__la_present__", True)
+                
+                # Track RA/RL/LL/LA state for debouncing
+                if not hasattr(self, '_critical_lead_disconnected_count'):
+                    self._critical_lead_disconnected_count = 0
+                
+                # If RA is absent OR RL is absent OR LL is absent OR LA is absent, increment counter
+                if not ra_present or rl_absent or not ll_present or not la_present:
+                    self._critical_lead_disconnected_count += 1
+                    
+                    # Require 5 consecutive packets (~10ms) before triggering alert
+                    if self._critical_lead_disconnected_count >= 5:
+                        # Check guard flag (fire only once per event)
+                        if not getattr(self, '_critical_lead_popup_shown', False):
+                            print("⚠️ Critical electrode (RA/RL/LL/LA) disconnected during Hyperkalemia test!")
+                            self._handle_critical_lead_disconnect()
+                            self._plot_update_in_progress = False
+                            return
+                else:
+                    # Reset counter if all critical electrodes are connected
+                    self._critical_lead_disconnected_count = 0
+        except Exception as e:
+            print(f" Error checking critical lead status: {e}")
+            packets = []  # Continue with empty packets
             
         
         try:
             elapsed = time.time() - self.start_time
             
-            # Read packets from serial reader
-            packets = self.serial_reader.read_packets(max_packets=100)
+            # Packets already read above during RA/RL check
             if not packets and hasattr(self.serial_reader, 'is_device_silent') and self.serial_reader.is_device_silent(3.0):
                 if not getattr(self, '_silent_data_warned', False):
                     QMessageBox.warning(
