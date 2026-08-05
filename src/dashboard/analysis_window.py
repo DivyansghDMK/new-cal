@@ -2179,6 +2179,7 @@ class ECGAnalysisWindow(QDialog):
             except Exception:
                 selected_full = None
 
+            meta_source = selected_full or selected or {}
             new_report = self._map_public_report_to_internal(selected_full or selected)
             if not new_report:
                 # If listing is metadata-only, try fetching full details by report_id.
@@ -2194,9 +2195,31 @@ class ECGAnalysisWindow(QDialog):
                     detail = self._fetch_public_report_detail_by_report_id(rep_id, mobile_no=mobile_no)
                     if isinstance(detail, dict):
                         new_report = self._map_public_report_to_internal(detail) or new_report
+
             if not new_report:
                 QMessageBox.warning(self, "Reports", "Selected report did not include usable waveform data.")
                 return
+
+            # Preserve patient metadata from list selection if detail API call returned empty patient details
+            if isinstance(new_report.get("patient_details"), dict):
+                pat = new_report["patient_details"]
+                m_pd = meta_source.get("patient_details") if isinstance(meta_source.get("patient_details"), dict) else (meta_source.get("patient") if isinstance(meta_source.get("patient"), dict) else {})
+                meta_name = selected.get("name") or selected.get("patient_name") or selected.get("patientName") or meta_source.get("name") or meta_source.get("patient_name") or meta_source.get("patientName") or m_pd.get("name")
+                meta_age = selected.get("age") or selected.get("patient_age") or selected.get("patientAge") or meta_source.get("age") or meta_source.get("patient_age") or meta_source.get("patientAge") or m_pd.get("age")
+                meta_gender = selected.get("gender") or selected.get("patient_gender") or selected.get("patientGender") or meta_source.get("gender") or meta_source.get("patient_gender") or meta_source.get("patientGender") or m_pd.get("gender")
+                meta_id = selected.get("report_id") or selected.get("reportId") or selected.get("id") or selected.get("reportID") or meta_source.get("report_id") or meta_source.get("reportId") or meta_source.get("id") or m_pd.get("report_id")
+                meta_date = selected.get("report_date") or selected.get("reportDate") or selected.get("date") or selected.get("created_at") or meta_source.get("report_date") or meta_source.get("reportDate") or meta_source.get("date") or m_pd.get("report_date")
+
+                if (not pat.get("name") or pat.get("name") == "Unknown") and meta_name:
+                    pat["name"] = meta_name
+                if not pat.get("age") and meta_age:
+                    pat["age"] = meta_age
+                if not pat.get("gender") and meta_gender:
+                    pat["gender"] = meta_gender
+                if not pat.get("report_id") and meta_id:
+                    pat["report_id"] = meta_id
+                if not pat.get("report_date") and meta_date:
+                    pat["report_date"] = meta_date
 
             self.reports.append(new_report)
             idx = len(self.reports) - 1
@@ -2278,16 +2301,19 @@ class ECGAnalysisWindow(QDialog):
             return None
 
         def _get_first(d: dict, *keys):
+            if not isinstance(d, dict):
+                return None
             for k in keys:
                 if k in d and d[k] not in (None, "", []):
                     return d[k]
             return None
 
-        patient_name = _get_first(report_obj, "name", "patient_name", "patientName")
-        patient_age = _get_first(report_obj, "age", "patient_age", "patientAge")
-        patient_gender = _get_first(report_obj, "gender", "patient_gender", "patientGender")
-        report_id = _get_first(report_obj, "report_id", "reportId", "id", "reportID")
-        report_date = _get_first(report_obj, "report_date", "reportDate", "date", "created_at", "createdAt")
+        pd = report_obj.get("patient_details") if isinstance(report_obj.get("patient_details"), dict) else (report_obj.get("patient") if isinstance(report_obj.get("patient"), dict) else {})
+        patient_name = _get_first(report_obj, "name", "patient_name", "patientName") or _get_first(pd, "name", "patient_name", "patientName")
+        patient_age = _get_first(report_obj, "age", "patient_age", "patientAge") or _get_first(pd, "age", "patient_age", "patientAge")
+        patient_gender = _get_first(report_obj, "gender", "patient_gender", "patientGender") or _get_first(pd, "gender", "patient_gender", "patientGender")
+        report_id = _get_first(report_obj, "report_id", "reportId", "id", "reportID") or _get_first(pd, "report_id", "reportId", "id", "reportID")
+        report_date = _get_first(report_obj, "report_date", "reportDate", "date", "created_at", "createdAt") or _get_first(pd, "report_date", "reportDate", "date", "created_at", "createdAt")
 
         sampling_rate = (
             _get_first(report_obj, "sampling_rate", "samplingRate")
@@ -2516,12 +2542,13 @@ class ECGAnalysisWindow(QDialog):
             self.patient_lbl.setText("Patient: —")
             self.patient_meta_lbl.setText("ID: — | Age: — | Gender: —")
             return
-        pd        = self.current_report.get('patient_details', {})
-        p_fallback = self.current_report.get('patient', {})
-        name   = pd.get('name')   or self.current_report.get('patient_name') or p_fallback.get('name')   or 'Unknown'
-        pid    = pd.get('report_id') or pd.get('user_id') or self.current_report.get('patient_id') or '—'
-        age    = pd.get('age')    or self.current_report.get('age')    or p_fallback.get('age')    or '—'
-        gender = pd.get('gender') or self.current_report.get('gender') or p_fallback.get('gender') or '—'
+        pd        = self.current_report.get('patient_details', {}) or {}
+        p_fallback = self.current_report.get('patient', {}) or {}
+        pd_name = pd.get('name') if pd.get('name') and pd.get('name') != 'Unknown' else None
+        name   = pd_name or self.current_report.get('patient_name') or self.current_report.get('name') or p_fallback.get('name') or pd.get('name') or 'Unknown'
+        pid    = pd.get('report_id') or pd.get('user_id') or self.current_report.get('patient_id') or self.current_report.get('report_id') or '—'
+        age    = pd.get('age')    or self.current_report.get('age')    or self.current_report.get('patient_age') or p_fallback.get('age')    or '—'
+        gender = pd.get('gender') or self.current_report.get('gender') or self.current_report.get('patient_gender') or p_fallback.get('gender') or '—'
         self.patient_lbl.setText(f"Patient: {name}")
         self.patient_meta_lbl.setText(f"ID: {pid} | Age: {age} | Gender: {gender}")
 
@@ -2990,10 +3017,11 @@ class ECGAnalysisWindow(QDialog):
             c2 = rpt.get('conclusion', [])
             conclusions = [c2] if isinstance(c2, str) else (c2 if isinstance(c2, list) else [])
 
-        p_fallback = rpt.get('patient', {})
-        patient_name = pat.get('name') or rpt.get('patient_name') or p_fallback.get('name') or 'Unknown'
-        patient_age = pat.get('age') or p_fallback.get('age') or ''
-        patient_gender = pat.get('gender') or p_fallback.get('gender') or ''
+        p_fallback = rpt.get('patient', {}) or {}
+        pd_name = pat.get('name') if pat.get('name') and pat.get('name') != 'Unknown' else None
+        patient_name = pd_name or rpt.get('patient_name') or rpt.get('name') or p_fallback.get('name') or pat.get('name') or 'Unknown'
+        patient_age = pat.get('age') or rpt.get('age') or rpt.get('patient_age') or p_fallback.get('age') or ''
+        patient_gender = pat.get('gender') or rpt.get('gender') or rpt.get('patient_gender') or p_fallback.get('gender') or ''
         timestamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
         project_root = Path(__file__).resolve().parents[2]
         reports_dir  = project_root / "reports"
