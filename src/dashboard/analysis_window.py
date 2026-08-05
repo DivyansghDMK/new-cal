@@ -2576,13 +2576,34 @@ class ECGAnalysisWindow(QDialog):
         rpt     = self.current_report or {}
         metrics = rpt.get('result_reading') or rpt.get('metrics') or {}
         self.metrics_table.setRowCount(0)
-        rv5_sv1      = metrics.get('RV5_SV1',      metrics.get('rv5_sv1', 'N/A'))
-        rv5_plus_sv1 = metrics.get('RV5_plus_SV1', metrics.get('rv5_plus_sv1', 'N/A'))
+        rv5_val = metrics.get('RV5_mV', metrics.get('RV5', metrics.get('rv5')))
+        sv1_val = metrics.get('SV1_mV', metrics.get('SV1', metrics.get('sv1')))
+        rv5_sv1 = metrics.get('RV5_SV1', metrics.get('rv5_sv1'))
+        if rv5_sv1 is None and rv5_val is not None and sv1_val is not None:
+            try:
+                rv5_sv1 = f"{float(rv5_val):.3f}/{abs(float(sv1_val)):.3f}"
+            except Exception:
+                rv5_sv1 = 'N/A'
+        elif rv5_sv1 is None:
+            rv5_sv1 = 'N/A'
+
+        rv5_plus_sv1 = metrics.get('RV5_plus_SV1_mV', metrics.get('RV5_plus_SV1', metrics.get('rv5_plus_sv1')))
+        if (rv5_plus_sv1 is None or rv5_plus_sv1 == 'N/A') and rv5_val is not None and sv1_val is not None:
+            try:
+                rv5_plus_sv1 = f"{round(float(rv5_val) + abs(float(sv1_val)), 3)}"
+            except Exception:
+                rv5_plus_sv1 = 'N/A'
+        elif rv5_plus_sv1 is None:
+            rv5_plus_sv1 = 'N/A'
+
         if isinstance(rv5_sv1, (list, tuple)) and len(rv5_sv1) >= 2:
             try:
                 rv5_sv1 = f"{float(rv5_sv1[0]):.3f}/{abs(float(rv5_sv1[1])):.3f}"
             except Exception:
                 pass
+
+        qtcf_val = metrics.get('QTcF', metrics.get('qtcf_interval', metrics.get('QTcF_ms', metrics.get('QTCF_ms', metrics.get('QTCF', 'N/A')))))
+
         items = [
             ("HR",     metrics.get('HR_bpm',  metrics.get('heart_rate', metrics.get('HR', 'N/A'))),    "bpm"),
             ("RR",     metrics.get('RR_ms',   metrics.get('rr_interval', metrics.get('RR', 'N/A'))),   "ms"),
@@ -2590,6 +2611,7 @@ class ECGAnalysisWindow(QDialog):
             ("QRS",    metrics.get('QRS_ms',  metrics.get('qrs_duration', metrics.get('QRS', 'N/A'))), "ms"),
             ("QT",     metrics.get('QT_ms',   metrics.get('qt_interval', metrics.get('QT', 'N/A'))),   "ms"),
             ("QTc",    metrics.get('QTc_ms',  metrics.get('qtc_interval', metrics.get('QTc', 'N/A'))), "ms"),
+            ("QTcF",   qtcf_val,                                                                       "ms"),
             ("RV5/SV1",  str(rv5_sv1).replace(' mV', ''),      "mV"),
             ("RV5+SV1",  str(rv5_plus_sv1).replace(' mV', ''), "mV"),
         ]
@@ -2947,10 +2969,12 @@ class ECGAnalysisWindow(QDialog):
         qrs  = _get(raw_metrics, 'QRS', 'qrs_duration', 'QRS_ms')
         qt   = _get(raw_metrics, 'QT',  'qt_interval',  'QT_ms')
         qtc  = _get(raw_metrics, 'QTc', 'qtc_interval', 'QTc_ms')
-        qtcf = _get(raw_metrics, 'QTcF','qtcf_interval','QTcF_ms')
-        rr   = _get(raw_metrics, 'RR',  'rr_interval',  'RR_ms')
+        qtcf = _get(raw_metrics, 'QTcF','qtcf_interval','QTcF_ms', 'QTCF_ms', 'QTCF', 'qtcf_ms')
+        rr   = _get(raw_metrics, 'RR',  'rr_interval',  'RR_ms', 'rr_ms', 'rr')
+        rv5  = _get(raw_metrics, 'RV5_mV', 'RV5', 'rv5', 'rv5_mv')
+        sv1  = _get(raw_metrics, 'SV1_mV', 'SV1', 'sv1', 'sv1_mv')
         rv5sv1  = _get(raw_metrics, 'RV5_SV1',     'rv5_sv1')
-        rv5plus = _get(raw_metrics, 'RV5_plus_SV1','rv5_plus_sv1')
+        rv5plus = _get(raw_metrics, 'RV5_plus_SV1_mV', 'RV5_plus_SV1', 'rv5_plus_sv1')
         if isinstance(rv5sv1, (list, tuple)) and len(rv5sv1) >= 2:
             try:
                 rv5sv1 = f"{float(rv5sv1[0]):.3f}/{abs(float(rv5sv1[1])):.3f}"
@@ -3071,7 +3095,11 @@ class ECGAnalysisWindow(QDialog):
                 'ac_frequency': ac_freq,
             }
             try:
-                if rv5sv1:
+                if rv5 is not None:
+                    frozen['rv5'] = float(rv5)
+                if sv1 is not None:
+                    frozen['sv1'] = float(sv1)
+                if (frozen['rv5'] == 0.0 or frozen['sv1'] == 0.0) and rv5sv1:
                     parts = str(rv5sv1).split('/')
                     frozen['rv5'] = float(parts[0].strip(' mV+'))
                     if len(parts) > 1:

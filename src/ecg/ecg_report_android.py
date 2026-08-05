@@ -1052,7 +1052,18 @@ def _t(ax, text, x_mm, y_mm, pt_size,
 # ─── Utility ──────────────────────────────────────────────────────────────────
 
 def _rr_ms(frozen):
-    hr = frozen.get('HR', 0)
-    if hr and hr > 0:
-        return int(round(60000.0 / hr))
-    return frozen.get('RR', 0)
+    rr = frozen.get('RR', 0) or 0
+    try:
+        rr_val = int(round(float(rr)))
+        if rr_val > 0:
+            return rr_val
+    except (ValueError, TypeError):
+        pass
+    hr = frozen.get('HR', 0) or 0
+    try:
+        hr_val = float(hr)
+        if hr_val > 0:
+            return int(round(60000.0 / hr_val))
+    except (ValueError, TypeError):
+        pass
+    return 0
