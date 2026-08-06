@@ -1,4 +1,4 @@
-﻿"""
+"""
 CardioX Main Entry Point — src/main.py
 ======================================
 PURPOSE & ARCHITECTURE:
@@ -2522,6 +2522,10 @@ def main():
             except Exception as e:
                 print(f"[MainApp] Failed to set AppUserModelID: {e}")
 
+        app = QApplication(sys.argv)
+        app.setApplicationName("CardioX")
+        app.setApplicationVersion(APP_VERSION)
+
         # ── Single-instance detection using QLocalSocket/QLocalServer ──
         # Prevents multiple CardioX instances and allows restoring minimized window
         SERVER_NAME = "CardioX-SingleInstance"
@@ -2537,6 +2541,9 @@ def main():
             socket.disconnectFromServer()
             sys.exit(0)
         
+        # Remove any stale server/socket file left behind by a crash
+        QLocalServer.removeServer(SERVER_NAME)
+
         # No existing instance - create server to listen for future instances
         local_server = QLocalServer()
         if not local_server.listen(SERVER_NAME):
@@ -2544,7 +2551,7 @@ def main():
             QMessageBox.warning(
                 None,
                 "CardioX Error",
-                "Failed to initialize single-instance server.\n\nPlease ensure no other CardioX instances are running."
+                f"Failed to initialize single-instance server: {local_server.errorString()}\n\nPlease ensure no other CardioX instances are running."
             )
             sys.exit(1)
         
@@ -2575,10 +2582,6 @@ def main():
         
         local_server.newConnection.connect(handle_new_connection)
         # ──────────────────────────────────────────────────────────────
-
-        app = QApplication(sys.argv)
-        app.setApplicationName("CardioX")
-        app.setApplicationVersion(APP_VERSION)
 
         # Set application icon
         try:

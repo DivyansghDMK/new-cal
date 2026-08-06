@@ -3023,12 +3023,35 @@ class ECGAnalysisWindow(QDialog):
         patient_age = pat.get('age') or rpt.get('age') or rpt.get('patient_age') or p_fallback.get('age') or ''
         patient_gender = pat.get('gender') or rpt.get('gender') or rpt.get('patient_gender') or p_fallback.get('gender') or ''
         timestamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # ── Embed device serial in filename so the Lambda regex can parse it ──
+        # Lambda expects: ..._{deviceId}_{YYYYMMDD}_{HHMMSS}.pdf
+        # deviceId = last 4 alphanumeric chars of the RhythmUltra serial (e.g. "A010")
+        _device_serial_tag = "0000"
+        try:
+            from utils.license_manager import load_token_file, get_RhythmUltra_serial
+            _tok = load_token_file() or {}
+            _ser = (_tok.get("rhythmultra_serial")
+                    or _tok.get("RhythmUltra_serial")
+                    or _tok.get("rhythmulta_serial")
+                    or "")
+            if not _ser:
+                _ser = get_RhythmUltra_serial() or ""
+            _ser_clean = ''.join(c for c in _ser if c.isalnum())
+            if len(_ser_clean) >= 2:
+                _device_serial_tag = _ser_clean[-4:] if len(_ser_clean) >= 4 else _ser_clean
+        except Exception:
+            pass
+
         project_root = Path(__file__).resolve().parents[2]
         reports_dir  = project_root / "reports"
         reports_dir.mkdir(exist_ok=True)
+        # Filename format: ECG_Analysis_{patient}_{deviceTag}_{YYYYMMDD}_{HHMMSS}.pdf
+        _safe_pname = ''.join(c if c.isalnum() or c in ('_', '-') else '_' for c in (patient_name or 'Unknown'))
+        _default_fname = f"ECG_Analysis_{_safe_pname}_{_device_serial_tag}_{timestamp}.pdf"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save ECG PDF",
-            str(reports_dir / f"ECG_Analysis_{patient_name}_{timestamp}.pdf"),
+            str(reports_dir / _default_fname),
             "PDF Files (*.pdf)")
         if not path: return
 

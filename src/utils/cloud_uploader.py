@@ -1523,94 +1523,214 @@ class CloudUploader:
     
     def send_for_doctor_review(self, file_path, doctor_name, metadata=None):
         """
-        Send ECG report for doctor review using multipart/form-data upload.
-        
+        Send ECG/Analysis report for doctor review.
+
+        Supports BOTH Lambda versions transparently:
+          • New Lambda (JSON mode):  POST JSON → get presigned uploadUrl → PUT file to S3
+          • Old Lambda (multipart):  POST multipart/form-data with PDF in body
+
+        The method tries JSON first. If the server replies with
+        "Content-Type must be multipart/form-data" it automatically retries as multipart.
+
         Args:
             file_path (str): Path to the PDF report
             doctor_name (str): Name of the doctor to review
-            metadata (dict): Optional metadata
-            
+            metadata (dict): Optional metadata (report_type, patient_name, etc.)
+
         Returns:
             dict: Result with status and message
         """
         base_url = self.doctor_review_api_url
         if not base_url:
             base_url = "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/doctor/upload"
-            
-        if not self.doctor_review_enabled and os.getenv('DOCTOR_REVIEW_ENABLED', 'true').lower() != 'true':
-             # Allow it to work if enabled in env even if init didn't pick it up? 
-             # Or just enforce flag. User said "send my doctor review report", implying they want it now.
-             pass
 
         if not os.path.exists(file_path):
             return {"status": "error", "message": f"File not found: {file_path}"}
-            
+
         # Check if online
         if self.offline_queue and not self.offline_queue.is_online():
-            queue_payload = {
-                'file_path': file_path,
-                'doctor_name': doctor_name,
-                'metadata': metadata
-            }
-            self.offline_queue.queue_data('doctor_review_v2', queue_payload, priority=1)
-            return {
-                "status": "queued",
-                "message": "Queued for doctor review (offline)"
-            }
+            self.offline_queue.queue_data('doctor_review_v2', {
+                'file_path': file_path, 'doctor_name': doctor_name, 'metadata': metadata
+            }, priority=1)
+            return {"status": "queued", "message": "Queued for doctor review (offline)"}
 
         try:
-            upload_url_endpoint = base_url.rstrip('/')
-            patient_name = (metadata or {}).get('patient_name') or "Unknown"
-            report_type = (metadata or {}).get('report_type') or "ECG"
+            endpoint = base_url.rstrip('/')
+            meta = metadata or {}
+            patient_name = meta.get('patient_name') or "Unknown"
+            report_type  = (meta.get('report_type') or "ECG").lower()
+            filename     = os.path.basename(file_path)
 
-            print(f"🔹 Uploading report to {upload_url_endpoint} for {doctor_name}")
+            print(f"🔹 Sending report for review → {endpoint} | doctor={doctor_name} | type={report_type} | file={filename}")
 
-            headers = {}
-            if self.doctor_review_api_key:
-                headers['x-api-key'] = self.doctor_review_api_key
-
-            # Load dynamic RhythmUltra_serial from local license token or USB probe
+            # ── Resolve device serial ──────────────────────────────────────────
+            RhythmUltra_serial = ""
             try:
                 from utils.license_manager import load_token_file, get_RhythmUltra_serial
-                token = load_token_file()
-                RhythmUltra_serial = (token or {}).get("rhythmultra_serial", (token or {}).get("RhythmUltra_serial", (token or {}).get("rhythmulta_serial", "")))
+                token = load_token_file() or {}
+                RhythmUltra_serial = (
+                    token.get("rhythmultra_serial")
+                    or token.get("RhythmUltra_serial")
+                    or token.get("rhythmulta_serial")
+                    or ""
+                )
                 if not RhythmUltra_serial:
                     RhythmUltra_serial = get_RhythmUltra_serial() or ""
             except Exception:
                 RhythmUltra_serial = ""
-
             if not RhythmUltra_serial:
                 RhythmUltra_serial = "DM ECG V1.0 A010"
 
-            with open(file_path, 'rb') as f:
-                files = {
-                    "pdfFile": (os.path.basename(file_path), f, "application/pdf")
-                }
-                data = {
-                    "doctorName": doctor_name,
-                    "patientName": patient_name,
-                    "reportType": report_type,
-                    "RhythmUltra_serial": RhythmUltra_serial,
-                }
-                response = requests.post(
-                    upload_url_endpoint,
-                    data=data,
-                    files=files,
-                    headers=headers,
-                    timeout=60
-                )
+            _ser_clean = ''.join(c for c in RhythmUltra_serial if c.isalnum())
+            device_id_short = _ser_clean[-4:] if len(_ser_clean) >= 4 else (_ser_clean or "0000")
 
-            if response.status_code in [200, 201]:
-                print(f"[OK] Report uploaded successfully for review!")
-                self._log_upload(file_path, {"status": "success"}, {"type": "doctor_review", "doctor": doctor_name})
-                return {"status": "success", "message": "Report sent for review successfully"}
-            else:
-                print(f"[ERR] Upload failed: {response.status_code} - {response.text}")
-                return {"status": "error", "message": f"Upload failed: {response.text or response.status_code}"}
-                
+            api_headers = {}
+            if self.doctor_review_api_key:
+                api_headers['x-api-key'] = self.doctor_review_api_key
+
+            # ══════════════════════════════════════════════════════════════════
+            # MODE A — JSON two-step flow (new Lambda)
+            # ══════════════════════════════════════════════════════════════════
+            json_body = {
+                "fileName":   filename,
+                "doctorName": doctor_name,
+                "deviceId":   device_id_short,
+                "reportType": report_type,
+                "patientName": patient_name,
+                "RhythmUltra_serial": RhythmUltra_serial,
+            }
+            print(f"  → [MODE-A] JSON POST: {json_body}")
+            step1_resp = requests.post(
+                endpoint,
+                json=json_body,
+                headers={**api_headers, "Content-Type": "application/json"},
+                timeout=30,
+            )
+            print(f"  ← [MODE-A] status={step1_resp.status_code}  body={step1_resp.text[:300]}")
+
+            # Check if the server wants multipart instead (old Lambda still deployed)
+            _needs_multipart = False
+            if step1_resp.status_code in (400, 415, 422):
+                try:
+                    _err_body = step1_resp.json()
+                    _err_msg  = str(_err_body.get("message", "") or _err_body.get("error", "")).lower()
+                    if "multipart" in _err_msg or "form-data" in _err_msg or "content-type" in _err_msg:
+                        _needs_multipart = True
+                        print("  → Server requires multipart — switching to MODE-B")
+                except Exception:
+                    if "multipart" in step1_resp.text.lower() or "form-data" in step1_resp.text.lower():
+                        _needs_multipart = True
+                        print("  → Server requires multipart (text match) — switching to MODE-B")
+
+            if not _needs_multipart and step1_resp.status_code in (200, 201):
+                # Parse presigned URL from JSON response
+                try:
+                    resp_data    = step1_resp.json()
+                    presigned_url = resp_data.get("uploadUrl")
+                except Exception:
+                    presigned_url = None
+
+                if presigned_url:
+                    # ── Step 2: PUT file to presigned S3 URL ────────────────
+                    print("  → [MODE-A] PUTting PDF to presigned S3 URL…")
+                    with open(file_path, 'rb') as f:
+                        put_resp = requests.put(
+                            presigned_url,
+                            data=f,
+                            headers={"Content-Type": "application/pdf"},
+                            timeout=120,
+                        )
+                    print(f"  ← [MODE-A] PUT status={put_resp.status_code}")
+                    if put_resp.status_code in (200, 204):
+                        print(f"[OK] Report sent via JSON/S3 presigned flow (assignment={resp_data.get('assignmentId')})")
+                        self._log_upload(file_path, {"status": "success"},
+                                         {"type": "doctor_review", "doctor": doctor_name,
+                                          "assignmentId": resp_data.get("assignmentId", "")})
+                        return {"status": "success", "message": "Report sent for review successfully"}
+                    else:
+                        return {"status": "error", "message": f"S3 upload failed (HTTP {put_resp.status_code})"}
+
+                else:
+                    # Some Lambda variants return direct success (no presigned URL)
+                    try:
+                        resp_data = step1_resp.json()
+                    except Exception:
+                        resp_data = {}
+                    if resp_data.get("success") is True or resp_data.get("status") == "success":
+                        self._log_upload(file_path, {"status": "success"},
+                                         {"type": "doctor_review", "doctor": doctor_name})
+                        return {"status": "success", "message": "Report sent for review successfully"}
+                    # Fall through to MODE-B
+                    _needs_multipart = True
+                    print("  → No uploadUrl in JSON response — falling back to MODE-B (multipart)")
+
+            # ══════════════════════════════════════════════════════════════════
+            # MODE B — multipart/form-data (old/currently deployed Lambda)
+            # ══════════════════════════════════════════════════════════════════
+            if _needs_multipart or step1_resp.status_code not in (200, 201):
+                print(f"  → [MODE-B] multipart POST for {filename}")
+                with open(file_path, 'rb') as f:
+                    files = {"pdfFile": (filename, f, "application/pdf")}
+                    form_data = {
+                        "doctorName":          doctor_name,
+                        "patientName":         patient_name,
+                        "reportType":          report_type,
+                        "fileName":            filename,
+                        "deviceId":            device_id_short,
+                        "RhythmUltra_serial":  RhythmUltra_serial,
+                    }
+                    mp_resp = requests.post(
+                        endpoint,
+                        data=form_data,
+                        files=files,
+                        headers=api_headers,   # no Content-Type — requests sets multipart boundary
+                        timeout=60,
+                    )
+                print(f"  ← [MODE-B] status={mp_resp.status_code}  body={mp_resp.text[:300]}")
+
+                if mp_resp.status_code in (200, 201):
+                    try:
+                        mp_data = mp_resp.json()
+                    except Exception:
+                        mp_data = {}
+                    # If we got a presigned URL back from the multipart Lambda, use it
+                    mp_url = mp_data.get("uploadUrl")
+                    if mp_url:
+                        print("  → [MODE-B] PUTting PDF to presigned S3 URL…")
+                        with open(file_path, 'rb') as f:
+                            put2 = requests.put(mp_url, data=f,
+                                                headers={"Content-Type": "application/pdf"},
+                                                timeout=120)
+                        if put2.status_code in (200, 204):
+                            self._log_upload(file_path, {"status": "success"},
+                                             {"type": "doctor_review", "doctor": doctor_name})
+                            return {"status": "success", "message": "Report sent for review successfully"}
+                        return {"status": "error", "message": f"S3 upload failed (HTTP {put2.status_code})"}
+
+                    if mp_data.get("success") is True or mp_data.get("status") == "success":
+                        print("[OK] Report sent via multipart flow")
+                        self._log_upload(file_path, {"status": "success"},
+                                         {"type": "doctor_review", "doctor": doctor_name})
+                        return {"status": "success", "message": "Report sent for review successfully"}
+
+                # Both modes failed — return the most recent error
+                err_text = mp_resp.text if _needs_multipart else step1_resp.text
+                err_code = mp_resp.status_code if _needs_multipart else step1_resp.status_code
+                return {"status": "error", "message": f"Upload failed ({err_code}): {err_text[:200]}"}
+
+            # Neither mode returned a success
+            return {
+                "status": "error",
+                "message": f"Upload failed ({step1_resp.status_code}): {step1_resp.text[:200]}"
+            }
+
         except Exception as e:
             print(f"[ERR] Error sending for review: {e}")
             return {"status": "error", "message": str(e)}
+
+
+
+
 
 # Global instance
 _cloud_uploader = None

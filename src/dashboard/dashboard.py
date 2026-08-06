@@ -4556,7 +4556,8 @@ class Dashboard(QWidget):
     
     def update_live_conclusion(self):
         """Generate comprehensive personalized conclusion based on current ECG metrics with detailed BPM analysis"""
-        if not getattr(self, "device_connected", False):
+        # Allow interpretation if device is connected OR ECG is active (demo / serial running)
+        if not getattr(self, "device_connected", False) and not self.is_ecg_active():
             return
         
         # Only reset interpretation when both primary limb leads are off.
@@ -4696,6 +4697,11 @@ class Dashboard(QWidget):
                 pr = 0
 
             try:
+                pr = int(pr_text.replace(' ms', '').strip()) if pr_text and pr_text not in ('', '0 ms', '0', '--') else 0
+            except:
+                pr = 0
+
+            try:
                 qrs = int(qrs_text.replace(' ms', '').strip()) if qrs_text and qrs_text != '0 ms' else 0
             except:
                 qrs = 0
@@ -4807,9 +4813,8 @@ class Dashboard(QWidget):
                 or qtc_abnormal
             )
 
-            # If acquisition/metrics are already available but the ECG page hasn't produced a rhythm label yet,
-            # don't block the whole dashboard interpretation on `rhythm_text` being set (it can remain
-            # "Analyzing Rhythm..." until the expanded lead view is opened).
+            # ── If we have metric data but rhythm_text is still being analysed,
+            # show a metric-only interpretation rather than the blank "Waiting..." screen.
             has_metric_data = bool((hr > 0) or (pr > 0) or (qrs > 0) or (qt > 0) or (qtc > 0))
             if not has_metric_data:
                 conclusion_html = """
@@ -4821,6 +4826,13 @@ class Dashboard(QWidget):
                 if hasattr(self, 'conclusion_box'):
                     self.conclusion_box.setHtml(conclusion_html)
                 return
+
+            # ── If rhythm is still being computed but we DO have metric data,
+            # treat it as "rhythm undetermined" so metric labels still show.
+            if not rhythm_clean or rhythm_clean in ignore_values:
+                # Build a metric-only card without blocking on rhythm detection
+                rhythm_issue = None
+                is_normal_rhythm = False  # will show CASE 2 (metric-only path)
 
             # ── Significant-rhythm override ─────────────────────────────────────
             # If the arrhythmia engine's latest analysis contains a clinically
@@ -4962,6 +4974,12 @@ class Dashboard(QWidget):
                         "<span style='color:#27ae60; font-weight:bold;'>\u2714 Normal Sinus Rhythm</span><br><br>"
                     )
                     findings.append("Normal Sinus Rhythm")
+                 else:
+                    # Rhythm engine still computing — show metric-only header
+                    conclusion_html += (
+                        "<b style='color:#ff6600; font-size:14px;'>♥ ECG Metric Analysis:</b><br>"
+                        "<span style='color:#888; font-style:italic;'>Rhythm detection in progress…</span><br><br>"
+                    )
 
                 # 2b. HR
                 if hr_label:
