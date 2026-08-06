@@ -2467,9 +2467,15 @@ class HistoryWindow(QDialog):
     def _get_report_file(self, row) -> str:
         item = self.table.item(row, 0)
         if item:
-            rf = self._resolve_report_path(item.data(Qt.UserRole) or "")
+            data = item.data(Qt.UserRole)
+            if isinstance(data, dict):
+                path_val = data.get("report_file", "") or ""
+            else:
+                path_val = data or ""
+            rf = self._resolve_report_path(path_val)
             if rf:
                 return rf
+
 
         pi = self.table.item(row, 4)
         di = self.table.item(row, 0)
@@ -2584,10 +2590,13 @@ class HistoryWindow(QDialog):
         self._save_history_to_file()
 
     # ── file helpers ─────────────────────────────────────────────────────────
-    def _resolve_report_path(self, report_path: str) -> str:
-        candidate = (report_path or "").strip()
+    def _resolve_report_path(self, report_path) -> str:
+        if isinstance(report_path, dict):
+            report_path = report_path.get("report_file", "") or ""
+        candidate = str(report_path or "").strip()
         if not candidate:
             return ""
+
 
         normalized = os.path.abspath(candidate)
         if os.path.exists(normalized):
