@@ -4685,7 +4685,16 @@ class Dashboard(QWidget):
                         </p>
                     """)
                 return
-            
+
+            # Parse PR interval — this line was accidentally removed by commit dd17ee3
+            # when it cleaned up the stale-cache restoration block. Without it, `pr`
+            # is undefined and causes a silent NameError in every try/except below,
+            # preventing any interpretation from being generated even at valid BPM.
+            try:
+                pr = int(pr_text.replace(' ms', '').strip()) if pr_text and pr_text not in ('0 ms', '0', '', '--') else 0
+            except:
+                pr = 0
+
             try:
                 qrs = int(qrs_text.replace(' ms', '').strip()) if qrs_text and qrs_text != '0 ms' else 0
             except:
