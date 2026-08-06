@@ -1772,9 +1772,9 @@ class LoginRegisterDialog(QDialog):
 
         # Enforce license key check at login step
         try:
-            from utils.license_manager import load_stored_key, run_startup_checks, clear_stored_key, clear_license_cache
+            from utils.license_manager import load_stored_key, token_file_exists, load_token_file, run_startup_checks, clear_stored_key, clear_license_cache
             stored_key = load_stored_key()
-            if not stored_key:
+            if not stored_key and not token_file_exists():
                 QMessageBox.warning(
                     self,
                     "License Required",
@@ -1782,13 +1782,17 @@ class LoginRegisterDialog(QDialog):
                 )
                 return
 
-            result = run_startup_checks(force_heartbeat=False)
-            if not result.ok:
-                logger.warning(f"Login blocked due to license failure: {result.reason}")
-                is_explicit_revocation = (
-                    result.step_failed == 5
-                    and getattr(result, "error_code", "") == "LICENSE_REVOKED"
-                )
+            # Fast local token check first — avoids blocking GUI thread with network HTTP heartbeat
+            token = load_token_file()
+            if token is None:
+                result = run_startup_checks(force_heartbeat=False)
+                if not result.ok:
+                    logger.warning(f"Login blocked due to license failure: {result.reason}")
+                    is_explicit_revocation = (
+                        result.step_failed == 5
+                        and getattr(result, "error_code", "") == "LICENSE_REVOKED"
+                    )
+
 
                 # ── Seat-missing: offer re-registration ───────────────────────
                 reason_lower = result.reason.lower()

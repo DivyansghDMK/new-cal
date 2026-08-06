@@ -291,6 +291,29 @@ def _collect_wmi_fields() -> Dict[str, str]:
 
     fields: Dict[str, str] = {}
 
+    if sys.platform == "darwin":
+        # Fast native macOS hardware identity (eliminates 4 failing wmic subprocess calls)
+        try:
+            cmd = ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=1)
+            for line in res.stdout.splitlines():
+                if "IOPlatformUUID" in line:
+                    fields["mb_uuid"] = line.split("=")[-1].replace('"', '').strip()
+                if "IOPlatformSerialNumber" in line:
+                    fields["bios_serial"] = line.split("=")[-1].replace('"', '').strip()
+        except Exception:
+            pass
+        fields.setdefault("bios_serial", platform.node() or "MAC_SERIAL")
+        fields.setdefault("mb_uuid", f"MAC_UUID_{uuid.getnode():012x}")
+        fields.setdefault("cpu_id", platform.processor() or "Apple_Silicon")
+        fields.setdefault("disk_serial", "MAC_SYSTEM_DISK")
+        try:
+            fields["mac"] = f"{uuid.getnode():012x}"
+        except Exception:
+            fields["mac"] = ""
+        _cached_wmi_fields = fields
+        return fields
+
     # 1. BIOS serial — never changes
     fields["bios_serial"] = _run_wmic(["bios", "get", "serialnumber"])
 
@@ -311,6 +334,7 @@ def _collect_wmi_fields() -> Dict[str, str]:
 
     _cached_wmi_fields = fields
     return fields
+
 
 
 def _collect_machine_info() -> Dict[str, str]:
