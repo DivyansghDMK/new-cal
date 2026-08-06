@@ -118,7 +118,8 @@ def _hl7_datetime(value=None) -> str:
 
 
 def _history_entry_to_hl7(entry: dict) -> str:
-    """Build a compact HL7 ORU-style message from a history entry."""
+    """Build a medically standard HL7 v2.5.1 ORU^R01 message with LOINC codes & Base64 PDF attachment."""
+    import base64
     entry = entry or {}
     now = datetime.datetime.now()
     ts = _hl7_datetime(now)
@@ -128,7 +129,7 @@ def _history_entry_to_hl7(entry: dict) -> str:
         try:
             report_ts = datetime.datetime.strptime(report_dt, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d%H%M%S")
         except Exception:
-            report_ts = ts
+            report_ts = _hl7_datetime(report_dt) or ts
     else:
         report_ts = ts
 
@@ -145,76 +146,104 @@ def _history_entry_to_hl7(entry: dict) -> str:
         or entry.get("id")
         or entry.get("mrn")
         or entry.get("patient_number")
-        or ""
+        or "PAT0001"
     ).strip()
+
+    # Format DOB to YYYYMMDD
+    dob_raw = str(entry.get("dob") or entry.get("date_of_birth") or "").strip()
+    dob_hl7 = ""
+    if dob_raw:
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y%m%d", "%Y/%m/%d"):
+            try:
+                dob_hl7 = datetime.datetime.strptime(dob_raw, fmt).strftime("%Y%m%d")
+                break
+            except ValueError:
+                pass
+        if not dob_hl7:
+            dob_hl7 = re.sub(r"\D", "", dob_raw)[:8]
+
+    # Format Gender (HL7 Table 0001: M, F, O, U)
+    raw_gender = str(entry.get("gender", "")).strip().upper()
+    gender_hl7 = "M" if raw_gender in ("M", "MALE") else "F" if raw_gender in ("F", "FEMALE") else "O" if raw_gender in ("O", "OTHER") else "U"
+
     report_type = str(entry.get("report_type", "ECG") or "ECG").strip()
     doctor = str(entry.get("doctor", "") or "").strip()
-    org_name = str(entry.get("org_name", "") or entry.get("Org.", "") or "").strip()
+    doctor_xcn = f"101^{_hl7_escape(doctor)}" if doctor else ""
+    org_name = str(entry.get("org_name", "") or entry.get("Org.", "") or "CardioX Medical").strip()
     org_address = str(entry.get("org_address", "") or "").strip()
     report_file = str(entry.get("report_file", "") or "").strip()
     review_status = str(entry.get("review_status", "Pending") or "Pending").strip()
     owner_full_name = str(entry.get("owner_full_name", "") or "").strip()
     username = str(entry.get("username", "") or "").strip()
 
-    message_id = re.sub(r"[^A-Za-z0-9]", "", f"{ts}{patient_id}{report_type}")[:20] or ts
+    message_id = re.sub(r"[^A-Za-z0-9]", "", f"{ts}{patient_id}")[:20] or ts
     msh_sender = _hl7_escape(org_name or HL7_APP_NAME)
-    msh_receiver = _hl7_escape(owner_full_name or username or "REVIEW")
+    msh_receiver = _hl7_escape(owner_full_name or username or "EMR_PACS")
+
     lines = [
-        f"MSH|^~\\&|{HL7_APP_NAME}|{msh_sender}|HISTORY|{msh_receiver}|{ts}||ORU^R01|{message_id}|P|{HL7_VERSION}",
-        f"PID|1|{_hl7_escape(patient_id)}||{_hl7_escape(last_name)}^{_hl7_escape(first_name)}||"
-        f"|{_hl7_escape(entry.get('dob', '') or entry.get('date_of_birth', '') or '')}|{_hl7_escape(entry.get('gender', ''))}|||"
-        f"{_hl7_escape(entry.get('address', '') or '')}||{_hl7_escape(entry.get('phone', '') or entry.get('mobile', '') or '')}",
-        f"PV1|1|O|{_hl7_escape(org_name)}^^^{_hl7_escape(org_address)}|||||{_hl7_escape(doctor)}",
-        f"OBR|1|{_hl7_escape(patient_id or message_id)}|{_hl7_escape(report_file or message_id)}|"
-        f"{_hl7_escape(report_type)}^{_hl7_escape(report_type)}|||{report_ts}||||||||{_hl7_escape(doctor)}",
+        f"MSH|^~\\&|{HL7_APP_NAME}|{msh_sender}|HISTORY|{msh_receiver}|{ts}||ORU^R01^ORU_R01|{message_id}|P|{HL7_VERSION}",
+        f"PID|1||{_hl7_escape(patient_id)}||{_hl7_escape(last_name)}^{_hl7_escape(first_name)}||{dob_hl7}|{gender_hl7}|||{_hl7_escape(entry.get('address', '') or '')}||{_hl7_escape(entry.get('phone', '') or entry.get('mobile', '') or '')}",
+        f"PV1|1|O|{_hl7_escape(org_name)}^^^{_hl7_escape(org_address)}|||||{doctor_xcn}",
+        f"OBR|1|{_hl7_escape(patient_id)}|{_hl7_escape(message_id)}|8884-9^ECG Report^LN|||{report_ts}||||||||{doctor_xcn}",
     ]
 
-    core_observations = [
-        ("REPORT_TYPE", report_type),
-        ("PATIENT_NAME", patient_name or f"{first_name} {last_name}".strip()),
-        ("REPORT_FILE", report_file),
-        ("ORG_NAME", org_name),
-        ("ORG_ADDRESS", org_address),
-        ("DOCTOR", doctor),
-        ("HEIGHT", entry.get("height", "")),
-        ("WEIGHT", entry.get("weight", "")),
-        ("AGE", entry.get("age", "")),
-        ("GENDER", entry.get("gender", "")),
-        ("REVIEW_STATUS", review_status),
-        ("REPORT_DATE", entry.get("date", "")),
-        ("REPORT_TIME", entry.get("time", "")),
-        ("USERNAME", username),
-        ("OWNER_FULL_NAME", owner_full_name),
-    ]
     obx_index = 1
-    for idx, (code, value) in enumerate(core_observations, start=1):
-        if value in (None, ""):
-            continue
-        lines.append(f"OBX|{obx_index}|TX|{_hl7_escape(code)}^{_hl7_escape(code.replace('_', ' ').title())}||{_hl7_escape(value)}")
+
+    # ── Standard LOINC ECG Observation Results ──
+    hr_val = entry.get("heart_rate") or entry.get("hr")
+    if hr_val:
+        lines.append(f"OBX|{obx_index}|NM|8867-4^Heart Rate^LN|1|{_hl7_escape(str(hr_val))}|bpm|60-100|N|||F")
         obx_index += 1
 
-    standard_keys = {
-        "date", "time", "report_type", "Org.", "doctor", "patient_name", "org_name",
-        "org_address", "height", "weight", "report_file", "username", "owner_full_name",
-        "review_status", "review_updated_at", "review_updated_by", "first_name", "last_name",
-        "age", "gender", "patient_id", "id", "mrn", "patient_number", "dob", "date_of_birth",
-        "address", "phone", "mobile",
-    }
-    for key in sorted(entry.keys()):
-        if key in standard_keys:
-            continue
-        value = entry.get(key)
-        if value in (None, ""):
-            continue
-        if isinstance(value, (dict, list, tuple, set)):
-            try:
-                value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-            except Exception:
-                value = str(value)
-        lines.append(f"OBX|{obx_index}|TX|{_hl7_escape(_hl7_clean_key(key))}^{_hl7_escape(key)}||{_hl7_escape(value)}")
+    pr_val = entry.get("pr_interval") or entry.get("pr")
+    if pr_val:
+        lines.append(f"OBX|{obx_index}|NM|8834-4^PR Interval^LN|1|{_hl7_escape(str(pr_val))}|ms|120-200|N|||F")
         obx_index += 1
 
-    lines.append(f"ZHS|1|{_hl7_escape(review_status)}|{_hl7_escape(report_type)}|{_hl7_escape(report_file)}")
+    qrs_val = entry.get("qrs_duration") or entry.get("qrs")
+    if qrs_val:
+        lines.append(f"OBX|{obx_index}|NM|8838-5^QRS Duration^LN|1|{_hl7_escape(str(qrs_val))}|ms|60-120|N|||F")
+        obx_index += 1
+
+    qt_val = entry.get("qt_interval") or entry.get("qt")
+    if qt_val:
+        lines.append(f"OBX|{obx_index}|NM|8889-8^QT Interval^LN|1|{_hl7_escape(str(qt_val))}|ms||N|||F")
+        obx_index += 1
+
+    qtc_val = entry.get("qtc_interval") or entry.get("qtc")
+    if qtc_val:
+        lines.append(f"OBX|{obx_index}|NM|8890-6^QTc Interval^LN|1|{_hl7_escape(str(qtc_val))}|ms|<440|N|||F")
+        obx_index += 1
+
+    findings = entry.get("findings") or entry.get("interpretation") or entry.get("conclusion") or ""
+    if isinstance(findings, list):
+        findings = "; ".join(str(f) for f in findings if f)
+    if findings:
+        lines.append(f"OBX|{obx_index}|TX|8884-9^ECG Impression^LN|1|{_hl7_escape(str(findings))}||||||F")
+        obx_index += 1
+
+    # ── Additional Metadata OBX items ──
+    meta_items = [
+        ("REPORT_TYPE", report_type),
+        ("DOCTOR", doctor),
+        ("ORG_NAME", org_name),
+        ("REVIEW_STATUS", review_status),
+    ]
+    for code, val in meta_items:
+        if val:
+            lines.append(f"OBX|{obx_index}|TX|{code}^{code.replace('_', ' ').title()}||{_hl7_escape(str(val))}||||||F")
+            obx_index += 1
+
+    # ── Encapsulate PDF Report inside HL7 OBX ED segment if PDF exists ──
+    if report_file and os.path.isfile(report_file) and report_file.lower().endswith(".pdf"):
+        try:
+            with open(report_file, "rb") as pdf_f:
+                pdf_b64 = base64.b64encode(pdf_f.read()).decode("ascii")
+            lines.append(f"OBX|{obx_index}|ED|11502-2^Laboratory Report PDF^LN|1|PDF^Application^pdf^Base64^{pdf_b64}||||||F")
+            obx_index += 1
+        except Exception as e:
+            print(f"[HL7] Could not encapsulate PDF: {e}")
+
     return "\n".join(lines) + "\n"
 
 
@@ -1032,6 +1061,32 @@ class HistoryWindow(QDialog):
 
 
 
+    def _get_selected_entry(self):
+        """Retrieve the exact history entry dictionary for the currently selected table row."""
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        if not item:
+            return None
+        stored = item.data(Qt.UserRole)
+        if isinstance(stored, dict):
+            return stored
+
+        # Fallback string/fuzzy search across all_history_entries
+        date_item = self.table.item(row, 0)
+        name_item = self.table.item(row, 4)
+        if date_item and name_item:
+            d = date_item.text().strip()
+            n = name_item.text().strip()
+            for e in self.all_history_entries:
+                if e.get("date", "") == d and (
+                    e.get("patient_name", "") == n or
+                    (e.get("first_name", "") + " " + e.get("last_name", "")).strip() == n
+                ):
+                    return e
+        return None
+
     # ── DICOM Export ─────────────────────────────────────────────────────────
     def _export_dicom(self):
         """Export the selected history row as a DICOM file."""
@@ -1054,34 +1109,9 @@ class HistoryWindow(QDialog):
             )
             return
 
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.information(
-                self, "DICOM Export", "Please select a report row first."
-            )
-            return
-
-        # Retrieve the full entry from all_history_entries
-        entry = None
-        try:
-            # Match by row data (date + patient name)
-            date_item = self.table.item(row, 0)
-            name_item = self.table.item(row, 4)
-            if date_item and name_item:
-                d = date_item.text().strip()
-                n = name_item.text().strip()
-                for e in self.all_history_entries:
-                    if e.get("date", "") == d and (
-                        e.get("patient_name", "") == n or
-                        (e.get("first_name", "") + " " + e.get("last_name", "")).strip() == n
-                    ):
-                        entry = e
-                        break
-        except Exception:
-            pass
-
+        entry = self._get_selected_entry()
         if entry is None:
-            QMessageBox.warning(self, "DICOM Export", "Could not retrieve data for the selected row.")
+            QMessageBox.warning(self, "DICOM Export", "Please select a report row first.")
             return
 
         # Ask user where to save
@@ -1107,7 +1137,13 @@ class HistoryWindow(QDialog):
             )
             if reply == QMessageBox.Yes:
                 import subprocess
-                subprocess.Popen(f'explorer /select,"{out}"')
+                import sys
+                if sys.platform == "win32":
+                    subprocess.Popen(f'explorer /select,"{out}"')
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", out])
+                else:
+                    subprocess.Popen(["xdg-open", os.path.dirname(out)])
         except Exception as exc:
             QMessageBox.critical(
                 self, "DICOM Export Failed",
@@ -1117,33 +1153,11 @@ class HistoryWindow(QDialog):
     # ── HL7 Export ───────────────────────────────────────────────────────────
     def _export_hl7(self):
         """Export or copy the HL7 v2.5.1 ORU^R01 message for the selected report."""
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.information(
-                self, "Export HL7", "Please select a report row first."
-            )
-            return
-
-        entry = None
-        try:
-            date_item = self.table.item(row, 0)
-            name_item = self.table.item(row, 4)
-            if date_item and name_item:
-                d = date_item.text().strip()
-                n = name_item.text().strip()
-                for e in self.all_history_entries:
-                    if e.get("date", "") == d and (
-                        e.get("patient_name", "") == n or
-                        (e.get("first_name", "") + " " + e.get("last_name", "")).strip() == n
-                    ):
-                        entry = e
-                        break
-        except Exception:
-            pass
-
+        entry = self._get_selected_entry()
         if entry is None:
-            QMessageBox.warning(self, "Export HL7", "Could not retrieve data for selected row.")
+            QMessageBox.warning(self, "Export HL7", "Please select a report row first.")
             return
+
 
         hl7_text = entry.get("hl7_message") or _history_entry_to_hl7(entry)
 
@@ -2389,7 +2403,8 @@ class HistoryWindow(QDialog):
 
         rf = entry.get("report_file", "")
         if self.table.item(row, 0):
-            self.table.item(row, 0).setData(Qt.UserRole, rf)
+            self.table.item(row, 0).setData(Qt.UserRole, entry)
+            self.table.item(row, 0).setData(Qt.UserRole + 1, rf)
         self.table.setRowHeight(row, 28)  # slightly taller for readability
         self._configure_table_columns()
 

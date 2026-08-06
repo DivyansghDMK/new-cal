@@ -56,9 +56,10 @@ def _dicom_date(value=None) -> str:
     if isinstance(value, datetime.date):
         return value.strftime("%Y%m%d")
     if isinstance(value, str) and value.strip():
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y%m%d"):
+        text = value.strip()
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y%m%d", "%Y/%m/%d"):
             try:
-                return datetime.datetime.strptime(value.strip(), fmt).strftime("%Y%m%d")
+                return datetime.datetime.strptime(text, fmt).strftime("%Y%m%d")
             except ValueError:
                 pass
     return datetime.datetime.now().strftime("%Y%m%d")
@@ -67,9 +68,10 @@ def _dicom_date(value=None) -> str:
 def _dicom_time(value=None) -> str:
     """Return HHMMSS from various input formats."""
     if isinstance(value, str) and value.strip():
+        text = value.strip()
         for fmt in ("%H:%M:%S", "%H%M%S", "%H:%M"):
             try:
-                return datetime.datetime.strptime(value.strip(), fmt).strftime("%H%M%S")
+                return datetime.datetime.strptime(text, fmt).strftime("%H%M%S")
             except ValueError:
                 pass
     return datetime.datetime.now().strftime("%H%M%S")
@@ -88,6 +90,34 @@ def _patient_name(entry: dict) -> str:
     return "Unknown^Patient"
 
 
+def _dicom_sex(value) -> str:
+    """Return DICOM CS PatientSex: M, F, O, or U."""
+    val = str(value or "").strip().upper()
+    if val in ("M", "MALE"):
+        return "M"
+    if val in ("F", "FEMALE"):
+        return "F"
+    if val in ("O", "OTHER"):
+        return "O"
+    return "U"
+
+
+def _dicom_age(value) -> str:
+    """Return DICOM AS PatientAge: format nnnY / nnnM / nnnD."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    nums = re.findall(r"\d+", text)
+    if nums:
+        age_num = int(nums[0])
+        if "m" in text.lower() and "y" not in text.lower():
+            return f"{age_num:03d}M"
+        if "d" in text.lower():
+            return f"{age_num:03d}D"
+        return f"{age_num:03d}Y"
+    return ""
+
+
 def _findings_text(entry: dict) -> str:
     """Extract a plain-text findings string from the entry."""
     raw = (entry.get("findings")
@@ -104,6 +134,8 @@ def _findings_text(entry: dict) -> str:
 def _build_encapsulated_pdf_dataset(entry: dict, sop_uid: str, pdf_bytes: bytes) -> "Dataset":
     """Create a DICOM Encapsulated PDF dataset embedding the visual PDF report."""
     ds = Dataset()
+    ds.SpecificCharacterSet   = "ISO_IR 192"  # UTF-8 encoding
+
     study_date = entry.get("date", "")
     study_time = entry.get("time", "")
 
@@ -115,11 +147,22 @@ def _build_encapsulated_pdf_dataset(entry: dict, sop_uid: str, pdf_bytes: bytes)
     ds.PatientBirthDate       = _dicom_date(
         entry.get("dob") or entry.get("date_of_birth")
     )
-    raw_sex                   = _safe(entry.get("gender", ""))
-    ds.PatientSex             = raw_sex[:1].upper() if raw_sex else "U"
-    ds.PatientAge             = _safe(entry.get("age", ""))
-    ds.PatientWeight          = _safe(entry.get("weight", ""))
-    ds.PatientSize            = _safe(entry.get("height", ""))
+    ds.PatientSex             = _dicom_sex(entry.get("gender", ""))
+    age_str                   = _dicom_age(entry.get("age", ""))
+    if age_str:
+        ds.PatientAge         = age_str
+    weight_str                = _safe(entry.get("weight", ""))
+    if weight_str:
+        try:
+            ds.PatientWeight  = str(float(re.sub(r"[^\d.]", "", weight_str)))
+        except Exception:
+            pass
+    height_str                = _safe(entry.get("height", ""))
+    if height_str:
+        try:
+            ds.PatientSize    = str(float(re.sub(r"[^\d.]", "", height_str)) / 100.0)  # cm to meters
+        except Exception:
+            pass
 
     # General Study Module
     ds.StudyInstanceUID       = generate_uid()
@@ -132,25 +175,28 @@ def _build_encapsulated_pdf_dataset(entry: dict, sop_uid: str, pdf_bytes: bytes)
 
     # General Series Module
     ds.SeriesInstanceUID      = generate_uid()
-    ds.SeriesNumber           = "1"
+    ds.SeriesNumber           = 1
     ds.SeriesDate             = _dicom_date(study_date)
     ds.SeriesTime             = _dicom_time(study_time)
-    ds.SeriesDescription      = "ECG Report PDF"
-    ds.Modality               = "DOC"  # Document modality
+    ds.SeriesDescription      = "ECG 12-Lead Report PDF"
+    ds.Modality               = "ECG"  # Medical standard for PACS Cardiology filters
 
     # General Equipment Module
     ds.Manufacturer           = "CardioX"
-    ds.InstitutionName        = _safe(entry.get("org_name") or entry.get("Org.", ""))
+    ds.ManufacturerModelName  = "RhythmUltra 12-Lead System"
+    ds.InstitutionName        = _safe(entry.get("org_name") or entry.get("Org.", "CardioX Medical"))
     ds.InstitutionAddress     = _safe(entry.get("org_address", ""))
     ds.SoftwareVersions       = "1.0"
 
-    # Encapsulated Document Module
-    ds.InstanceNumber                 = "1"
+    # Encapsulated Document Module (DICOM PS3.3 C.24.2 Requirements)
+    ds.InstanceNumber                 = 1
     ds.ContentDate                    = _dicom_date(study_date)
     ds.ContentTime                    = _dicom_time(study_time)
     ds.AcquisitionDateTime            = f"{_dicom_date(study_date)}{_dicom_time(study_time)}"
     ds.DocumentTitle                  = _safe(entry.get("report_type", "ECG Report"))
     ds.VerificationFlag               = "UNVERIFIED"
+    ds.ConversionType                 = "WSD"  # Workstation Software Document
+    ds.BurnedInAnnotation             = "YES"  # Embedded visual document
     ds.MIMETypeOfEncapsulatedDocument = "application/pdf"
     ds.EncapsulatedDocument           = pdf_bytes
 
@@ -164,6 +210,8 @@ def _build_encapsulated_pdf_dataset(entry: dict, sop_uid: str, pdf_bytes: bytes)
 def _build_sr_dataset(entry: dict, sop_uid: str) -> "Dataset":
     """Create a Basic Text SR DICOM dataset (fallback when no PDF file is available)."""
     ds = Dataset()
+    ds.SpecificCharacterSet   = "ISO_IR 192"  # UTF-8 encoding
+
     study_date = entry.get("date", "")
     study_time = entry.get("time", "")
 
@@ -175,11 +223,10 @@ def _build_sr_dataset(entry: dict, sop_uid: str) -> "Dataset":
     ds.PatientBirthDate       = _dicom_date(
         entry.get("dob") or entry.get("date_of_birth")
     )
-    raw_sex                   = _safe(entry.get("gender", ""))
-    ds.PatientSex             = raw_sex[:1].upper() if raw_sex else "U"
-    ds.PatientAge             = _safe(entry.get("age", ""))
-    ds.PatientWeight          = _safe(entry.get("weight", ""))
-    ds.PatientSize            = _safe(entry.get("height", ""))
+    ds.PatientSex             = _dicom_sex(entry.get("gender", ""))
+    age_str                   = _dicom_age(entry.get("age", ""))
+    if age_str:
+        ds.PatientAge         = age_str
 
     # General Study Module
     ds.StudyInstanceUID       = generate_uid()
@@ -192,11 +239,12 @@ def _build_sr_dataset(entry: dict, sop_uid: str) -> "Dataset":
 
     # General Series Module
     ds.SeriesInstanceUID      = generate_uid()
-    ds.SeriesNumber           = "1"
+    ds.SeriesNumber           = 1
     ds.SeriesDate             = _dicom_date(study_date)
     ds.SeriesTime             = _dicom_time(study_time)
     ds.SeriesDescription      = "ECG Report Summary"
-    ds.Modality               = "OT"
+    ds.Modality               = "ECG"
+
 
     # General Equipment Module
     ds.Manufacturer           = "CardioX"
