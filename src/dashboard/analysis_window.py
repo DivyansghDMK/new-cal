@@ -3048,7 +3048,7 @@ class ECGAnalysisWindow(QDialog):
         reports_dir.mkdir(exist_ok=True)
         # Filename format: ECG_Analysis_{patient}_{deviceTag}_{YYYYMMDD}_{HHMMSS}.pdf
         _safe_pname = ''.join(c if c.isalnum() or c in ('_', '-') else '_' for c in (patient_name or 'Unknown'))
-        _default_fname = f"ECG_Analysis_{_safe_pname}_{_device_serial_tag}_{timestamp}.pdf"
+        _default_fname = f"ECG_Report_Analysis_{_safe_pname}_{_device_serial_tag}_{timestamp}.pdf"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save ECG PDF",
             str(reports_dir / _default_fname),
