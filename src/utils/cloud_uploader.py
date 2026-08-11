@@ -1537,7 +1537,7 @@ class CloudUploader:
                 data = resp.json()
                 return data.get("doctors") or data.get("data") or []
         except Exception as e:
-            print(f"[CloudUploader] Could not fetch doctor list: {e}")
+            print(f"[CloudUploader] Error", "No Internet Connection is available, Could not fetch available doctors list.: {e}")
         return []
 
     def send_for_doctor_review(self, file_path, doctor_name, metadata=None):
