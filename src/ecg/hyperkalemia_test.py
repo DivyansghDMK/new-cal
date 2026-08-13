@@ -322,19 +322,27 @@ class HyperkalemiaTestWindow(QWidget):
     # trace the same way (twelve_lead_test.py: SMOOTH_SIGMA, INTERP_FACTOR,
     # _baseline_alpha_slow).
     _SMOOTH_SIGMA = 0.8
-    _INTERP_FACTOR = 2
     _BASELINE_ALPHA_SLOW = 0.0005
+    # Plot every 2nd sample: 250 Hz effective, still ten times the 25 Hz filter
+    # cutoff, and about two points per pixel column in a 900 px lane.
+    _DISPLAY_DECIMATION = 2
 
     @staticmethod
-    def _interpolate_for_display(signal, factor):
-        """Linear upsample for a smoother plotted line (12-lead's interpolate())."""
+    def _decimate_for_display(signal, factor):
+        """
+        Thin the trace for plotting without losing peaks.
+
+        The last sample is always kept so the newest data stays pinned to the
+        right edge of the scrolling window.
+        """
         try:
             arr = np.asarray(signal, dtype=float)
-            if arr.size < 3 or factor <= 1:
+            if arr.size < 4 or factor <= 1:
                 return arr
-            x = np.arange(arr.size, dtype=float)
-            xi = np.linspace(0.0, float(arr.size - 1), int(arr.size * factor), dtype=float)
-            return np.interp(xi, x, arr)
+            thinned = arr[::int(factor)]
+            if thinned.size and thinned[-1] != arr[-1]:
+                thinned = np.append(thinned, arr[-1])
+            return thinned
         except Exception:
             return np.asarray(signal, dtype=float)
 
@@ -678,7 +686,7 @@ class HyperkalemiaTestWindow(QWidget):
                     pass
 
             plot_curve = plot_widget.plot(
-                pen=pg.mkPen(color='#00DD00', width=1.5), connect='finite'
+                pen=pg.mkPen(color='#00FF00', width=2.0), connect='finite'
             )
 
             self.plot_widgets[lead_name] = plot_widget
@@ -1512,14 +1520,28 @@ class HyperkalemiaTestWindow(QWidget):
 
                     centered = (buffer_data - self._display_anchors[lead_name]) * gain_factor
                     centered = centered - float(np.nanmean(centered))
-                    # 2x linear interpolation before plotting — the same step that
-                    # gives the 12-lead trace its smooth line instead of visible
-                    # sample-to-sample steps on fast deflections.
-                    centered = self._interpolate_for_display(centered, self._INTERP_FACTOR)
+                    # Thin the trace to roughly two points per pixel column before
+                    # plotting. Seven lanes share this window, so each is only about
+                    # 900 px wide: at 500 Hz that is 3.3 points per column, and the
+                    # polyline zig-zags inside each column into a hairy-looking line.
+                    # The signal is already low-passed at 25 Hz, so halving the rate
+                    # is still five times Nyquist and cannot lose a peak — it is
+                    # thinner drawing, not less signal.
+                    centered = self._decimate_for_display(centered, self._DISPLAY_DECIMATION)
                     if lead_name == 'aVR':
                         display_values = np.clip(-2048.0 + centered, -4096, 0)
                     else:
                         display_values = np.clip(2048.0 + centered, 0, 4096)
+
+                # The curve is drawn with connect='finite', so a single NaN or inf
+                # anywhere in the window breaks the line and prints as a black dot
+                # inside the trace. The 12-lead test sanitises before plotting for
+                # exactly this reason; do the same, parking any bad sample on the
+                # lane's centre line instead of leaving a hole.
+                display_values = np.nan_to_num(
+                    np.asarray(display_values, dtype=float),
+                    nan=center_val, posinf=center_val, neginf=center_val,
+                )
 
                 # Scrolling window display (12-lead flow — no raster sweep)
                 x_axis = np.linspace(0.0, window_seconds, len(display_values))
