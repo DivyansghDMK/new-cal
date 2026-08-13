@@ -459,7 +459,7 @@ class HRVTestWindow(QWidget):
         )
         # Layer 2 — bright ECG trace (drawn on top of glow)
         self.plot_curve = self.plot_widget.plot(
-            pen=pg.mkPen(color='#00DD00', width=1.8), connect='finite'
+            pen=pg.mkPen(color='#00FF00', width=2.0), connect='finite'
         )
         # Layer 3 — sweep head dot
         self.sweep_dot = self.plot_widget.plot(
@@ -1266,6 +1266,13 @@ class HRVTestWindow(QWidget):
                     max_step = 180.0  # reject single-sample spikes from packet glitches
                     for v in new_vals:
                         y = float(np.clip(v, 0, 4096))
+                        # A non-finite sample would sit in the buffer forever and,
+                        # because the curve uses connect='finite', print as a black
+                        # dot in the trace. np.clip leaves NaN as NaN and the
+                        # max_step guard below cannot catch it, so hold the last
+                        # good value instead.
+                        if not np.isfinite(y):
+                            y = self._last_sweep_y
                         if abs(y - self._last_sweep_y) > max_step:
                             y = self._last_sweep_y + float(np.clip(y - self._last_sweep_y, -max_step, max_step))
                         self._sweep_buf[self._sweep_pos] = y
@@ -1280,6 +1287,7 @@ class HRVTestWindow(QWidget):
                 # and the newest lands on the right edge. Nothing is blanked, so
                 # the waveform is continuous across the whole width.
                 y_display = np.roll(buf, -int(pos))
+                y_display = np.nan_to_num(y_display, nan=2048.0, posinf=4096.0, neginf=0.0)
 
                 self.plot_curve_glow.setData(x_axis, y_display)
                 self.plot_curve.setData(x_axis, y_display)

@@ -1322,6 +1322,16 @@ def validate_with_credentials(username: str, password: str) -> Dict:
                 return last
             if last.get("offline"):
                 return last
+            # A seat-state answer is about the seat this identifier resolved to,
+            # not the password, so retrying the same identifier with the other
+            # password form cannot change it. Move to the next identifier instead
+            # and save a round-trip — each one costs the user roughly a second at
+            # the login screen.
+            if is_stale_seat_error(
+                str(last.get("error_code", "") or last.get("error", "")),
+                str(last.get("message", "")),
+            ):
+                break
     return last
 
 
