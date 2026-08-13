@@ -1790,6 +1790,38 @@ class LoginRegisterDialog(QDialog):
             )
             return
 
+        # ── Start the credential check while the licence gate runs ────────────
+        # Both stages make a network round-trip and each takes ~4 s, so running
+        # them one after the other left the user staring at the login screen for
+        # ~8 s. They are independent — the licence check asks the server about
+        # this device, the credential check about this account — so the slower of
+        # the two now sets the wait instead of their sum. Users are reloaded first
+        # because validate_credentials() reads them on the worker thread.
+        import threading as _login_threading
+
+        try:
+            self.sign_in_logic.users = self.sign_in_logic.load_users()
+        except Exception:
+            pass
+
+        _cred_ok = [None]
+        _cred_done = _login_threading.Event()
+
+        def _run_credential_check():
+            try:
+                _cred_ok[0] = bool(
+                    self.sign_in_logic.validate_credentials(identifier, password_or_serial)
+                )
+            except Exception as _ce:
+                logger.warning(f"Credential check failed: {_ce}")
+                _cred_ok[0] = False
+            finally:
+                _cred_done.set()
+
+        _login_threading.Thread(
+            target=_run_credential_check, daemon=True, name="LoginCredentialCheck"
+        ).start()
+
         # Enforce license key check at login step
         try:
             from utils.license_manager import (
@@ -1990,13 +2022,12 @@ class LoginRegisterDialog(QDialog):
                 "contact Deckmount support.",
             )
             return
-        # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
-        # Refresh from disk before validating so new accounts can log in immediately.
-        try:
-            self.sign_in_logic.users = self.sign_in_logic.load_users()
-        except Exception:
-            pass
-        if self.sign_in_logic.validate_credentials(identifier, password_or_serial):
+        # Collect the credential check started before the licence gate. It has had
+        # the whole licence round-trip to finish, so this normally returns at once.
+        # The generous timeout is a backstop for a stalled socket; on expiry the
+        # result is None and login is denied rather than granted.
+        _cred_done.wait(timeout=20.0)
+        if _cred_ok[0]:
             found = self.sign_in_logic._find_user_record(identifier)
             if found:
                 username, record = found
