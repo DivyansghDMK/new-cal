@@ -98,7 +98,40 @@ python -m pytest tests/test_history_and_hyperkalemia.py -v
 python -m pytest tests/test_cardiox_prod.py -v
 ```
 
-> **Current Coverage:** 180 tests across 21 test classes covering authentication, signal processing, PDF generation, offline queue, connectivity, and clinical metric classification — **100% PASSING**.
+> **Current Coverage:** 324 tests across 46 test classes covering authentication, signal processing, PDF generation, offline queue, connectivity, and clinical metric classification — **100% PASSING** (76 in `test_cardiox_prod.py`, 104 in `test_history_and_hyperkalemia.py`, 144 in `test_input_validation.py`).
+
+The unit suite runs headless and cannot exercise the packaged executable. Verification of the built
+EXE — PyInstaller bundling, installer, licence heartbeats, USB acquisition, PDF output — is covered by
+the acceptance checklist below.
+
+---
+
+## 📚 Documentation
+
+| Document | Covers |
+|---|---|
+| [docs/EXE_TEST_CHECKLIST.md](docs/EXE_TEST_CHECKLIST.md) | Release verification for the built EXE and installer — 185 tick-box checks across 18 layers (build, installer, launch, licensing, device, clinical modules, reports, cloud, security, uninstall), plus regression checks for the current fix set and a sign-off sheet. |
+| [docs/ReportScreen_kt.md](docs/ReportScreen_kt.md) | Full reference for the Android report screen [ReportScreen.kt](ReportScreen.kt) — coordinate system, layout geometry for 1×12 / 2×6 / 3×4, waveform maths, PDF export, threading, known issues, and a 40-check verification list. |
+| [docs/comprehensive_ecg_analysis_architecture.md](docs/comprehensive_ecg_analysis_architecture.md) | Analysis pipeline architecture. |
+
+### Excel & Word versions
+
+The two checklists above are also published as fillable office documents for testers who work outside
+a code editor:
+
+| File | Format | Use |
+|---|---|---|
+| [docs/CardioX_EXE_Test_Checklist.xlsx](docs/CardioX_EXE_Test_Checklist.xlsx) | Excel | One row per check with a **PASS / FAIL / N/A / BLOCKED** dropdown that colours itself, autofilter, frozen headers, and a **Summary** sheet whose per-layer totals and release verdict recalculate live. Includes Environment, Defect Log and Sign-off sheets, plus a separate sheet for the 40 Android checks. |
+| [docs/CardioX_EXE_Test_Checklist.docx](docs/CardioX_EXE_Test_Checklist.docx) | Word | Landscape print-and-tick record — one table per layer with ☐ Pass / ☐ Fail boxes, blocking layers flagged in the heading, defect log and signature block at the end. |
+| [docs/CardioX_ReportScreen_Kotlin.docx](docs/CardioX_ReportScreen_Kotlin.docx) | Word | The `ReportScreen.kt` reference as a formatted document, with all tables and code blocks preserved. |
+
+**The markdown files remain the single source of truth.** Edit those, then regenerate:
+
+```powershell
+python docs\generate_checklist_docs.py
+```
+
+The generator needs `openpyxl` and `python-docx` (`pip install openpyxl python-docx`).
 
 ---
 
@@ -188,6 +221,82 @@ tamper detection requires moving to RS256 and shipping only the public key.
 ---
 
 ## 📋 Changelog
+
+### 🔒 [2026-08-21] — Input Limits, Form Hardening & Auth Security Audit
+
+#### ✅ Shared validation module (`src/utils/input_validation.py` — new)
+- The same field was constrained three different ways in three files: the waveform-analysis mobile box capped its **length** but accepted letters, the organisation forms used an integer validator whose ceiling rejected most real mobile numbers, and the legacy signup dialog checked nothing at all. One module now owns every limit, and because it imports no Qt at module scope the whole rule set is unit-testable headlessly.
+- **Every rule is enforced twice, on purpose.** At the widget (`apply_digit_only` / `apply_text_limits`) so bad input cannot be typed or pasted; and again at the logic layer (`validate_*`) before the value is stored, uploaded, or used to build a request. The widget layer is a usability convenience and is bypassed by anything that is not the GUI — the logic layer is the one that actually holds.
+- Standard limits: phone **exactly 10 digits**; password **8–128**; username 3–64; name 2–100; email ≤254 (RFC 5321); organisation name ≤120; address ≤200; serial ≤64; age 0–120. Every maximum is finite, so no field can be used to push a multi-megabyte string into `users.json`, a PDF, a log line or a cloud payload.
+- **Character rules follow reality, not tidiness.** Two rules were written too tight on the first pass and corrected after testing on hardware:
+  - **Serial ID is filled in by the device, not typed.** `on_scan_finished()` sets the box read-only from `send_machine_serial_command()`, which returns 16 bytes of raw ASCII from the firmware — a real serial is `DM ECG V1.0 A998`, **spaces and dots included**. An allow-list of `[A-Za-z0-9_-]` refused every genuine device and blocked signup outright. What still applies to a machine-supplied value is the length bound and control-character rejection, because it reaches `users.json`, S3 keys and cloud payloads; the character set now matches the firmware. The *"device connection lost"* placeholder is recognised and stored as empty rather than as a serial.
+  - **Names use a deny-list, not an allow-list.** `[A-Za-z0-9 ...]` rejected `Dr. José García`, `Zoë Müller` and `दिव्यांश शर्मा`. In a clinical application used in India, refusing a doctor's own name is a defect, not a security posture. Unicode letters from any script are accepted; only characters that change meaning at one of the value's sinks are refused — `< >` (reportlab Paragraph parses inline markup), `{ }` (template interpolation), `[ ] \` (escaping and paths), `` | ` $ ; `` (shell metacharacters) and `"`. The one narrow exception is a username made **entirely** of non-ASCII digits, since `٩٨٧٦٥٤٣٢١٠` and `9876543210` are different identifiers that look identical on screen.
+
+#### ✅ Waveform analysis — mobile number is digits only (`src/dashboard/analysis_window.py`)
+- The field had `setMaxLength(10)` and **no validator**, so `12ab34cd56` could be typed. `_normalize_mobile_no()` then silently reduced it to six digits and the length check rejected it with a message that did not match what the user could see in the box.
+- Now digit-restricted at the keystroke, and re-validated with `validate_phone()` before the value is used to build the public-reports API request.
+
+#### ✅ `QIntValidator(0, 2147483647)` rejected most real mobile numbers (`src/organization.py`)
+- `QIntValidator` is bounded by a C++ int. Any mobile number above 2147483647 — which is every number starting 3 through 9 — had **every keystroke refused**. Found in **three** places (the profile form, the edit-user dialog, and the create-user form); all now use the shared digit regex, which has no integer ceiling.
+- The organisation signup also accepted a phone of *"at most 10 digits"* (so one digit passed), an age with no upper bound, and a 6-character password. All three now use the shared limits.
+
+#### ✅ Non-ASCII digits are no longer accepted as numbers (`src/utils/input_validation.py`)
+- `str.isdigit()` returns True for Arabic-Indic numerals, and Python's regex `\d` matches them. A phone typed as `٩٨٧٦٥٤٣٢١٠` therefore passed a ten-character check and would have been sent to the cloud API as non-ASCII text. Digit handling is now explicitly `[0-9]`, and `str.isdigit()` is avoided throughout the module for the same reason.
+
+#### ✅ Login is rate-limited (`src/main.py`)
+- The OTP path already locked after 3 failed attempts for 5 minutes. The **password path counted nothing**, so the form accepted guesses as fast as they could be typed. Sign-in now locks after **5 failures for 5 minutes**, per identifier, and the remaining-attempt count is shown before the lock trips.
+- The failure message deliberately does not distinguish a wrong identifier from a wrong password — telling them apart turns the form into an account-enumeration oracle.
+- This bounds guessing *at the UI*, which is the threat this application can see. It is not a substitute for the PBKDF2 work factor that protects the hash file itself.
+
+#### ✅ Registration validated at the logic layer (`src/auth/sign_in.py`)
+- `register_user_with_details()` is where every registration path in the app converges, so the limits are applied there as well as at each form. A caller that forgets to validate — including a future one — still cannot write an unbounded or control-character-laden value into `users.json`.
+- `users.json` holds PBKDF2 password hashes and was written with default permissions, readable by every account on the machine. It is now `chmod 600`, best-effort so a permissions failure cannot lose a save that already succeeded.
+
+#### ✅ Path traversal in the Holter session directory (`src/ecg/holter/stream_writer.py`)
+- The session folder was built as `output_dir / <timestamp>_<patient name>` with only spaces replaced. A patient name of `../../../../Users/Public/pwned` resolved to `C:\Users\Public\pwned` — outside the recordings directory entirely.
+- `sanitize_filename_component()` replaces everything outside `[A-Za-z0-9_-]`, which removes dots, slashes and backslashes in one step so no traversal sequence can survive, bounds the length, and escapes the Windows reserved device names (`CON`, `PRN`, `NUL`, `COM1`–`9`, `LPT1`–`9`).
+
+#### 🔍 Audit findings — what was already correct
+Scanned the client, the auth layer and the licence server for the usual classes. These needed **no change**:
+- **Password storage** — PBKDF2-HMAC-SHA256, 260,000 iterations, per-user 16-byte salt, compared with `hmac.compare_digest`. Legacy plaintext records are upgraded to a hash on next successful login.
+- **SQL injection** — every statement in `src/ecg/holter/session_store.py` is parameterised; no f-string or concatenated SQL anywhere in `src/`.
+- **Code-execution sinks** — no `eval`, `exec`, `pickle.load`, `os.system` or `shell=True` in shipped code.
+- **Transport** — no `verify=False`; TLS verification is never disabled.
+- **Secrets** — AWS credentials come from environment variables, never literals; `.env` is gitignored and untracked.
+- **Auth flow** — server-first validation with a 7-day offline grace window; the licence gate fails closed; `sign_in_user_allow_serial()` is a misleading name for a function that only ever checks the password hash — there is no serial-as-password bypass.
+
+#### 🧪 Verification
+- New suite `tests/test_input_validation.py`: **144 tests, 149 subtests**, all headless. Covers each validator's boundary values (min, min−1, max, max+1), SQL/script/traversal/CRLF payloads in every free-text field, Unicode-digit handling, the rate limiter's lockout / expiry / per-identifier isolation, and source-level assertions that each form actually calls the shared rules — a rule that is not wired in protects nothing.
+- The suite found two defects while being written: two further `QIntValidator(0, 2147483647)` phone fields beyond the one first fixed, and `apply_digit_only()` skipping the length cap when validator construction failed.
+- Qt behaviour confirmed against a real `QLineEdit`: `9876543210` accepted, `98765abcde` / `abcdefghij` / `12ab34` / 11 digits all rejected at the keystroke.
+- Full suite: **324 passed, 156 subtests** (180 pre-existing, unchanged). The serial and name rules are now pinned by regression tests that use the real device serial from `ecg_settings.json` and real non-ASCII names, plus a test asserting that every character in the forbidden set is genuinely matched — hand-escaping a class containing both a backslash and a pipe is easy to get subtly wrong, and that mistake was present until the test caught it.
+
+### 🔧 [2026-08-21] — Multi-Lead Global QRS Boundary (12-Lead, HRV & Hyperkalemia)
+
+#### ✅ QRS width was measured on Lead II alone (`src/ecg/qrs_detection.py`, `src/ecg/ecg_calculations.py`)
+- A single lead only sees its own projection of the depolarisation wavefront, so its onset is late and its offset early. The earliest deflection and the latest return-to-baseline almost never occur in the same lead, which is why a Lead-II-only width reads roughly **10–20 ms short** of the true QRS — and why a borderline 118 ms complex could be reported as narrow.
+- `compute_global_qrs_duration_12lead()` implements the boundary rule the 12-lead carts use (Glasgow / Marquette): the Curtin 2018 delineation is run **independently on every supplied lead** using Lead II's R-peaks as the shared per-beat anchor, then per beat the width is taken from the earliest onset across leads to the latest offset across leads.
+- **Outliers cannot inflate the result.** Taken literally, "earliest" and "latest" mean min and max, so one noisy lead out of twelve would widen every beat. The extremes are replaced by the **15th / 85th percentile** of the lead ensemble — still its outer edge, but immune to one or two bad leads. Across beats the **median** is used, so an ectopic beat cannot drag the measurement either.
+- **Leads that cannot contribute are dropped, not averaged in:** a lead shorter than 2 s, one whose peak-to-peak is below 0.05 mV, one the connection tracker has marked off, or one whose buffer length does not match Lead II's (the boundary rule is only valid on a shared sample clock). Below two usable leads the function returns `None` and the caller keeps its existing single-lead measurement — so a one-lead capture behaves exactly as before.
+- `calculate_all_ecg_metrics()` takes a new optional `all_lead_data` argument and now reports `qrs_method` (`"global-multilead"` / `"single-lead"`) and `qrs_leads_used` alongside the width. Existing callers that pass only Lead II are unaffected.
+
+#### ✅ Wired into all three clinical pages (`src/ecg/twelve_lead_test.py`, `src/ecg/hrv_test.py`, `src/ecg/hyperkalemia_test.py`)
+- The 12-lead page hands every connected, non-flat lead to the metrics entry point. Because the HRV and hyperkalemia windows both drive a hidden `ECGTestPage` as their calculator, they inherit the global measurement through the same path — HRV from the leads it feeds (I, aVF, V1, V5, II and the selected lead), hyperkalemia from all twelve.
+- **The QRS blend no longer undoes the correction.** The 12-lead page previously mixed the Curtin width 70/30 with a Lead-II median-beat width; applied to a global measurement that would drag it back toward the single-lead under-estimate it exists to correct. The blend is now skipped when the global path produced the number.
+- Each page's QRS card carries a tooltip naming the measurement and the lead count, so a global width and a Lead-II width are no longer indistinguishable on screen.
+- The hyperkalemia serum-K estimate reads the same width, so its QRS-widening term now works from the global measurement without any change to the estimator.
+
+#### ✅ Cost kept off the UI thread's critical path (`src/ecg/ecg_calculations.py`)
+- Delineating twelve leads costs ~30 ms and the pages recalculate metrics from a **200 ms** timer — recomputing every tick would spend a sixth of that budget re-measuring a value that moves on the scale of seconds and is median-smoothed over 15 beats downstream.
+- The global result is cached per `instance_id` and refreshed on a **self-tuning interval**: whatever the measurement costs on the machine it is running on, it is scheduled to occupy at most ~5 % of wall-clock time, clamped to 1–4 s. Measured on this hardware: **12.8 ms mean / 39 ms peak** per tick, against a 9 ms single-lead baseline. Failures are cached too, so an undelineatable lead set is not retried five times a second.
+- The cache is cleared alongside the interval smoothing buffers when leads drop, so a width measured before a disconnection cannot reappear seconds later.
+
+#### 🧪 Verification
+- Synthetic 12-lead case where no single lead sees the whole complex (true width 110 ms): **Lead II alone 75 ms → global 103 ms across 12 leads**.
+- Through `calculate_all_ecg_metrics()`: 89 ms single-lead → 94 ms global, with HR, PR and QTc unchanged.
+- Through a real `ECGTestPage`: global path taken, 12 leads used, tooltip populated; a lead marked off and a lead held flat were both excluded from the ensemble.
+- Degenerate inputs (flat leads, one lead, no R-peaks, empty or malformed lead map) all fall back to the single-lead measurement rather than raising.
+- Full suite: **180 passed**. The 3 pre-existing failures in `src/ecg/test_qrs_paper.py` are unchanged — they fail identically at the previous commit and concern `measure_qrs_duration_paper`, which this work does not touch.
 
 ### 🔧 [2026-08-13] — Licence Re-Sync, Doctor-Review Upload, Lead-Off Detection, Report Strips & Live Display
 
