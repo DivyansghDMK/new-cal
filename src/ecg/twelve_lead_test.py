@@ -8225,7 +8225,15 @@ class ECGTestPage(QWidget):
         is_flatline = (lead_ii_snap.size < int(fs * 2.0)) or (np.std(lead_ii_snap) < 0.1) or (frozen.get('HR', 0) <= 0)
 
         if is_flatline:
-            conc_list = ["No ECG data available"]
+            # Three distinct states, not one. Telling the operator to check a
+            # cable while the patient has no cardiac output sends them after
+            # equipment that is working correctly.
+            if getattr(self, '_asystole_active', False):
+                conc_list = ["No cardiac activity detected"]
+            elif getattr(self, '_rate_below_measurable', False):
+                conc_list = ["Rate below measurable range"]
+            else:
+                conc_list = ["No ECG data available"]
             frozen['HR'] = 0
             frozen['RR'] = 0
             frozen['PR'] = 0
@@ -8305,6 +8313,56 @@ class ECGTestPage(QWidget):
                     conc_list.insert(0, f"Borderline QTc ({qtc_for_warning} ms)")
         except Exception:
             pass
+
+        # ── Findings allow-list ─────────────────────────────────────────────
+        # This is the generator the 12-lead page actually uses, so the
+        # restriction has to be applied HERE. It was previously only in
+        # ecg_report_generator.generate_ecg_report(), which this path never
+        # calls — so classifier labels such as "Asystole" still reached the PDF.
+        #
+        # Status lines ("No cardiac activity detected", "Rate below measurable
+        # range", "No ECG data available") are not findings and are preserved.
+        try:
+            from .ecg_report_generator import restrict_to_allowed_conclusions
+            _status_lines = {
+                "No cardiac activity detected",
+                "Rate below measurable range",
+                "No ECG data available",
+                "Please connect device",
+            }
+            _status = [c for c in conc_list if c in _status_lines]
+
+            # The QTc entries carry their measured value, e.g.
+            # "Prolonged QTc (470 ms)" — strip it so a real finding is not
+            # dropped for wording, then let the allow-list supply the canonical
+            # form. "Borderline QTc" is deliberately NOT mapped: 440-459 ms is
+            # below the 460 ms threshold the permitted "Prolonged QTc" means.
+            _canon = []
+            for _c in conc_list:
+                _low = str(_c).lower()
+                if "critically prolonged qtc" in _low or "prolonged qtc" in _low:
+                    _canon.append("Prolonged QTc")
+                else:
+                    _canon.append(_c)
+
+            _findings = restrict_to_allowed_conclusions(_canon)
+            conc_list = _status + [c for c in _findings if c not in _status]
+
+            # Never print an empty conclusion box. If everything the classifier
+            # offered was filtered out but a heart rate WAS measured, state the
+            # rate: that is always reportable and is derived from a number
+            # printed in the same header. This is the path taken when the
+            # classifier returns only a suppressed label — e.g. "Asystole"
+            # alongside a live HR, which is the self-contradiction that started
+            # this work.
+            if not conc_list:
+                _hr = frozen.get('HR', 0) or 0
+                if _hr > 0:
+                    conc_list = ["Sinus Bradycardia" if _hr < 60
+                                 else "Sinus Tachycardia" if _hr > 100
+                                 else "Normal Sinus Rhythm"]
+        except Exception as _allow_err:
+            print(f" Could not apply conclusion allow-list: {_allow_err}")
 
         conc_list = conc_list[:5]   # hard cap at 5
 

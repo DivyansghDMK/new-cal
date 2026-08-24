@@ -52,6 +52,12 @@ ALLOWED = set(REPORT_ALLOWED_CONCLUSIONS)
 PRINTABLE_ROWS = 4
 
 
+def _read(rel):
+    """Source text of a repo file, for the source-level assertions below."""
+    with open(os.path.join(_ROOT, rel), "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
 def report_for(hr, pr, qrs, qtc):
     """Everything the report does to turn measurements into printed lines."""
     data = {"HR_bpm": hr, "PR": pr, "QRS": qrs, "QTc": qtc}
@@ -235,6 +241,118 @@ class TestConclusionMatchesPrintedValues(unittest.TestCase):
     def test_maximum_is_three_findings(self):
         self.assertEqual(report_for(48, 210, 140, 505),
                          ["Sinus Bradycardia", "Wide QRS", "Prolonged QTc"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5. THE GENERATOR THE PAGE ACTUALLY USES
+# ══════════════════════════════════════════════════════════════════════════════
+
+STATUS_LINES = {
+    "No cardiac activity detected",
+    "Rate below measurable range",
+    "No ECG data available",
+    "Please connect device",
+}
+
+
+def android_path_filter(conc_list, hr):
+    """Mirror of the allow-list block in twelve_lead_test.generate_pdf_report().
+
+    Kept as an executable copy of the rule so the boundary is pinned even
+    though the real code sits inside a large Qt method that cannot be called
+    headlessly.
+    """
+    status = [c for c in conc_list if c in STATUS_LINES]
+    canon = []
+    for c in conc_list:
+        low = str(c).lower()
+        if "critically prolonged qtc" in low or "prolonged qtc" in low:
+            canon.append("Prolonged QTc")
+        else:
+            canon.append(c)
+    findings = restrict_to_allowed_conclusions(canon)
+    out = status + [c for c in findings if c not in status]
+    if not out and hr > 0:
+        out = ["Sinus Bradycardia" if hr < 60
+               else "Sinus Tachycardia" if hr > 100
+               else "Normal Sinus Rhythm"]
+    return out[:5]
+
+
+class TestAndroidReportPathIsFiltered(unittest.TestCase):
+    """The allow-list was originally applied to the WRONG generator.
+
+    twelve_lead_test.generate_pdf_report() builds `conc_list` itself and hands
+    it to ecg_report_android.generate_report(); it never calls
+    ecg_report_generator.generate_ecg_report(). So the restriction had no effect
+    on the PDF the page actually produces, and "Asystole" kept printing after
+    the allow-list was supposedly in place.
+    """
+
+    def test_page_applies_the_allow_list_before_handing_off(self):
+        src = _read("src/ecg/twelve_lead_test.py")
+        self.assertIn("restrict_to_allowed_conclusions", src,
+                      "the page must filter conc_list before calling the generator")
+        idx = src.find("conc_list = conc_list[:5]")
+        self.assertGreater(idx, -1)
+        before = src[max(0, idx - 2500):idx]
+        self.assertIn("restrict_to_allowed_conclusions", before,
+                      "the filter must run BEFORE the hard cap, or labels are "
+                      "capped rather than removed")
+
+    def test_lethal_classifier_labels_do_not_reach_the_pdf(self):
+        for label in ("Asystole", "Ventricular Fibrillation",
+                      "Ventricular Tachycardia", "Atrial Fibrillation",
+                      "Atrial Flutter", "3rd-degree AV block",
+                      "Complete Left Bundle Branch Block"):
+            with self.subTest(label=label):
+                self.assertNotIn(label, android_path_filter([label], 0))
+
+    def test_the_original_contradiction_now_prints_the_rate(self):
+        """analyze_ecg said Asystole while the header read HR 65."""
+        self.assertEqual(android_path_filter(["Asystole"], 65),
+                         ["Normal Sinus Rhythm"])
+
+    def test_never_empty_when_a_rate_was_measured(self):
+        empty = [hr for hr in (1, 30, 45, 59, 60, 72, 100, 101, 150, 250)
+                 if not android_path_filter(["Asystole"], hr)]
+        self.assertEqual(empty, [], f"empty conclusion box at HR {empty}")
+
+    def test_qtc_lines_keep_their_finding_despite_carrying_a_value(self):
+        for raw in ("Prolonged QTc (470 ms)",
+                    "Critically Prolonged QTc (505 ms) - High Risk"):
+            with self.subTest(raw=raw):
+                self.assertIn("Prolonged QTc",
+                              android_path_filter([raw, "Normal Sinus Rhythm"], 75))
+
+    def test_borderline_qtc_is_not_promoted(self):
+        """440-459 ms is below the 460 ms threshold "Prolonged QTc" means."""
+        out = android_path_filter(["Borderline QTc (445 ms)", "Normal Sinus Rhythm"], 75)
+        self.assertNotIn("Prolonged QTc", out)
+        self.assertEqual(out, ["Normal Sinus Rhythm"])
+
+    def test_status_lines_survive_the_filter(self):
+        for line in ("No cardiac activity detected",
+                     "Rate below measurable range",
+                     "No ECG data available"):
+            with self.subTest(line=line):
+                self.assertEqual(android_path_filter([line], 0), [line])
+
+    def test_permitted_findings_survive_alongside_suppressed_ones(self):
+        out = android_path_filter(
+            ["Atrial Fibrillation", "Sinus Tachycardia", "Wide QRS"], 130)
+        self.assertEqual(out, ["Sinus Tachycardia", "Wide QRS"])
+
+    def test_page_flatline_branch_has_three_states(self):
+        src = _read("src/ecg/twelve_lead_test.py")
+        idx = src.find("if is_flatline:")
+        self.assertGreater(idx, -1)
+        branch = src[idx:idx + 900]
+        for wording in ("No cardiac activity detected",
+                        "Rate below measurable range",
+                        "No ECG data available"):
+            with self.subTest(wording=wording):
+                self.assertIn(wording, branch)
 
 
 if __name__ == "__main__":
