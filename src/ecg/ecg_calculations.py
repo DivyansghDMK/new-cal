@@ -135,24 +135,48 @@ def _stabilize_to_reference(metrics: Dict[str, Any], instance_id: Optional[str])
 
     field_map = {
         "rr_interval": ("RR", True),
-        # PR is a measured clinical interval.  Do not pull it toward the
-        # calibration table, otherwise the live display drifts away from the
-        # actual detector output and disagrees with the graph.
         "pr_interval": ("PR", False),
         "qrs_duration": ("QRS", False),
         "qt_interval": ("QT", True),
         "qtc_interval": ("QTc", False),
     }
 
+    # Measured clinical intervals are NOT pulled toward the calibration table.
+    #
+    # The table holds population-normal values indexed on heart rate — its QRS
+    # is 85-87 ms at every rate. Blending 60% of that into the reported value
+    # made the output mostly a function of heart rate rather than of the
+    # patient: a true 140 ms QRS was reported as 113 ms, and a patient needed a
+    # true QRS of ~170 ms before the report could print 120 ms at all. "Wide
+    # QRS" and "Prolonged QTc" are findings the report is allowed to state, and
+    # anchoring them to a table of normals guaranteed they read normal.
+    #
+    # This is the same argument the file already made for PR, applied to the
+    # other measured intervals. RR is deliberately still anchored: it restates
+    # the heart rate (the table's RR at 85 bpm is 706 ms, and 60000/85 = 706),
+    # so blending carries no information and can hide nothing.
+    #
+    # The slew limiter below and the median/deadband smoothing in
+    # apply_interval_smoothing() are unchanged, so the anti-jitter behaviour
+    # this function exists for is preserved.
+    MEASURED_NOT_ANCHORED = ("pr_interval", "qrs_duration", "qt_interval", "qtc_interval")
+
     for output_key, (ref_key, keep_float) in field_map.items():
         measured = metrics.get(output_key)
-        if output_key == "pr_interval":
-            # Keep the measured PR interval unchanged.
-            continue
-        ref_val = float(ref[ref_key])
-
         valid_measured = isinstance(measured, (int, float)) and measured > 0
-        blended_target = (float(measured) * (1.0 - ref_weight) + ref_val * ref_weight) if valid_measured else ref_val
+
+        if output_key in MEASURED_NOT_ANCHORED:
+            if not valid_measured:
+                # Nothing measured this window: leave whatever the caller had
+                # rather than inventing a population normal.
+                continue
+            blended_target = float(measured)
+        else:
+            ref_val = float(ref[ref_key])
+            blended_target = (
+                float(measured) * (1.0 - ref_weight) + ref_val * ref_weight
+                if valid_measured else ref_val
+            )
 
         prev = state.get(output_key)
         if isinstance(prev, (int, float)):
