@@ -222,6 +222,188 @@ tamper detection requires moving to RS256 and shipping only the public key.
 
 ## 📋 Changelog
 
+### ⏱️ [2026-08-24] — Stale Metrics: A Rate Change No Longer Leaves the Old Numbers on Screen
+
+Reported with a Fluke simulator: set to 72 bpm, then switched to **3 bpm**. The 12-lead page kept showing **BPM 71 / PR 149 / QRS 92 / QT 317** indefinitely while all twelve traces were visibly flat, and a report generated in that state printed the same numbers next to a conclusion of *"Asystole"*.
+
+#### The measurements were right; two display layers were lying
+At 3 bpm the RR interval is 20 s, and the analysis buffer is `HISTORY_LENGTH = 10000` samples — exactly 20 s at 500 Hz. **At most one R-peak can ever be in the window**, and `calculate_all_ecg_metrics()` needs three, so the pipeline correctly returned zero. Roughly **9 bpm is the slowest rate it can express at all**.
+
+The stale numbers came from two independent "hold last good value" layers, each answering every failed window with the previous measurement, and **neither had an expiry**:
+
+1. **`src/ecg/ui/display_updates.py`** — every metric falls back to `_last_valid[...]` when the incoming value is 0. One good reading was echoed for as long as the page stayed open.
+2. **`twelve_lead_test.calculate_ecg_metrics`** — `pr_interval_raw` / `qrs_duration_raw` / `qt_interval_raw` fell back to the previous attribute, and the median-beat early-return path (the branch a very slow rate takes on *every* tick) re-published them without ever writing a new value.
+
+A hold is right for a momentary dropout — one missed beat, one noisy window. It is wrong for a sustained inability to measure. Both layers are now bounded at **4 seconds**, deliberately the same figure on both sides so the page and the labels cannot disagree about whether a value is still valid. Below the pipeline's own ~9 bpm floor there is no plausible single-window dropout to protect, so nothing is lost.
+
+Verified on the real page: `72 bpm → HR 72 / PR 158 / QRS 81 / QT 338`, switch to 3 bpm → **all zero**, back to 72 bpm → **values return**. A single-window dropout still smooths over without a flicker.
+
+`reset_metric_holds()` replaces the ad-hoc `_last_valid.pop(...)` loop in the flat-line path, so a pre-arrest number cannot be echoed back through the hold window after signal loss.
+
+#### A third state: rate below the measurable range
+At 3 bpm the trace is **not** flat — QRS complexes are plainly present — so this is neither asystole nor a disconnected lead, and reporting *"No ECG data available / Please connect device"* would send the operator after equipment that is working correctly while the patient has a profoundly slow rhythm.
+
+The page now flags `_rate_below_measurable` when R-peaks are present but too few to measure, and the report distinguishes all three:
+
+| Trace | Report says |
+|---|---|
+| electrodes off, flat | No ECG data available / Please connect device |
+| electrodes on, flat | No cardiac activity detected / All measurements zero - review trace |
+| R-peaks present, too few | Rate below measurable range / Review trace - measurements unavailable |
+
+#### 🧪 Verification — `tests/test_stale_metric_holds.py` (20 tests, 12 subtests)
+- The rate-floor arithmetic pinned: 20 s window, one peak at 3 bpm, three needed.
+- Display hold: a brief dropout is smoothed over; a sustained zero falls through to 0; an expired hold is *discarded*, not merely hidden; recovery works.
+- Page hold: source assertions that the unbounded `getattr` fallbacks are gone and cannot be reintroduced, that the median-beat early-return path expires its holds, and that the two hold windows match.
+- Behavioural, real `ECGTestPage` in a clean subprocess: 72 → 3 → 72 bpm, including a check that `get_current_metrics()` (what the report reads) does not return a held value.
+- The report's three states are mutually exclusive, and the low-rate branch is asserted not to mention the cable.
+
+Full suite: **398 passed, 255 subtests**.
+
+> **Note for testing:** these are source changes, so a running instance must be restarted to pick them up. The report in the original bug screenshot was produced by a session started before this work and still shows the old behaviour, including the `Asystole` conclusion that the findings allow-list now filters.
+
+### 🫀 [2026-08-21] — Asystole Now Reads Zero Everywhere (Was Showing Pre-Arrest Values)
+
+During asystole every measurement now reads **0** on the 12-lead page, on the dashboard and in the PDF. Previously the numbers from before the arrest stayed on screen next to a flat trace.
+
+#### The bug
+The 12-lead page already had a flat-line guard that zeroed every metric — but it was gated on `and not limb_active`, so it only fired when the limb leads were reported **disconnected**. That is exactly backwards for asystole: a flat trace with the electrodes still on the patient *is* asystole, and it was the one case the guard refused to handle.
+
+The pipeline then ran on a flat signal, found no R-peaks, and every downstream "hold last good value" fallback re-published the pre-arrest numbers. Measured on the real page: **HR 72, PR 158, QRS 82, QT 338, QTc 370, RR 834 all survived** the transition to a flat trace. A flatline was drawn beside a live-looking heart rate.
+
+#### The fix
+Flatness alone now drives the guard. `_raw_std_ii` is in ADC counts and is evaluated *after* the existing Lead I fallback, so `< 5.0` means both limb leads are flat — no real ECG carrying a QRS has a standard deviation of five ADC counts. Either the electrodes are off or the heart is not beating, and in both cases there is nothing to measure.
+
+The zeroing block was also incomplete. It now clears **QTcF, ST, the axes, the amplitude figures and the pending/deadband state** as well — any value left behind is a pre-arrest number displayed as though it were current, and a held deadband value could be promoted onto the display one tick after signal returned.
+
+#### The report must not call asystole a cable fault
+Both kinds of flat trace zero the metrics, but they mean very different things:
+
+| | meaning | report says |
+|---|---|---|
+| electrodes **off**, flat | a device problem | *No ECG data available / Please connect device* |
+| electrodes **on**, flat | no cardiac output | *No cardiac activity detected / All measurements zero - review trace* |
+
+The page sets `_asystole_active` to distinguish them, and the report reads it. Sending an operator to check a cable that is fine, while the patient has no cardiac output, is worse than saying nothing. Neither line is a rhythm diagnosis, so neither is subject to the findings allow-list — they are status text, like the existing no-data message.
+
+#### A bypass in the conclusion allow-list, found while doing this
+The zero-data safeguard branch appended `_build_metric_conclusions()` output **directly** to the conclusion list, skipping `_normalize_report_conclusions()` entirely — so labels the allow-list is meant to filter reached the printed report through this path. Confirmed leaking: `Third-degree AV Block`, `Borderline Wide QRS`, `First-degree AV Block (Prolonged PR)`, `Long QT Syndrome`. The branch now merges through the normaliser like every other path. Swept 576 value combinations through it: zero off-list labels.
+
+#### 🧪 Verification — `tests/test_asystole_zeroing.py` (14 tests, 13 subtests)
+- **Behavioural, on a real `ECGTestPage`** in a clean subprocess (the rest of the suite stubs PyQt5, so real Qt cannot be built in-process): real signal → HR 72; asystole with electrodes attached → every metric 0, `_asystole_active` True, every on-screen label reading 0; signal returns → HR 72 and the flag clears. No value sticks in either direction.
+- **Dashboard** confirmed to read `'0'` for HR, PR, QRS, QT, QTc and RR through `get_current_metrics()` during asystole, and the `live_hr` path reads 0.
+- Source-level assertions that the `and not limb_active` gate is gone, the flag is set and cleared, every metric attribute is zeroed, and the report's two messages are mutually exclusive.
+- The allow-list bypass pinned shut, including a test that the raw `dashboard_conclusions.append(mc)` pattern is not reintroduced.
+
+Full suite: **378 passed, 243 subtests**.
+
+### 📋 [2026-08-21] — Report CONCLUSION Restricted to Five Value-Derived Findings
+
+The printed conclusion box on the 12-lead report (both 12×1 and 6×2 layouts) now carries exactly these and nothing else:
+
+**Normal Sinus Rhythm · Sinus Bradycardia · Sinus Tachycardia · Wide QRS · Prolonged QTc**
+
+All five derive from a measurement that is also printed in the report header, so a reader can check every conclusion against the numbers on the same page.
+
+#### Why
+The morphology and rhythm classifiers proved unreliable in the field — a normal 65 bpm sinus ECG with a 152 ms PR interval was printed with a conclusion of *"Ventricular Fibrillation"*. A wrong lethal label on a signed report is worse than no label.
+
+**Consequence, stated plainly:** the report no longer names Asystole, Ventricular Fibrillation, Ventricular Tachycardia, Atrial Fibrillation, Atrial Flutter, any AV block, any bundle branch block, PVC/PAC, ST elevation/depression, or Borderline Wide QRS — even when the analyser detects them. The full waveform is still printed and all intervals are still measured and displayed; interpretation beyond rate, QRS width and QTc is left to the reading clinician. The live on-screen analysis is unchanged.
+
+#### How
+- `REPORT_ALLOWED_CONCLUSIONS` plus `restrict_to_allowed_conclusions()` applied at the end of `_normalize_report_conclusions()` — the single funnel every conclusion source in the module passes through, so no path can bypass it. The 6×2 generator calls the same helper, so the two layouts cannot drift apart.
+- **Variants of a permitted finding are folded in, not dropped**, so a real finding is never lost to wording: `Sinus Rhythm` → `Normal Sinus Rhythm` (the bare form emitted when P waves are undetected), `Bradycardia`/`Tachycardia` → the sinus forms, and `Long QT Syndrome` → `Prolonged QTc` (QTc > 500 is still prolonged; the permitted wording is used).
+
+#### Two defects found and fixed while doing it
+- **A QRS of 116 ms printed no QRS finding at all.** The value rules only ran as a last-resort fallback, so whenever any earlier source supplied a rhythm label the interval findings were never computed. They are now derived unconditionally and merged.
+- **A QRS of 116 ms then printed an *empty* box.** "Borderline Wide QRS" set the internal `abnormal` flag, which suppressed "Normal Sinus Rhythm", and the allow-list then removed Borderline as well — leaving nothing. The flag is now computed only from findings that will actually be printed, and Wide QRS / Prolonged QTc are excluded from it: they are conduction and repolarisation findings, not competing rhythm diagnoses, so `Normal Sinus Rhythm` + `Wide QRS` is a coherent pair and the rhythm line stays.
+- **A profoundly bradycardic patient could get a blank box.** Below 40 bpm with no measurable PR the rules pick `Third-degree AV Block`, which is now filtered out. `ensure_rate_conclusion()` restates the rate finding so the box is never empty when a heart rate was measured — using the same wording the rules already use at 40–59 bpm, so it makes no claim they were not already making.
+
+#### Capacity
+Maximum output is **3 findings** (one rhythm + optional Wide QRS + optional Prolonged QTc) against a box that prints **4 rows**, so nothing can ever be cropped. Previously the ladder could rank 24 labels into 4 slots, and 21 of the labels the detectors emit were unranked — they sorted to the very end, which is how a `3rd-degree AV block` could be pushed off the page beneath `Prolonged QTc`.
+
+#### 🧪 Verification — `tests/test_report_conclusions.py` (17 tests, 39 subtests)
+- 30 blocked labels each confirmed removed, individually and when mixed with a permitted one.
+- 9 spelling variants confirmed folded to the permitted wording.
+- **Exhaustive 6,912-combination sweep** of HR × PR × QRS × QTc: zero empty boxes, zero overflows past 4 rows, zero off-list labels, sizes only ever 1–3.
+- Threshold boundaries pinned (QRS 119 vs 120, QTc 460 vs 461) and all three field reports reproduced.
+
+One pre-existing test in `test_cardiox_prod.py` asserted the old behaviour — that complete heart block survives and suppresses the rhythm line. It is superseded by this policy and has been updated in place with the reason recorded, rather than deleted.
+
+Full suite: **364 passed, 230 subtests**.
+
+### 🚨 [2026-08-21] — "Ventricular Fibrillation" Reported on a Normal Sinus ECG
+
+A 12-lead PDF was produced reading **HR 65 bpm, PR 152 ms, QRS 106 ms, QT 346 ms, QTc 359 ms**, with twelve leads of visibly organised, narrow-complex, P-wave-bearing sinus rhythm — and a CONCLUSION of **"Ventricular Fibrillation"**. This is the most dangerous output this application can produce, and the report contradicted itself: VF is disorganised ventricular activity with no atrial-to-ventricular conduction, so there is no PR interval to measure, no organised QRS to time, and its ventricular rate is 150–400 bpm.
+
+#### The failure chain
+1. **`is_ventricular_fibrillation()` can reach a VF verdict with no fast beat at all** (`src/ecg/arrhythmia_detector.py:745`). It scores four criteria and fires at ≥ 0.60, but the **rate** criterion is worth only 0.35. RR-variability (0.30) + amplitude-variability (0.20) + baseline-chaos (0.15) = **0.65** — over the line, entirely from noise. Confirmed by measurement: synthetic sinus at 65 bpm with EMG-grade noise and variable R amplitudes scored 0.65 with the rate criterion contributing nothing.
+2. **The backstop existed and was bypassed.** `physiological_consistency` Rule 4 is written precisely to catch this — *"organised QRS + reliable HR contradicts VF"* — but was skipped whenever `vf_score >= 0.5`, under the comment *"Strong VF evidence — never suppress"*. A score of 0.5–0.65 reached without any fast beat is not strong VF evidence; it is noise.
+3. **The bypass also erased the evidence.** `vf_score > 0.6` additionally forced `organized_qrs = False`, so even had Rule 4 run, the input it needed was already gone.
+
+#### The fix — two independent layers, both conservative toward real VF
+- **Detector (`arrhythmia_detector.py`):** an organised-rate gate. If fewer than 35% of RR intervals are ≤ 450 ms **and** the median RR implies 20–150 bpm, the rhythm is organised and VF is refused regardless of the noise score. Genuine VF is unaffected — its RR intervals are short and chaotic, so the gate never fires. Verified across VT 180 bpm, VF ~250 bpm, VF ~330 bpm and coarse VF with long gaps: the gate stays inactive for all of them, and fires for sinus at 65 / 73 / 91 bpm.
+- **Consistency backstop (`physiological_consistency.py`):** hard contradictions now outrank the score. A **measured PR interval** at an organised rate proves AV conduction and vetoes VF at *any* `vf_score`; a **narrow organised QRS** (< 120 ms) at an organised rate does the same. A high score no longer erases a positively-measured narrow QRS.
+
+#### 🧪 Verification — `tests/test_vf_false_positive.py` (16 tests, 29 subtests)
+Both directions are pinned, because silencing genuine VF would be far worse than the bug being fixed:
+- **False positives blocked:** the exact reported case; organised rhythms at 40–140 bpm; a 72-case sweep of noise (60–200 µV), amplitude jitter and imperfect peak detection at 65 bpm — zero VF verdicts; a measured PR vetoes VF at every score from 0.5 to 1.0.
+- **Genuine VF preserved:** nothing measurable; 280 bpm with no conduction; 200 bpm wide-complex with no PR; rates 160–350 bpm. All still reported. Asystole and VT are untouched.
+- The scoring-structure test documents *why* a gate was added rather than nudging the 0.60 threshold: raising it to 0.66 would have masked this one path while leaving a VF verdict reachable with no fast beat.
+
+**Honest limitation:** the recording behind that PDF was not saved locally (the newest stored report predates it), so the exact signal could not be replayed. The synthetic reproduction reached the 0.65 score but was caught by an unrelated atrial-flutter heuristic, which is a fragile accident rather than a designed guard. The fix therefore rests on the structural argument and on the report's own internal contradiction, not on a bit-exact replay. **Re-generate a report on real hardware to confirm the conclusion now reads correctly.**
+
+### ⚡ [2026-08-21] — Live-Path Responsiveness: Stop the UI Freezing on Ordinary Hardware
+
+Reported as *"waves coming from hardware and it gets freeze cluttered"* on a normal PC. A six-subsystem audit of the live path (buffer writes, rendering, serial threading, timer budgets, memory growth, blocking calls) produced 30 candidate causes; each was handed to a separate reviewer whose job was to **refute** it. 16 survived, 14 were refuted — including the first one that looked obvious, which is why the list below is not the one anyone would have guessed.
+
+#### ✅ The actual freeze: lead-off detection ran once per lead **per sample** (`src/ecg/hyperkalemia_test.py`)
+- `detect_lead_off()` sat inside the per-lead loop inside the per-packet loop — **6,000 whole-window analyses per second** on the Qt main thread. Each call copied a 500-sample deque to a float64 array and ran `ptp`, `var`, `diff`, `flatnonzero`, `concatenate`, `argmax`, `median`, `min` and `max` across it.
+- Measured: the write loop cost **414 ms of work per second of streamed data — 41% of one core** — of which lead-off was **91%**. A single 30 ms tick cost 12 ms at rest and **70 ms while catching up**, so the event loop simply stopped dispatching paint events. That is the freeze.
+- The window still receives every sample; only the verdict moved to once per tick (~400/s instead of 6,000/s). The debounce counters now advance by the tick's **sample count** rather than by one, so thresholds stay in sample units and the 0.5 s engage / 0.2 s release timing is preserved exactly — converting them to tick counts would have silently retuned the debounce on precisely the slow machines this work targets.
+- The `len(w) >= 50` guard also bought a guaranteed-`False` answer at the price of an array copy, since the detector returns `False` until it has a full 1 s window. Now gated on the real window length.
+- **Result: 414 ms/s → 32 ms/s (41% of a core → 3.2%). A 100-packet catch-up tick: 70 ms → 0.77 ms.**
+
+#### ✅ `np.roll` per lead per sample — real, but *not* the freeze
+- Every sample rebuilt twelve 40 KB arrays to advance a write cursor by one: ~240 MB/s of memcpy and ~6,000 ndarray allocations per second, whose collection produced a measured 10–13 ms hitch roughly every 12 s.
+- Honest scoping: this was the first thing found and it looked like the culprit. Reviewed properly it is **~1 ms of a 30 ms tick at rest** — a stutter contributor, not a freeze. It only overruns the tick during a 500-packet backlog (33.5 ms). Recorded here because the measurement that demoted it is the reason the real cause was found.
+- Fixed by staging each tick's samples and committing them with one in-place memmove plus one tail write per lead. **Deliberately not** the index-addressed ring the audit recommended: `self.data` has 63 readers in one file and 27 more across the package, all assuming "chronological, newest at `[-1]`". A ring breaks that assumption *silently* — no crash, just a wrong clinical measurement read from a wrapped buffer. The batched write keeps the layout byte-identical.
+- Verified numerically identical to the old per-sample roll across batch sizes 1 → 25,000, including the overflow case where a batch exceeds the buffer.
+- Applied to the 12-lead packet path, the legacy line reader, both HRV calculator writes, HRV's own display buffer, and the hyperkalemia calculator buffer (whose display ring had been fixed previously but whose analysis buffer had not). **1 ms → 0.12 ms at rest; 35 ms → 0.16 ms on a 500-packet tick.**
+
+#### ✅ 13.6-second freeze when opening the HRV / Hyperkalemia pages (`src/ecg/serial/hardware_commands.py`)
+- `_read_packet()` read **one byte** per loop and then slept `0.01 s` — with the sleep *outside* the `in_waiting` check, so it ran after every successful read too. CPython's sleep granularity on Windows is ~15 ms, giving roughly **65 bytes/s against a device streaming ~11,000**. The handshake could never reach its ACK and burned the entire timeout on the GUI thread.
+- Now reads in bulk and sleeps only when the port is genuinely empty. **The framing state machine is byte-for-byte unchanged** — proven by replaying 3,000 random byte streams through both the old and new framers at five chunk sizes (15,000 comparisons, zero mismatches), so frame detection cannot have shifted.
+- ⚠️ **Needs a hardware test.** The measurement behind the 13.6 s figure was taken against a present-but-silent mock. The arithmetic holds independently, but this is the device handshake and it must be exercised against a real RhythmUltra — both streaming and absent — before release.
+
+#### ✅ The "cluttered" trace: overlay leads drew on top of each other (`src/ecg/twelve_lead_test.py`)
+- Three `line.set_clip_on(False)` calls let each overlay lead paint outside its own axes. With `ylim` pinned to the full 0–4095 ADC range and the `+2048` centering, a normal R-wave at 20 mm/mV reaches ~4248 and spills into the lane above — measured **51 spilled pixels at 20 mm/mV, 514 at 40 mm/mV**. One lead's R-waves appearing in another lead's row is the "cluttered" symptom, and it is a *correctness* defect, not slowness: no amount of speeding things up would have fixed it.
+
+#### ✅ Metrics timer stopped monopolising the GUI thread (`src/ecg/twelve_lead_test.py`)
+- The heaviest of the three pages was the only one whose timers ignored `is_low_spec_mode()` — so on a weak machine it ran the most expensive callbacks the fastest. Now matches HRV and hyperkalemia (500 ms metrics / 50 ms plot on low-spec).
+- Added a duty-cycle self-throttle: the callback measures itself and reschedules so it can never own more than **25% of its own period**. A 90 ms callback reschedules at 360 ms instead of 200 ms rather than deleting plot frames. Same idiom already used for the global QRS refresh.
+
+#### ✅ Screen recording grew at 187 MB/s (`src/ecg/twelve_lead_test.py`)
+- `grabWindow()` at 33 fps appended a full-resolution BGR frame to an **uncapped list**: 6.22 MB/frame at 1920×1080 → **~5.6 GB after 30 s**. On an 8 GB machine that swaps the whole process, including the 500 Hz serial drain sharing the thread — a freeze a user would blame on the ECG.
+- Now a `deque` capped to a known number of seconds, with wide grabs downscaled to 1280 and the first frame's geometry pinned for the session so a mid-recording resize cannot produce a corrupt video file.
+
+#### ✅ Overlay stopped burning the plot timer (`src/ecg/twelve_lead_test.py`)
+- While the 12:1 / 6:2 overlay is up, the pyqtgraph plot area is hidden but the 30 ms timer kept running the full filter → interpolate → `setData` chain for twelve curves into widgets Qt never paints, alongside a matplotlib redraw measured at 44 ms.
+- The guard is placed **after** the packet drain and buffer writes, deliberately. Stopping the timer instead would also stop `read_packets()`, the Holter writer push and the BPM push — all of which live in the same callback — so the overlay would have silently stopped recording. Skip the render, never the acquisition.
+
+#### 🚫 Deliberately not changed — signal integrity
+- **No sample may be dropped from the write path.** No parse deadline, stride or decimation between the parser and the lead buffers, the Holter writer or the BPM controller. Render is decimated; acquisition never is.
+- **`max_iterations` and the 100 KB buffer clear stay** while acquisition is still on the GUI thread. Removing the cap would convert a recoverable backlog into a hard freeze.
+- **`setDownsampling(mode='subsample')` must never be enabled** — it takes every Nth sample and clips R-wave peaks. `mode='peak'` only.
+- **The display time-base bug is documented, not fixed.** `time_axis` divides by 500 Hz while the data is 1000 Hz post-interpolation. It is currently invisible because the x-range is auto-fitted to the data extent each frame, and correcting it changes mm/s on a clinical trace — that needs a calibration-pulse check against real hardware, not a blind edit.
+- Not attempted: the full index-addressed ring, threading `calculate_ecg_metrics`, and moving acquisition to its own thread. All three are high-risk refactors on clinical code, and the plan's own guidance is to re-measure first — the cheap fixes may have already closed the tick.
+
+#### 🧪 Verification
+- Batched write proven numerically identical to the per-sample roll (batches 1 → 25,000, including buffer overflow).
+- Handshake framing proven unchanged over 15,000 old-vs-new comparisons.
+- **Clinical regression gate:** `calculate_ecg_metrics()` on a fixed 12-lead buffer returns HR 72, QRS 94 ms, global-multilead across 12 leads — identical before and after every change.
+- Full suite: **330 passed, 1 skipped, 162 subtests** (the skip is the device-serial test, correctly skipping with no hardware attached).
+
 ### 🔒 [2026-08-21] — Input Limits, Form Hardening & Auth Security Audit
 
 #### ✅ Shared validation module (`src/utils/input_validation.py` — new)
