@@ -1138,6 +1138,14 @@ GLOBAL_QRS_OFFSET_PERCENTILE: float = 85.0
 GLOBAL_QRS_MAX_BEATS: int = 8       # beats delineated per lead (cost guard)
 GLOBAL_QRS_FLAT_MV: float = 0.05    # peak-to-peak below this -> lead is flat
 
+# A lead whose measured width exceeds this multiple of the cohort median has not
+# found a different projection of the same complex — its border search failed and
+# ran to the edge of its window. Measured on real 12-lead data: eight leads
+# agreeing at 72-96 ms alongside three at 128/188/197 ms. Failures are always
+# one-sided (a failed search runs LONG), so only the upper bound is applied.
+GLOBAL_QRS_OUTLIER_RATIO: float = 1.6
+GLOBAL_QRS_MIN_COHORT: int = 4      # below this, too few leads to judge outliers
+
 
 def _bandpass_for_global_qrs(signal: np.ndarray, fs: float) -> np.ndarray:
     """0.5-40 Hz analysis band — the same band the Lead II path is measured in.
@@ -1306,6 +1314,46 @@ def compute_global_qrs_duration_12lead(
         if leads_used < min_leads:
             return None
 
+        # ── Reject failed delineations before merging ────────────────────────
+        # The boundary rule takes the latest offset across leads, so it cannot
+        # distinguish a genuinely late offset from a border search that ran to
+        # the edge of its window. Leads whose width is implausible against the
+        # cohort median are dropped here, along with the per-beat borders they
+        # contributed — otherwise a handful of failures define the result.
+        rejected_leads = []
+        if len(per_lead_qrs) >= GLOBAL_QRS_MIN_COHORT:
+            cohort_median = float(np.median(list(per_lead_qrs.values())))
+            limit = cohort_median * GLOBAL_QRS_OUTLIER_RATIO
+            rejected_leads = [n for n, v in per_lead_qrs.items() if v > limit]
+
+            if rejected_leads and (len(per_lead_qrs) - len(rejected_leads)) >= min_leads:
+                keep_idx = set()
+                for name in rejected_leads:
+                    per_lead_qrs.pop(name, None)
+                leads_used -= len(rejected_leads)
+                # Rebuild the per-beat border lists from the surviving leads only.
+                beat_onsets = [[] for _ in range(peaks.size)]
+                beat_offsets = [[] for _ in range(peaks.size)]
+                for lead_name in per_lead_qrs:
+                    sig = np.asarray(lead_signals[lead_name], dtype=float)
+                    filt = _bandpass_for_global_qrs(sig, fs)
+                    for beat_i, r_idx in enumerate(peaks):
+                        if r_idx < 0 or r_idx >= filt.size:
+                            continue
+                        b = _curtin_beat_borders(filt, int(r_idx), fs, adc_per_mv, heart_rate)
+                        if b is None:
+                            continue
+                        beat_onsets[beat_i].append(b[0])
+                        beat_offsets[beat_i].append(b[1])
+                print(
+                    f" [GlobalQRS] dropped {len(rejected_leads)} lead(s) whose width "
+                    f"exceeded {limit:.0f} ms ({GLOBAL_QRS_OUTLIER_RATIO}x the "
+                    f"{cohort_median:.0f} ms cohort median): "
+                    f"{', '.join(sorted(rejected_leads))}"
+                )
+            else:
+                rejected_leads = []
+
         # Per beat: the outer edge of the lead ensemble, trimmed of outliers.
         global_onsets = []
         global_offsets = []
@@ -1337,6 +1385,7 @@ def compute_global_qrs_duration_12lead(
             "leads_total":     len(lead_signals),
             "beats_used":      len(global_onsets),
             "per_lead_qrs_ms": per_lead_qrs,
+            "rejected_leads":  rejected_leads,
         }
 
     except Exception as e:

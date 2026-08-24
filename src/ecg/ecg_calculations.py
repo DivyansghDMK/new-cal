@@ -1045,6 +1045,38 @@ def calculate_hr_rr(lead_data: np.ndarray, fs: float = 500.0,
 # scheduled to occupy at most ~5% of wall-clock time, clamped to 1-4 s. A fast
 # desktop refreshes every second; a low-spec box backs itself off instead of
 # stuttering the trace.
+# ── Global multi-lead QRS: OFF by default ────────────────────────────────────
+# Validated against four real 12-lead recordings from one patient, compared with
+# a reference device reading the same samples:
+#
+#     path          mean |error|   repeatability (3 recordings, same patient)
+#     single-lead      34 ms        0 ms spread   (-44, -44, -44, -3)
+#     global 12-lead   40 ms       10 ms spread   (+40, +34, +30, +55)
+#
+# The global boundary rule takes the earliest onset and latest offset across
+# leads. That assumes every per-lead boundary is correct and differs only by
+# projection — but on real signal some leads' border search FAILS and runs to
+# the edge of its window, and the rule cannot tell a failed search from a
+# genuinely late offset. Outlier rejection (see qrs_detection) removed most of
+# the instability, 104 ms spread down to 10 ms, but the result still reads
+# 30-55 ms wide, and single-lead remains both closer and perfectly repeatable.
+#
+# The synthetic validation that originally justified this used IDENTICAL leads,
+# where there are no per-lead failures to amplify — which is precisely why it
+# passed while real data does not.
+#
+# The implementation and its tests are kept: the underlying idea is sound (a
+# single lead systematically under-reads a wide QRS, by a consistent -44 ms on
+# these recordings) and it should be revisited once the per-lead delineation is
+# reliable enough to support a rule that takes extremes. Until then it must not
+# alter a clinical measurement.
+#
+# Set ECG_GLOBAL_QRS=1 to enable it for validation work.
+import os as _os
+GLOBAL_QRS_ENABLED: bool = str(
+    _os.getenv("ECG_GLOBAL_QRS", "")
+).strip().lower() in {"1", "true", "yes", "on"}
+
 _GLOBAL_QRS_REFRESH_SEC: float = 1.0
 _GLOBAL_QRS_MAX_REFRESH_SEC: float = 4.0
 _GLOBAL_QRS_DUTY_CYCLE: float = 0.05
@@ -1174,7 +1206,7 @@ def calculate_all_ecg_metrics(
         # wavefront, so its onset is late and its offset early — Lead II alone
         # reads 10-20 ms short. With the other leads in hand the width is taken
         # from the earliest onset to the latest offset across the whole set.
-        if all_lead_data:
+        if all_lead_data and GLOBAL_QRS_ENABLED:
             cache_key = instance_id or "_default"
             now = time.monotonic()
             cached = _global_qrs_cache.get(cache_key)
