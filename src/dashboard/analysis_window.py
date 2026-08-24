@@ -230,6 +230,9 @@ class InteractiveLeadCanvas(FigureCanvas):
         if xd is None:
             return
 
+        if not self.parent_window.lead_has_visible_data(self.lead_name):
+            return
+
         if event.button == 1:  # Left click
             if tool == TOOL_SELECT:
                 self.expand_requested.emit(self.lead_name)
