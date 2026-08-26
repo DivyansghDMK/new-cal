@@ -1605,7 +1605,7 @@ class ECGMenu(QGroupBox):
             },
             {
                 'title': 'EMG Filter',
-                'options': [("25Hz", "25"), ("35Hz", "35"), ("40Hz", "40"), ("75Hz", "75"), ("100Hz", "100"), ("150Hz", "150")],
+                'options': [("off", "off"), ("25Hz", "25"), ("35Hz", "35"), ("40Hz", "40"), ("75Hz", "75"), ("100Hz", "100"), ("150Hz", "150")],
                 'setting_key': 'filter_emg'
             },
             {

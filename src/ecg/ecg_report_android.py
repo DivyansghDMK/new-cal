@@ -52,6 +52,12 @@ REPORT_DEMO_MODE = False
 # So ADC_per_mm = 6400/(wave_gain*5) = 1280/wave_gain
 # At wave_gain=10: ADC_per_mm = 128  ✓
 ADC_PER_MM    = 128.0   # updated dynamically from wave_gain setting in generate_report()
+# Gaussian smoothing applied to each printed strip, in samples.
+#   0.0 = off, prints every corner exactly as acquired
+#   0.5 = light — rounds the simulator's piecewise-linear corners, costs ~1% amplitude
+#   0.8 = the old default — visibly smoother but takes ~5% off the S wave
+# Set to 0.0 so the report prints the acquired samples with nothing applied.
+REPORT_SMOOTH_SIGMA = 0.0
 
 COL_MINOR = '#fce8e8'   # very light pink — minor 1mm grid
 COL_MAJOR = '#e8a0a0'   # soft pink-red  — major 5mm grid
@@ -101,10 +107,7 @@ def generate_report(
     global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM, REPORT_DEMO_MODE
     global REPORT_AC_SETTING, REPORT_EMG_SETTING, REPORT_DFT_SETTING
     ECG_FS = float(fs)
-    effective_speed = float(speed_mm_s) if speed_mm_s is not None else FIXED_SPEED
-    if effective_speed <= 0:
-        effective_speed = FIXED_SPEED
-    MM_PER_SAMPLE = effective_speed / ECG_FS
+    # effective_speed is resolved below, once the user's Settings are loaded.
 
     REPORT_DEMO_MODE = bool(demo_mode)
 
@@ -144,6 +147,24 @@ def generate_report(
     REPORT_DFT_SETTING = dft_setting
     print(f"[ecg_report_android] Filter settings — AC:{ac_setting}  EMG:{emg_setting}  DFT:{dft_setting}")
 
+    # Paper speed: an explicit speed_mm_s from the caller wins (demo mode), otherwise
+    # use the wave_speed the user set in Settings, so the printed waves are spaced
+    # exactly as they appear on the live 12-lead display.
+    if speed_mm_s is None:
+        try:
+            effective_speed = float(_get_filter_setting("wave_speed", "25"))
+        except (TypeError, ValueError):
+            effective_speed = FIXED_SPEED
+    else:
+        try:
+            effective_speed = float(speed_mm_s)
+        except (TypeError, ValueError):
+            effective_speed = FIXED_SPEED
+    if effective_speed <= 0:
+        effective_speed = FIXED_SPEED
+    MM_PER_SAMPLE = effective_speed / ECG_FS
+    print(f"[ecg_report_android] wave_speed={effective_speed} mm/s  →  MM_PER_SAMPLE={MM_PER_SAMPLE:.5f}")
+
     # Read wave_gain from settings to set correct ADC→mm scaling
     ac_freq = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
     if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
@@ -157,8 +178,17 @@ def generate_report(
     frozen = dict(frozen or {})
     frozen["filter_band"] = filter_band
     frozen["ac_frequency"] = ac_freq
-    frozen["speed_text"] = f"{effective_speed:.1f} mm/s"
-    frozen["gain_text"] = f"{FIXED_GAIN:.1f} mm/mV"
+    # Header label only: print the speed/gain the user set in Settings (live).
+    # The waveform itself keeps the standard report scaling — layout unchanged.
+    _label_speed = effective_speed
+    try:
+        _label_gain = float(_get_filter_setting("wave_gain", "10"))
+        if _label_gain <= 0:
+            _label_gain = FIXED_GAIN
+    except (TypeError, ValueError):
+        _label_gain = FIXED_GAIN
+    frozen["speed_text"] = f"{_label_speed:.1f} mm/s"
+    frozen["gain_text"] = f"{_label_gain:.1f} mm/mV"
     wave_gain_val = 10.0
     try:
         wg = _get_filter_setting("wave_gain", "10")
@@ -203,7 +233,10 @@ def generate_report(
         if auto_target_samples:
             _ts = None
         else:
-            _ts = int(round(ECG_FS * REPORT_STRIP_SECONDS))
+            # Same printed strip length in mm at any paper speed: a slower speed
+            # needs proportionally more seconds to cover the same millimetres.
+            _strip_seconds = REPORT_STRIP_SECONDS * (FIXED_SPEED / max(effective_speed, 1e-6))
+            _ts = int(round(ECG_FS * _strip_seconds))
 
         if fmt == '12_1':
             _draw_1x12(ax, lead_mv, PW, PH, target_samples=_ts, lead_seq=lead_seq)
@@ -902,11 +935,13 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
     if arr.size < 2:
         return arr
 
+    width_n = int(width_mm / max(MM_PER_SAMPLE, 1e-9)) + 1
     if target_samples is not None:
-        core_n = min(arr.size, int(target_samples))
+        # Clamp to the panel width so a faster paper speed cannot overrun the strip.
+        core_n = min(arr.size, int(target_samples), width_n)
         start_idx = max(0, arr.size - core_n)
     else:
-        core_n = min(arr.size, int(width_mm / MM_PER_SAMPLE) + 1)
+        core_n = min(arr.size, width_n)
         # Auto-fit mode should still use the newest segment (not the oldest).
         start_idx = max(0, arr.size - core_n)
 
@@ -922,7 +957,9 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         return work
 
     try:
-        from ecg.ecg_filters import apply_ecg_filters
+        from ecg.ecg_filters import apply_ecg_filters, restore_frontend_droop
+        # Undo the front end's AC-coupling droop first, when enabled (off by default).
+        work = restore_frontend_droop(work, float(ECG_FS))
         ac_param = REPORT_AC_SETTING if REPORT_AC_SETTING not in ("off", "") else None
         emg_param = REPORT_EMG_SETTING if REPORT_EMG_SETTING not in ("off", "") else None
         dft_param = REPORT_DFT_SETTING if REPORT_DFT_SETTING not in ("off", "") else None
@@ -961,9 +998,9 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         pass
 
     try:
-        from scipy.ndimage import gaussian_filter1d
-        if work.size > 5:
-            work = gaussian_filter1d(work, sigma=0.8)
+        if REPORT_SMOOTH_SIGMA > 0 and work.size > 5:
+            from scipy.ndimage import gaussian_filter1d
+            work = gaussian_filter1d(work, sigma=REPORT_SMOOTH_SIGMA)
     except Exception:
         pass
 

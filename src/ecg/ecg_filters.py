@@ -158,6 +158,87 @@ def sharpen_qrs_gated(ecg: np.ndarray, fs: float = 500.0, alpha: float = 0.3) ->
         return ecg
 
 
+# ─── Filter implementation modes ─────────────────────────────────────────────
+# "adaptive" cancels mains with an LMS estimator (what commercial carts do): it
+# subtracts a tracked 50/60 Hz sinusoid instead of notching a whole band, so the
+# QRS spectrum is untouched. "notch" is the previous fixed IIR notch.
+AC_FILTER_MODE = "adaptive"
+
+# "fir" uses a linear-phase FIR low-pass for the muscle filter; "butter" is the
+# previous 4th-order Butterworth.
+EMG_FILTER_TYPE = "butter"
+
+# Baseline estimator for the DFT 0.5 setting:
+#   "median2"     two median passes (200 ms then 600 ms) — the published
+#                 Van Alsté method commercial carts descend from
+#   "spline"      one anchor per beat on the PQ segment, cubic-spline baseline
+#                 (Meyer & Keiser) — keeps genuine ST shift intact
+#   "median_mean" the previous median(120 ms) + moving-average implementation
+BASELINE_METHOD = "spline"
+# Only used by "median_mean": size the averaging window from the measured RR.
+BASELINE_RR_ADAPTIVE = False
+
+
+def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
+                             notch_freq: float = 50.0, window_s: float = 1.0,
+                             blank_qrs: bool = True) -> np.ndarray:
+    """Cancel mains by least-squares fitting the interference and subtracting it.
+
+    In each overlapping window the amplitude and phase of the mains tone are found
+    by projecting the signal onto cos/sin at notch_freq, using only samples OUTSIDE
+    the QRS complexes so the spike cannot bias the fit. Only that one sinusoid is
+    removed, so unlike a notch nothing else in the QRS spectrum is touched and no
+    ringing is injected around sharp edges. Windows are cross-faded so the
+    amplitude can track drift without a step at the seams.
+    """
+    x = np.asarray(signal, dtype=float)
+    n = x.size
+    if n < int(0.5 * sampling_rate):
+        return x
+    try:
+        t = np.arange(n) / float(sampling_rate)
+        c = np.cos(2.0 * np.pi * notch_freq * t)
+        s_ = np.sin(2.0 * np.pi * notch_freq * t)
+
+        usable = np.ones(n, dtype=bool)
+        if blank_qrs:
+            try:
+                usable = ~detect_qrs_regions(x - np.mean(x), sampling_rate)
+                if usable.sum() < n // 4:
+                    usable = np.ones(n, dtype=bool)
+            except Exception:
+                usable = np.ones(n, dtype=bool)
+
+        win = max(int(window_s * sampling_rate), int(0.2 * sampling_rate))
+        hop = max(win // 2, 1)
+        est = np.zeros(n)
+        wsum = np.zeros(n)
+        for start in range(0, max(n - win, 0) + 1, hop):
+            end = min(start + win, n)
+            seg = slice(start, end)
+            m = usable[seg]
+            if m.sum() < 20:
+                m = np.ones(end - start, dtype=bool)
+            cs, ss = c[seg][m], s_[seg][m]
+            y = x[seg][m] - np.mean(x[seg][m])
+            # 2x2 normal equations for A*cos + B*sin
+            a11 = float(cs @ cs); a12 = float(cs @ ss); a22 = float(ss @ ss)
+            det = a11 * a22 - a12 * a12
+            if abs(det) < 1e-9:
+                continue
+            b1 = float(cs @ y); b2 = float(ss @ y)
+            A = (a22 * b1 - a12 * b2) / det
+            B = (a11 * b2 - a12 * b1) / det
+            taper = np.hanning(end - start) + 1e-6
+            est[seg] += (A * c[seg] + B * s_[seg]) * taper
+            wsum[seg] += taper
+        wsum[wsum == 0] = 1.0
+        return x - est / wsum
+    except Exception as e:
+        print(f" Adaptive AC filter failed ({e}) — falling back to notch")
+        return signal
+
+
 def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) -> np.ndarray:
     """
     Apply AC (Notch) Filter to remove power line interference
@@ -191,6 +272,9 @@ def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) ->
             print(f" AC filter frequency {notch_freq}Hz is invalid for sampling rate {sampling_rate}Hz")
             return signal
         
+        if str(AC_FILTER_MODE).lower() == "adaptive":
+            return apply_ac_filter_adaptive(signal, sampling_rate, notch_freq)
+
         # Design IIR notch filter and convert to SOS for numerical stability
         b, a = iirnotch(w0, quality_factor)
         from scipy.signal import tf2sos, sosfiltfilt
@@ -248,6 +332,43 @@ def stabilize_report_edges(signal: np.ndarray, sampling_rate: float, edge_ms: fl
     return out
 
 
+# ─── Front-end droop compensation (square-wave / calibration work) ────────────
+# The acquisition front end is AC-coupled with a ~0.49 s time constant (~0.32 Hz),
+# so a true square input prints with a sagging top. That sag is created BEFORE the
+# samples reach this software — it cannot be "switched off" here, only inverted.
+#
+# Set BASELINE_RESTORE_TAU_S to the measured time constant (0.49) to reconstruct the
+# original square; leave it at 0.0 to disable. Keep it OFF for patient recordings:
+# the inverse of a high-pass is an integrator, so electrode drift and motion that the
+# front end removes would be amplified back into the trace.
+BASELINE_RESTORE_TAU_S = 0.0
+
+
+def restore_frontend_droop(signal, sampling_rate: float = 500.0, tau_s: float = None) -> np.ndarray:
+    """Invert the front end's first-order high-pass so square inputs print flat."""
+    tau = BASELINE_RESTORE_TAU_S if tau_s is None else tau_s
+    sig = np.asarray(signal, dtype=float)
+    if not tau or tau <= 0 or sig.size < 4:
+        return sig
+    try:
+        centred = sig - np.mean(sig)
+        restored = centred + np.cumsum(centred) / (float(sampling_rate) * float(tau))
+        # The integrator adds a slow ramp; remove it so the strip stays centred.
+        idx = np.arange(restored.size, dtype=float)
+        restored = restored - np.polyval(np.polyfit(idx, restored, 1), idx)
+        return restored + np.mean(sig)
+    except Exception:
+        return sig
+
+
+# ─── EMG stage master switch ──────────────────────────────────────────────────
+# The Set Filter dialog offers no "off" option for the EMG (muscle-artifact
+# low-pass), so it is disabled here in code. Set back to True to restore it —
+# every caller (live display, 12-lead report, HRV/hyperkalemia reports) honours
+# this flag because they all route through apply_emg_filter().
+EMG_FILTER_ENABLED = True
+
+
 def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) -> np.ndarray:
     """
     Apply EMG Filter (Low-pass filter) to suppress muscle artifacts.
@@ -261,6 +382,9 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
     Returns:
         Filtered signal
     """
+    if not EMG_FILTER_ENABLED:
+        return signal
+
     if not emg_filter or emg_filter == "off":
         return signal
     
@@ -283,6 +407,17 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
         # Normalize cutoff frequency
         normalized_cutoff = cutoff_freq / nyquist
         
+        if str(EMG_FILTER_TYPE).lower() == "fir":
+            # Linear-phase FIR: symmetric impulse response, so the group delay is
+            # constant and the passband edge does not overshoot asymmetrically the
+            # way an IIR does on a sharp QRS. Kaiser window trades ripple for a
+            # slightly wider transition, which is the right trade for ECG.
+            from scipy.signal import firwin
+            numtaps = int(round(4.0 * sampling_rate / max(cutoff_freq, 1.0)))
+            numtaps = max(21, min(numtaps | 1, max(21, (len(signal) // 3) | 1)))
+            taps = firwin(numtaps, cutoff_freq, window=('kaiser', 6.0), fs=sampling_rate)
+            return filtfilt(taps, [1.0], signal)
+
         # Design 4th order low-pass Butterworth filter (zero-phase)
         b, a = butter(4, normalized_cutoff, btype='low')
         
@@ -425,21 +560,96 @@ def apply_ecg_filters(
     if dft_filter:
         filtered = apply_dft_filter(filtered, sampling_rate, dft_filter)
     
-    # 2. EMG Filter second (removes muscle artifacts)
-    emg_suppresses_ac = False
-    if emg_filter and str(emg_filter).lower() != "off":
-        try:
-            if float(emg_filter) < 60:
-                emg_suppresses_ac = True
-        except ValueError:
-            pass
+    # 2. EMG Filter second (removes muscle artifacts) — only when selected
+    if EMG_FILTER_ENABLED and emg_filter and str(emg_filter).lower() != "off":
         filtered = apply_emg_filter(filtered, sampling_rate, emg_filter)
-    
-    # 3. AC Filter last (removes power line interference)
-    if ac_filter and not emg_suppresses_ac:
+
+    # 3. AC Filter last (removes power line interference).
+    # Applied whenever the user selected it. It used to be skipped silently when the
+    # EMG cutoff was under 60 Hz, so the header claimed a notch that never ran.
+    if ac_filter:
         filtered = apply_ac_filter(filtered, sampling_rate, ac_filter)
     
     return filtered
+
+
+def _estimate_rr_ms(signal: np.ndarray, sampling_rate: float = 500.0):
+    """Median RR in ms from a quick slope-based R detection; None if unreliable."""
+    x = np.asarray(signal, dtype=float)
+    if x.size < int(sampling_rate):
+        return None
+    d = np.abs(np.diff(x))
+    thr = np.percentile(d, 99.0)
+    if not np.isfinite(thr) or thr <= 0:
+        return None
+    idx = np.flatnonzero(d > thr)
+    if idx.size < 3:
+        return None
+    peaks, group = [], [idx[0]]
+    min_gap = int(0.20 * sampling_rate)
+    for k in idx[1:]:
+        if k - group[-1] <= min_gap:
+            group.append(k)
+        else:
+            peaks.append(group[0]); group = [k]
+    peaks.append(group[0])
+    if len(peaks) < 3:
+        return None
+    rr = np.diff(np.asarray(peaks, dtype=float)) / float(sampling_rate) * 1000.0
+    rr = rr[(rr > 250.0) & (rr < 2500.0)]
+    return float(np.median(rr)) if rr.size else None
+
+
+def apply_baseline_spline(signal: np.ndarray, sampling_rate: float = 500.0) -> np.ndarray:
+    """Beat-synchronous baseline removal (Meyer & Keiser cubic-spline method).
+
+    One anchor per beat is taken from the PQ segment — the isoelectric stretch
+    just before the QRS — and a cubic spline through those anchors becomes the
+    baseline estimate. Because every anchor sits on an isoelectric point and none
+    sit on the ST segment, genuine ST elevation or depression passes through
+    untouched, which a moving average or a median cannot guarantee.
+    """
+    x = np.asarray(signal, dtype=float)
+    n = x.size
+    if n < int(sampling_rate):
+        return x
+    try:
+        d = np.abs(np.diff(x))
+        thr = np.percentile(d, 99.0)
+        idx = np.flatnonzero(d > thr)
+        if idx.size < 3:
+            return x - np.mean(x)
+        peaks, group = [], [idx[0]]
+        min_gap = int(0.20 * sampling_rate)
+        for k in idx[1:]:
+            if k - group[-1] <= min_gap:
+                group.append(k)
+            else:
+                peaks.append(group[0]); group = [k]
+        peaks.append(group[0])
+        peaks = [p for p in peaks if p > int(0.08 * sampling_rate)]
+        if len(peaks) < 3:
+            return x - np.mean(x)
+
+        # PQ window: 60 ms to 20 ms before the QRS onset marker
+        a, b = int(0.060 * sampling_rate), int(0.020 * sampling_rate)
+        xs, ys = [], []
+        for p_i in peaks:
+            lo, hi = max(0, p_i - a), max(1, p_i - b)
+            if hi - lo >= 3:
+                xs.append(0.5 * (lo + hi))
+                ys.append(float(np.median(x[lo:hi])))
+        if len(xs) < 3:
+            return x - np.mean(x)
+
+        from scipy.interpolate import CubicSpline
+        cs = CubicSpline(np.asarray(xs, dtype=float), np.asarray(ys, dtype=float),
+                         extrapolate=True)
+        baseline = cs(np.arange(n, dtype=float))
+        return x - baseline
+    except Exception as e:
+        print(f" Spline baseline failed ({e})")
+        return signal
 
 
 def apply_baseline_wander_median_mean(signal: np.ndarray, sampling_rate: float = 500) -> np.ndarray:
@@ -484,9 +694,36 @@ def apply_baseline_wander_median_mean(signal: np.ndarray, sampling_rate: float =
         # Apply median filter to remove QRS influence
         b1 = medfilt(signal, kernel_size=median_window)
         
-        # Step 2: Moving average (600-1000 ms window)
+        # Step 2: Moving average — sized from the beat, not fixed.
+        # A fixed 800 ms window spans more than one RR above ~75 bpm, which lets
+        # QRS/T energy into the baseline estimate and lifts the whole ST segment
+        # (measured: +0.56 mV of false ST elevation at 120 bpm).
         # Use 800 ms as middle value: 0.8 * Fs
-        mean_window_ms = 800.0  # milliseconds
+        if str(BASELINE_METHOD).lower() == "spline":
+            return apply_baseline_spline(signal, sampling_rate)
+
+        if str(BASELINE_METHOD).lower() == "median2":
+            # Two median passes: the first is longer than a QRS so the spike cannot
+            # survive it, the second is longer than a T wave. Medians ignore the
+            # tall/brief features entirely, where a moving average averages them in
+            # and drags the ST segment with it.
+            def _odd(v):
+                v = int(max(3, v));  return v + 1 if v % 2 == 0 else v
+            w1 = _odd(0.200 * sampling_rate)
+            w2 = _odd(0.600 * sampling_rate)
+            w1 = min(w1, _odd(len(signal) // 2)); w2 = min(w2, _odd(len(signal) // 2))
+            base = medfilt(medfilt(signal, kernel_size=w1), kernel_size=w2)
+            return signal - base
+
+        mean_window_ms = 800.0
+        if BASELINE_RR_ADAPTIVE:
+            try:
+                rr_ms = _estimate_rr_ms(signal, sampling_rate)
+                if rr_ms:
+                    # Stay inside one beat: 80% of RR, clamped to a sane range.
+                    mean_window_ms = float(np.clip(0.8 * rr_ms, 200.0, 800.0))
+            except Exception:
+                mean_window_ms = 800.0  # milliseconds
         mean_window = int(mean_window_ms * sampling_rate / 1000.0)
         mean_window = max(10, min(mean_window, len(b1) // 2))  # Ensure reasonable
         

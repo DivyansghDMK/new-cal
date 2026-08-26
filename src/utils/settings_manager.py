@@ -39,12 +39,6 @@ class SettingsManager:
             "factory_reset": "cancel"
         }
         self.settings = self.load_settings()
-        if self.settings.get("filter_emg") == "150":
-            self.settings["filter_emg"] = "25"
-            try:
-                self.save_settings()
-            except Exception:
-                pass
 
     def _normalize_filter_value(self, key, value):
         """
@@ -68,6 +62,8 @@ class SettingsManager:
             return "off"
 
         if key == "filter_emg":
+            if text in ("off", "", "none", "0"):
+                return "off"
             match = re.search(r"(\d+(?:\.\d+)?)", text)
             if match:
                 try:

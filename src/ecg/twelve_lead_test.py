@@ -810,11 +810,8 @@ class ECGTestPage(QWidget):
         # Use a shared SettingsManager when provided (keeps filters/settings consistent
         # across dashboard mini-wave, overlays, expanded lead view, and reports).
         self.settings_manager = settings_manager if settings_manager is not None else SettingsManager()
-        # Ensure AC filter starts at "50" each launch (Set Filter default)
-        try:
-            self.settings_manager.set_setting("filter_ac", "50")
-        except Exception as e:
-            print(f" Could not enforce default AC filter state: {e}")
+        # AC filter is whatever the user last chose in Set Filter — do not force it
+        # back to "50" on every launch; that silently discarded an "off" selection.
         self.current_language = self.settings_manager.get_setting("system_language", "en")
     
         # Initialize demo manager
@@ -853,7 +850,9 @@ class ECGTestPage(QWidget):
         
         # Filter Pipeline Configuration (from standalone_ecg_plot.py)
         self.SAMPLE_RATE = 500
-        self.SMOOTH_SIGMA = 0.8
+        # Display smoothing in samples: 0 = off, 0.5 = light (matches the report),
+        # 0.8 = the old default. Only rounds corners; it is not a filter.
+        self.SMOOTH_SIGMA = 0.5
         self.INTERP_FACTOR = 2
         # 50 Hz NOTCH FILTER
         self.b_notch, self.a_notch = iirnotch(w0=50.0, Q=30.0, fs=self.SAMPLE_RATE)
@@ -8056,8 +8055,16 @@ class ECGTestPage(QWidget):
             if display_mode == "frozen" and frozen_snapshot and any(np.asarray(arr).size > 0 for arr in frozen_snapshot):
                 snap_raw = [np.asarray(arr, dtype=float).copy() for arr in frozen_snapshot]
             else:
-                # Capture exact 10 seconds of waveform data for all report formats
+                # Capture enough waveform to fill the printed strip. 10 s fills it at
+                # the standard 25 mm/s; a slower paper speed needs proportionally more
+                # (the report layer trims whatever does not fit the strip width).
                 _snap_sec = 10.0
+                try:
+                    _snap_speed = float(self.settings_manager.get_setting('wave_speed', '25') or 25) if self.settings_manager else 25.0
+                    if _snap_speed > 0:
+                        _snap_sec = max(10.0, min(60.0, 10.0 * (25.0 / _snap_speed)))
+                except Exception:
+                    _snap_sec = 10.0
                 snap_raw = self._capture_report_snapshot(window_sec=_snap_sec)
         finally:
             self._report_generating = False
@@ -10625,7 +10632,7 @@ class ECGTestPage(QWidget):
 
                             # --- PIPELINE STEP 2: Gaussian Smoothing ---
                             try:
-                                if len(raw) > 5:
+                                if self.SMOOTH_SIGMA > 0 and len(raw) > 5:
                                     raw = gaussian_filter1d(raw, sigma=self.SMOOTH_SIGMA)
                             except Exception:
                                 pass
@@ -11346,7 +11353,7 @@ class ECGTestPage(QWidget):
                             
                             # --- PIPELINE STEP 2: Gaussian Smoothing (Standalone) ---
                             try:
-                                if len(scaled_data) > 5:
+                                if self.SMOOTH_SIGMA > 0 and len(scaled_data) > 5:
                                     scaled_data = gaussian_filter1d(scaled_data, sigma=self.SMOOTH_SIGMA)
                             except Exception:
                                 pass
