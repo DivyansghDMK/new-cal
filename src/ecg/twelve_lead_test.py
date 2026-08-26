@@ -774,6 +774,14 @@ def create_pink_grid_brush():
     return QBrush(pixmap)
 
 
+# One strip on the printed report is 19.5 mm tall, and at the clinical 10 mm/mV
+# that is ±0.975 mV. The hardware sends 1280 ADC per mV, so the same window on
+# screen is ±1248 counts. Using it here puts the live display on the report's
+# scale: a wave that looks small on screen now prints small too, instead of the
+# display squeezing ±1.6 mV (the whole 0-4095 ADC span) into each panel.
+DISPLAY_HALF_SPAN_ADC = 1248
+
+
 class ECGTestPage(QWidget):
     LEADS_MAP = {
         "Lead II ECG Test": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
@@ -1359,7 +1367,7 @@ class ECGTestPage(QWidget):
             plot_widget.setTitle(self.leads[i], color=lead_color, size='10pt')
             # Clinical 12-lead: symmetric Y-axis centered at 0 for ALL leads.
             # aVR is naturally negative from its formula; no axis inversion needed.
-            y_min, y_max = -2048, 2048
+            y_min, y_max = -DISPLAY_HALF_SPAN_ADC, DISPLAY_HALF_SPAN_ADC
             plot_widget.setYRange(y_min, y_max)
             vb = plot_widget.getViewBox()
             if vb is not None:
@@ -1868,7 +1876,7 @@ class ECGTestPage(QWidget):
                 self.data_lines[i].setData(x_axis, processed, connect='finite')
 
                 if i < len(self.plot_widgets):
-                    y_min, y_max = -2048, 2048
+                    y_min, y_max = -DISPLAY_HALF_SPAN_ADC, DISPLAY_HALF_SPAN_ADC
                     self.plot_widgets[i].setYRange(y_min, y_max, padding=0)
                     try:
                         vb = self.plot_widgets[i].getViewBox()
@@ -4949,7 +4957,7 @@ class ECGTestPage(QWidget):
             
             # Clinical 12-lead ECG: symmetric Y-axis centred at 0 for ALL leads.
             # aVR's negative polarity comes from the formula (-(I+II)/2), not a flipped axis.
-            y_min, y_max = -2048, 2048
+            y_min, y_max = -DISPLAY_HALF_SPAN_ADC, DISPLAY_HALF_SPAN_ADC
             
             # Update the plot's Y-range (fixed, no auto-scaling)
             self.plot_widgets[plot_index].setYRange(y_min, y_max, padding=0)
@@ -6669,7 +6677,7 @@ class ECGTestPage(QWidget):
             
             # Clinical 12-lead ECG: symmetric Y-axis centred at 0 for ALL leads.
             # aVR's negative polarity comes from the formula (-(I+II)/2), not a flipped axis.
-            y_min, y_max = -2048, 2048
+            y_min, y_max = -DISPLAY_HALF_SPAN_ADC, DISPLAY_HALF_SPAN_ADC
             center_str = "0"
             
             # OPTIMIZED: Reduce Y-range print frequency for better performance
@@ -9108,7 +9116,22 @@ class ECGTestPage(QWidget):
         samples_to_show = int(sampling_rate * seconds_to_show)
         return max(1, samples_to_show)
 
+    def _overlay_half_span(self):
+        """Vertical half-window for one overlay strip, in plotted units.
+
+        Graph mode measures the axis height in millimetres and derives the span so
+        the trace sits on the printed-paper scale; otherwise fall back to the
+        report-strip equivalent."""
+        try:
+            v = getattr(self, "_graph_mode_half_span_adc", None)
+            if v and getattr(self, "_current_overlay_mode", None) in ("graph", "light", "dark"):
+                return float(v)
+        except Exception:
+            pass
+        return float(DISPLAY_HALF_SPAN_ADC)
+
     def _update_overlay_plots(self):
+        _half = self._overlay_half_span()
         # If frozen, we only proceed if we have a valid snapshot to draw.
         # Otherwise, if frozen and no snapshot, return.
         if getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is None:
@@ -9295,18 +9318,18 @@ class ECGTestPage(QWidget):
                     # Same as main 12-lead grid view
                     lead_name = self.leads[idx] if idx < len(self.leads) else ""
                     if lead_name == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ymin, ymax = -2048 - _half, -2048 + _half
                     else:
-                        ymin, ymax = 0, 4095
+                        ymin, ymax = 2048 - _half, 2048 + _half
                     
                     ax.set_ylim(ymin, ymax)
                 else:
                     # Default range when no data
                     lead_name = self.leads[idx] if idx < len(self.leads) else ""
                     if lead_name == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ymin, ymax = -2048 - _half, -2048 + _half
                     else:
-                        ymin, ymax = 0, 4095
+                        ymin, ymax = 2048 - _half, 2048 + _half
                     ax.set_ylim(ymin, ymax)
                 
                 # Set x-limits
@@ -9602,15 +9625,24 @@ class ECGTestPage(QWidget):
                     axis_width_mm = width_mm
                     axes = getattr(self, "_overlay_axes", [])
                     if axes:
-                        axis_widths = []
+                        axis_widths, axis_heights = [], []
                         for ax in axes:
                             try:
                                 bbox = ax.get_position()
                                 axis_widths.append(float(bbox.width) * width_mm)
+                                axis_heights.append(float(bbox.height) * height_mm)
                             except Exception:
                                 pass
                         if axis_widths:
                             axis_width_mm = max(1.0, min(axis_widths))
+                        if axis_heights:
+                            # Put the vertical axis on the paper scale too, so 1 mV
+                            # spans exactly wave_gain millimetres of the drawn grid.
+                            # Half-span = height_mm x 64 falls out of 1 mV = 1280 ADC
+                            # and the wave_gain/10 factor already applied to the data
+                            # (19.5 mm -> 1248, the height of one report strip).
+                            self._graph_mode_half_span_adc = max(
+                                50.0, min(axis_heights) * 64.0)
 
                     target_buffer_len = int(round(axis_width_mm * samples_per_mm)) + 1
                     self._graph_mode_target_buffer_len = max(2, target_buffer_len)
@@ -9984,6 +10016,7 @@ class ECGTestPage(QWidget):
         self._overlay_timer.start(100)
 
     def _update_two_column_plots(self):
+        _half = self._overlay_half_span()
         # If frozen, we only proceed if we have a valid snapshot to draw.
         # Otherwise, if frozen and no snapshot, return.
         if getattr(self, "_grid_frozen", False) and getattr(self, "_replay_snapshot", None) is None:
@@ -10174,17 +10207,17 @@ class ECGTestPage(QWidget):
                     # Set fixed Y-axis range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
                     # Same as main 12-lead grid view
                     if lead == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ymin, ymax = -2048 - _half, -2048 + _half
                     else:
-                        ymin, ymax = 0, 4095
+                        ymin, ymax = 2048 - _half, 2048 + _half
                     
                     ax.set_ylim(ymin, ymax)
                 else:
                     # Default range when no data
                     if lead == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ymin, ymax = -2048 - _half, -2048 + _half
                     else:
-                        ymin, ymax = 0, 4095
+                        ymin, ymax = 2048 - _half, 2048 + _half
                     ax.set_ylim(ymin, ymax)
                 
                 # Set x-limits
