@@ -250,6 +250,21 @@ def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
         return signal
 
 
+def _compensate_zero_phase_cutoff(cutoff_hz: float, order: int, highpass: bool = False) -> float:
+    """Shift a Butterworth cutoff so filtfilt lands -3 dB on the requested frequency.
+
+    filtfilt runs the filter forwards and backwards, so the magnitude response is
+    squared and the real -3 dB point moves inward — a "150 Hz" low-pass measured
+    134 Hz, well inside the 150 Hz diagnostic bandwidth IEC 60601-2-25 requires.
+    Solving |H(f)|^2 = 1/2 for a Butterworth gives the correction below.
+    """
+    try:
+        factor = (2.0 ** 0.5 - 1.0) ** (1.0 / (2.0 * order))   # 0.8957 at order 4
+        return cutoff_hz * factor if highpass else cutoff_hz / factor
+    except Exception:
+        return cutoff_hz
+
+
 def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) -> np.ndarray:
     """
     Apply AC (Notch) Filter to remove power line interference
@@ -429,7 +444,10 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
             taps = firwin(numtaps, cutoff_freq, window=('kaiser', 6.0), fs=sampling_rate)
             return filtfilt(taps, [1.0], signal)
 
-        # Design 4th order low-pass Butterworth filter (zero-phase)
+        # Design 4th order low-pass Butterworth filter (zero-phase). The cutoff is
+        # pre-compensated so filtfilt's squared response is -3 dB at the setting.
+        design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4), nyquist * 0.95)
+        normalized_cutoff = design_cut / nyquist
         b, a = butter(4, normalized_cutoff, btype='low')
         
         # Apply filter (zero-phase filtering)
@@ -468,7 +486,9 @@ def apply_dft_filter(signal: np.ndarray, sampling_rate: float, dft_filter: str) 
         # Design high-pass Butterworth filter for baseline wander removal
         nyquist = sampling_rate / 2.0
         
-        # Normalize cutoff frequency
+        # Pre-compensate for the zero-phase double pass (see the low-pass above),
+        # so a "0.05 Hz" setting really is -3 dB at 0.05 Hz.
+        cutoff_freq = _compensate_zero_phase_cutoff(cutoff_freq, 2, highpass=True)
         normalized_cutoff = cutoff_freq / nyquist
         
         # Ensure cutoff is within valid range
@@ -611,6 +631,17 @@ def _estimate_rr_ms(signal: np.ndarray, sampling_rate: float = 500.0):
     return float(np.median(rr)) if rr.size else None
 
 
+def apply_baseline_wander_median_mean_fixed(signal: np.ndarray, sampling_rate: float = 500.0) -> np.ndarray:
+    """median+mean baseline, used as the fallback when beat anchors are unusable."""
+    global BASELINE_METHOD
+    previous = BASELINE_METHOD
+    try:
+        BASELINE_METHOD = "median_mean"
+        return apply_baseline_wander_median_mean(signal, sampling_rate)
+    finally:
+        BASELINE_METHOD = previous
+
+
 def apply_baseline_spline(signal: np.ndarray, sampling_rate: float = 500.0) -> np.ndarray:
     """Beat-synchronous baseline removal (Meyer & Keiser cubic-spline method).
 
@@ -639,8 +670,16 @@ def apply_baseline_spline(signal: np.ndarray, sampling_rate: float = 500.0) -> n
                 peaks.append(group[0]); group = [k]
         peaks.append(group[0])
         peaks = [p for p in peaks if p > int(0.08 * sampling_rate)]
-        if len(peaks) < 3:
-            return x - np.mean(x)
+        if len(peaks) < 4:
+            return apply_baseline_wander_median_mean_fixed(x, sampling_rate)
+
+        # Anchors are only meaningful if the detections are really beats. On a
+        # signal with no QRS the detector latches onto noise, and a spline through
+        # those points amplifies instead of flattening.
+        rr = np.diff(np.asarray(peaks, dtype=float)) / float(sampling_rate) * 1000.0
+        rr_ok = rr[(rr > 250.0) & (rr < 2500.0)]
+        if rr_ok.size < 3 or rr_ok.size < 0.6 * rr.size:
+            return apply_baseline_wander_median_mean_fixed(x, sampling_rate)
 
         # PQ window: 60 ms to 20 ms before the QRS onset marker
         a, b = int(0.060 * sampling_rate), int(0.020 * sampling_rate)
@@ -657,7 +696,14 @@ def apply_baseline_spline(signal: np.ndarray, sampling_rate: float = 500.0) -> n
         cs = CubicSpline(np.asarray(xs, dtype=float), np.asarray(ys, dtype=float),
                          extrapolate=True)
         baseline = cs(np.arange(n, dtype=float))
-        return x - baseline
+        out = x - baseline
+
+        # Safety net: a baseline estimator may only ever remove energy. If the
+        # spline came out larger than what it was given, the anchors were not on
+        # real isoelectric points and the curve is amplifying instead of levelling.
+        if np.std(out) > np.std(x - np.mean(x)) * 1.05:
+            return apply_baseline_wander_median_mean_fixed(x, sampling_rate)
+        return out
     except Exception as e:
         print(f" Spline baseline failed ({e})")
         return signal
