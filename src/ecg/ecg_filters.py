@@ -164,6 +164,14 @@ def sharpen_qrs_gated(ecg: np.ndarray, fs: float = 500.0, alpha: float = 0.3) ->
 # QRS spectrum is untouched. "notch" is the previous fixed IIR notch.
 AC_FILTER_MODE = "adaptive"
 
+# How many odd mains harmonics the adaptive canceller removes: 1 = the 50/60 Hz
+# fundamental only (default, measured to leave the waveform untouched), 3 = also
+# the 3rd harmonic. The 3rd harmonic dominates chest-lead pickup, but a step edge
+# has genuine energy at that frequency too, so removing it softens sharp
+# transitions by up to ~17% on a square-wave input. Raise it only for a lead that
+# is visibly buzzing and cannot be fixed electrically.
+AC_FILTER_HARMONICS = 1
+
 # "fir" uses a linear-phase FIR low-pass for the muscle filter; "butter" is the
 # previous 4th-order Butterworth.
 EMG_FILTER_TYPE = "butter"
@@ -181,39 +189,44 @@ BASELINE_RR_ADAPTIVE = False
 
 def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
                              notch_freq: float = 50.0, window_s: float = 1.0,
-                             blank_qrs: bool = True) -> np.ndarray:
-    """Cancel mains by least-squares fitting the interference and subtracting it.
+                             blank_qrs: bool = True, harmonics: int = 1) -> np.ndarray:
+    """Cancel mains and its odd harmonics by fitting them and subtracting.
 
-    In each overlapping window the amplitude and phase of the mains tone are found
-    by projecting the signal onto cos/sin at notch_freq, using only samples OUTSIDE
-    the QRS complexes so the spike cannot bias the fit. Only that one sinusoid is
+    In each overlapping window the amplitude and phase of the mains tone and its
+    odd harmonics are found by least squares, using only samples OUTSIDE the QRS
+    complexes so the spike cannot bias the fit. Only those exact frequencies are
     removed, so unlike a notch nothing else in the QRS spectrum is touched and no
-    ringing is injected around sharp edges. Windows are cross-faded so the
-    amplitude can track drift without a step at the seams.
+    ringing is injected around sharp edges. Windows are cross-faded so amplitude
+    can drift without a step at the seams.
+
+    Mains pickup on chest leads is rarely a pure sinusoid: the third harmonic
+    (150 Hz for 50 Hz mains) is often the larger component, so cancelling the
+    fundamental alone leaves the visible ripple behind.
     """
     x = np.asarray(signal, dtype=float)
     n = x.size
     if n < int(0.5 * sampling_rate):
         return x
     try:
+        # 50, 150, 250 ... keeping clear of Nyquist
+        freqs = [notch_freq * m for m in range(1, 2 * max(1, harmonics), 2)
+                 if notch_freq * m < 0.45 * sampling_rate]
+        if not freqs:
+            return x
         t = np.arange(n) / float(sampling_rate)
-        c = np.cos(2.0 * np.pi * notch_freq * t)
-        s_ = np.sin(2.0 * np.pi * notch_freq * t)
+        basis = np.column_stack([f(2.0 * np.pi * fq * t)
+                                 for fq in freqs for f in (np.cos, np.sin)])
 
         usable = np.ones(n, dtype=bool)
         if blank_qrs:
             try:
-                # Find the QRS complexes on a 5-35 Hz view of the signal, NOT on the
-                # raw trace: detect_qrs_regions() thresholds by amplitude percentile,
-                # so strong mains would have its own peaks flagged as QRS. Excluding
-                # those from the fit removes exactly the samples that carry the
-                # interference and the estimate collapses.
+                # Locate the QRS on a 5-35 Hz view, never on the raw trace:
+                # detect_qrs_regions() thresholds by amplitude percentile, so
+                # strong mains would get its own peaks flagged as QRS and the
+                # samples carrying the interference would be dropped from the fit.
                 b_qrs, a_qrs = butter(2, [5.0 / (sampling_rate / 2.0),
                                           35.0 / (sampling_rate / 2.0)], btype='band')
-                qrs_view = filtfilt(b_qrs, a_qrs, x - np.mean(x))
-                mask = detect_qrs_regions(qrs_view, sampling_rate)
-                # Never blank so much that the fit loses the interference: the QRS
-                # occupies ~10% of a beat, so anything past a third is a bad mask.
+                mask = detect_qrs_regions(filtfilt(b_qrs, a_qrs, x - np.mean(x)), sampling_rate)
                 if mask.sum() > n // 3:
                     mask = np.zeros(n, dtype=bool)
                 usable = ~mask
@@ -224,24 +237,21 @@ def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
         hop = max(win // 2, 1)
         est = np.zeros(n)
         wsum = np.zeros(n)
+        min_rows = 4 * basis.shape[1]
         for start in range(0, max(n - win, 0) + 1, hop):
-            end = min(start + win, n)
-            seg = slice(start, end)
+            stop = min(start + win, n)
+            seg = slice(start, stop)
             m = usable[seg]
-            if m.sum() < 20:
-                m = np.ones(end - start, dtype=bool)
-            cs, ss = c[seg][m], s_[seg][m]
+            if m.sum() < min_rows:
+                m = np.ones(stop - start, dtype=bool)
+            A = basis[seg][m]
             y = x[seg][m] - np.mean(x[seg][m])
-            # 2x2 normal equations for A*cos + B*sin
-            a11 = float(cs @ cs); a12 = float(cs @ ss); a22 = float(ss @ ss)
-            det = a11 * a22 - a12 * a12
-            if abs(det) < 1e-9:
+            try:
+                coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+            except Exception:
                 continue
-            b1 = float(cs @ y); b2 = float(ss @ y)
-            A = (a22 * b1 - a12 * b2) / det
-            B = (a11 * b2 - a12 * b1) / det
-            taper = np.hanning(end - start) + 1e-6
-            est[seg] += (A * c[seg] + B * s_[seg]) * taper
+            taper = np.hanning(stop - start) + 1e-6
+            est[seg] += (basis[seg] @ coef) * taper
             wsum[seg] += taper
         wsum[wsum == 0] = 1.0
         return x - est / wsum
@@ -255,7 +265,7 @@ def _compensate_zero_phase_cutoff(cutoff_hz: float, order: int, highpass: bool =
 
     filtfilt runs the filter forwards and backwards, so the magnitude response is
     squared and the real -3 dB point moves inward — a "150 Hz" low-pass measured
-    134 Hz, well inside the 150 Hz diagnostic bandwidth IEC 60601-2-25 requires.
+    134 Hz, well inside the 150 Hz diagnostic bandwidth IEC 60601-2-25 asks for.
     Solving |H(f)|^2 = 1/2 for a Butterworth gives the correction below.
     """
     try:
@@ -299,7 +309,8 @@ def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) ->
             return signal
         
         if str(AC_FILTER_MODE).lower() == "adaptive":
-            return apply_ac_filter_adaptive(signal, sampling_rate, notch_freq)
+            return apply_ac_filter_adaptive(signal, sampling_rate, notch_freq,
+                                            harmonics=AC_FILTER_HARMONICS)
 
         # Design IIR notch filter and convert to SOS for numerical stability
         b, a = iirnotch(w0, quality_factor)
