@@ -51,11 +51,12 @@ REPORT_DEMO_MODE = False
 # Empirically from 4_3 code: adc_per_box = 6400/wave_gain, box=5mm
 # So ADC_per_mm = 6400/(wave_gain*5) = 1280/wave_gain
 # At wave_gain=10: ADC_per_mm = 128  ✓
-# Measured against the Fluke: a 1 mV calibration square on lead II spans 1531 ADC
-# (235 edges), and V2's NSR complex then prints 11.2 small boxes, matching the
-# reference cart. The old 1280 was inherited from other code, never measured, and
-# made every trace ~20% too tall.
-ADC_PER_MV    = 1531.0
+# Measured against the Fluke at amplitude 1.00 mV: lead II's R wave spans 1184 ADC
+# (1183/1177/1191 across three captures, 0.5% spread), which is the setting's 1 mV
+# reference and prints as exactly 10 small boxes - matching the reference cart with
+# its filters off. Cross-checked against a 0.20 mV ST step, which then reads
+# 0.194 mV. The old 1280 was inherited from other code and never measured.
+ADC_PER_MV    = 1184.0
 ADC_PER_MM    = ADC_PER_MV / 10.0   # updated from wave_gain in generate_report()
 # Gaussian smoothing applied to each printed strip, in samples.
 #   0.0 = off, prints every corner exactly as acquired

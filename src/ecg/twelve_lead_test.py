@@ -775,12 +775,12 @@ def create_pink_grid_brush():
 
 
 # One strip on the printed report is 19.5 mm tall, and at the clinical 10 mm/mV
-# that is ±0.975 mV. The hardware sends 1531 ADC per mV (measured against the
-# Fluke's 1 mV calibration square), so the same window on screen is ±1493 counts.
+# that is ±0.975 mV. The hardware sends 1184 ADC per mV (measured against the
+# Fluke's 1.00 mV amplitude on lead II), so the same window on screen is ±1154 counts.
 # Using it here puts the live display on the report's scale: a wave that looks
 # small on screen now prints small too, instead of the display squeezing the whole
 # 0-4095 ADC span into each panel.
-ADC_PER_MV = 1531.0
+ADC_PER_MV = 1184.0
 DISPLAY_HALF_SPAN_ADC = 19.5 * ADC_PER_MV / 20.0
 
 
