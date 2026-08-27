@@ -176,6 +176,12 @@ AC_FILTER_HARMONICS = 1
 # previous 4th-order Butterworth.
 EMG_FILTER_TYPE = "butter"
 
+# Gate the muscle filter on the QRS: smooth between beats, hand the QRS back
+# untouched. Without this a 25 Hz cutoff smears the S wave into the J point,
+# because its 52 ms impulse response is longer than the 20 ms feature it is
+# filtering. Set False for a plain single-cutoff low-pass.
+EMG_QRS_GATED = True
+
 # Baseline estimator for the DFT 0.5 setting:
 #   "median2"     two median passes (200 ms then 600 ms) — the published
 #                 Van Alsté method commercial carts descend from
@@ -420,6 +426,14 @@ def restore_frontend_droop(signal, sampling_rate: float = 500.0, tau_s: float = 
 EMG_FILTER_ENABLED = True
 
 
+def _emg_lowpass_core(signal: np.ndarray, sampling_rate: float, cutoff_freq: float) -> np.ndarray:
+    """The plain zero-phase low-pass, cutoff already compensated for filtfilt."""
+    nyquist = sampling_rate / 2.0
+    design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4), nyquist * 0.95)
+    b, a = butter(4, design_cut / nyquist, btype='low')
+    return filtfilt(b, a, signal)
+
+
 def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) -> np.ndarray:
     """
     Apply EMG Filter (Low-pass filter) to suppress muscle artifacts.
@@ -458,6 +472,31 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
         # Normalize cutoff frequency
         normalized_cutoff = cutoff_freq / nyquist
         
+        if EMG_QRS_GATED:
+            # Commercial carts do not run one cutoff across the whole beat. The
+            # muscle filter smooths hard between beats and opens up through the
+            # QRS, so the spike keeps its amplitude and nothing smears into the
+            # J point (US5259387; others apply Savitzky-Golay only outside QRS).
+            # Here: filter everywhere, then cross-fade back to the untouched
+            # signal across the QRS.
+            try:
+                sig = np.asarray(signal, dtype=float)
+                smoothed = _emg_lowpass_core(sig, sampling_rate, cutoff_freq)
+                b_q, a_q = butter(2, [5.0 / (sampling_rate / 2.0),
+                                      35.0 / (sampling_rate / 2.0)], btype='band')
+                qrs = detect_qrs_regions(filtfilt(b_q, a_q, sig - np.mean(sig)), sampling_rate)
+                if qrs.any() and qrs.sum() < sig.size // 2:
+                    keep = qrs.astype(float)
+                    # raised-cosine edges so the hand-over is not a step
+                    fade = max(3, int(0.020 * sampling_rate))
+                    win = np.hanning(2 * fade + 1); win /= win.sum()
+                    keep = np.convolve(keep, win, mode="same")
+                    keep = np.clip(keep, 0.0, 1.0)
+                    return smoothed * (1.0 - keep) + sig * keep
+                return smoothed
+            except Exception as e:
+                print(f" Gated EMG filter failed ({e}) — using the plain low-pass")
+
         if str(EMG_FILTER_TYPE).lower() == "fir":
             # Linear-phase FIR: symmetric impulse response, so the group delay is
             # constant and the passband edge does not overshoot asymmetrically the
