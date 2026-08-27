@@ -51,7 +51,12 @@ REPORT_DEMO_MODE = False
 # Empirically from 4_3 code: adc_per_box = 6400/wave_gain, box=5mm
 # So ADC_per_mm = 6400/(wave_gain*5) = 1280/wave_gain
 # At wave_gain=10: ADC_per_mm = 128  ✓
-ADC_PER_MM    = 128.0   # updated dynamically from wave_gain setting in generate_report()
+# Measured against the Fluke: a 1 mV calibration square on lead II spans 1531 ADC
+# (235 edges), and V2's NSR complex then prints 11.2 small boxes, matching the
+# reference cart. The old 1280 was inherited from other code, never measured, and
+# made every trace ~20% too tall.
+ADC_PER_MV    = 1531.0
+ADC_PER_MM    = ADC_PER_MV / 10.0   # updated from wave_gain in generate_report()
 # Gaussian smoothing applied to each printed strip, in samples.
 #   0.0 = off, prints every corner exactly as acquired
 #   0.5 = light — rounds the simulator's piecewise-linear corners, costs ~1% amplitude
@@ -195,8 +200,8 @@ def generate_report(
         wave_gain_val = float(wg) if wg and wg not in ("", "off") else 10.0
     except Exception:
         wave_gain_val = 10.0
-    # ADC_per_mm: at wave_gain=10mm/mV, 1mm = 128 ADC. Formula: 1280/wave_gain
-    ADC_PER_MM = 1280.0 / max(wave_gain_val, 1.0)
+    # mm on paper = mV x wave_gain, so ADC per mm = ADC per mV / wave_gain.
+    ADC_PER_MM = ADC_PER_MV / max(wave_gain_val, 1.0)
     print(f"[ecg_report_android] wave_gain={wave_gain_val} mm/mV  →  ADC_PER_MM={ADC_PER_MM:.2f}")
 
     # ── Freeze raw snapshots for all 12 leads; strip preparation happens

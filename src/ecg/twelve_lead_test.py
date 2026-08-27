@@ -775,11 +775,13 @@ def create_pink_grid_brush():
 
 
 # One strip on the printed report is 19.5 mm tall, and at the clinical 10 mm/mV
-# that is ±0.975 mV. The hardware sends 1280 ADC per mV, so the same window on
-# screen is ±1248 counts. Using it here puts the live display on the report's
-# scale: a wave that looks small on screen now prints small too, instead of the
-# display squeezing ±1.6 mV (the whole 0-4095 ADC span) into each panel.
-DISPLAY_HALF_SPAN_ADC = 1248
+# that is ±0.975 mV. The hardware sends 1531 ADC per mV (measured against the
+# Fluke's 1 mV calibration square), so the same window on screen is ±1493 counts.
+# Using it here puts the live display on the report's scale: a wave that looks
+# small on screen now prints small too, instead of the display squeezing the whole
+# 0-4095 ADC span into each panel.
+ADC_PER_MV = 1531.0
+DISPLAY_HALF_SPAN_ADC = 19.5 * ADC_PER_MV / 20.0
 
 
 class ECGTestPage(QWidget):
@@ -9639,11 +9641,11 @@ class ECGTestPage(QWidget):
                         if axis_heights:
                             # Put the vertical axis on the paper scale too, so 1 mV
                             # spans exactly wave_gain millimetres of the drawn grid.
-                            # Half-span = height_mm x 64 falls out of 1 mV = 1280 ADC
+                            # Half-span = height_mm x ADC_PER_MV/20 falls out of the
                             # and the wave_gain/10 factor already applied to the data
                             # (19.5 mm -> 1248, the height of one report strip).
                             self._graph_mode_half_span_adc = max(
-                                50.0, min(axis_heights) * 64.0)
+                                50.0, min(axis_heights) * ADC_PER_MV / 20.0)
 
                     target_buffer_len = int(round(axis_width_mm * samples_per_mm)) + 1
                     self._graph_mode_target_buffer_len = max(2, target_buffer_len)
