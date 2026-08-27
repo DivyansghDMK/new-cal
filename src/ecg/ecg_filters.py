@@ -369,31 +369,45 @@ def stabilize_report_edges(signal: np.ndarray, sampling_rate: float, edge_ms: fl
     return out
 
 
-# ─── Front-end droop compensation (square-wave / calibration work) ────────────
-# The acquisition front end is AC-coupled with a ~0.49 s time constant (~0.32 Hz),
-# so a true square input prints with a sagging top. That sag is created BEFORE the
-# samples reach this software — it cannot be "switched off" here, only inverted.
+# ─── Front-end high-pass compensation ────────────────────────────────────────
+# The acquisition front end is AC-coupled with a measured 0.49 s time constant
+# (~0.32 Hz). IEC 60601-2-25 asks for 0.05 Hz, and the gap is not cosmetic: on a
+# Fluke NSR with ST deviation switched OFF, the raw signal reads 0.15-0.30 mm of
+# false ST depression and loses 12-15% of T amplitude.
 #
-# Set BASELINE_RESTORE_TAU_S to the measured time constant (0.49) to reconstruct the
-# original square; leave it at 0.0 to disable. Keep it OFF for patient recordings:
-# the inverse of a high-pass is an integrator, so electrode drift and motion that the
-# front end removes would be amplified back into the trace.
-BASELINE_RESTORE_TAU_S = 0.0
+# Firmware cannot always change the hardware pole, but it can be undone in
+# software: invert it (an integrator), then apply a proper 0.05 Hz high-pass so
+# the restored low-frequency band stays bounded. The result behaves as a 0.05 Hz
+# system rather than a 0.32 Hz one. Set BASELINE_RESTORE_TAU_S to 0.49 to enable.
+BASELINE_RESTORE_TAU_S = 0.0      # front-end time constant in seconds; 0 = off
+BASELINE_RESTORE_HP_HZ = 0.05     # bound applied after inverting the pole
 
 
-def restore_frontend_droop(signal, sampling_rate: float = 500.0, tau_s: float = None) -> np.ndarray:
-    """Invert the front end's first-order high-pass so square inputs print flat."""
+def restore_frontend_droop(signal, sampling_rate: float = 500.0, tau_s: float = None,
+                           target_hp_hz: float = None) -> np.ndarray:
+    """Undo the front end's first-order high-pass and re-bound it at target_hp_hz.
+
+    Inverting a high-pass is an integrator, so on its own it would amplify drift
+    without limit. Re-applying a clean high-pass at the standards-required corner
+    keeps the restored band finite: only 0.05-0.32 Hz comes back, which is the
+    band the hardware should not have removed in the first place.
+    """
     tau = BASELINE_RESTORE_TAU_S if tau_s is None else tau_s
+    fc = BASELINE_RESTORE_HP_HZ if target_hp_hz is None else target_hp_hz
     sig = np.asarray(signal, dtype=float)
-    if not tau or tau <= 0 or sig.size < 4:
+    if not tau or tau <= 0 or sig.size < 16:
         return sig
     try:
-        centred = sig - np.mean(sig)
+        offset = float(np.mean(sig))
+        centred = sig - offset
         restored = centred + np.cumsum(centred) / (float(sampling_rate) * float(tau))
-        # The integrator adds a slow ramp; remove it so the strip stays centred.
-        idx = np.arange(restored.size, dtype=float)
-        restored = restored - np.polyval(np.polyfit(idx, restored, 1), idx)
-        return restored + np.mean(sig)
+        if fc and fc > 0:
+            b, a = butter(2, min(fc / (sampling_rate / 2.0), 0.99), btype='high')
+            restored = filtfilt(b, a, restored)
+        else:
+            idx = np.arange(restored.size, dtype=float)
+            restored = restored - np.polyval(np.polyfit(idx, restored, 1), idx)
+        return restored + offset
     except Exception:
         return sig
 
