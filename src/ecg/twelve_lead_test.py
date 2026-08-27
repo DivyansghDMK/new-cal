@@ -858,9 +858,10 @@ class ECGTestPage(QWidget):
         
         # Filter Pipeline Configuration (from standalone_ecg_plot.py)
         self.SAMPLE_RATE = 500
-        # Display smoothing in samples: 0 = off, 0.5 = light (matches the report),
-        # 0.8 = the old default. Only rounds corners; it is not a filter.
-        self.SMOOTH_SIGMA = 0.5
+        # No display-side shaping. Everything applied to the trace comes from
+        # Set Filter (AC / EMG / DFT); with those off the screen shows the raw
+        # ADC. Set a sigma here only if you deliberately want cosmetic rounding.
+        self.SMOOTH_SIGMA = 0.0
         self.INTERP_FACTOR = 2
         # 50 Hz NOTCH FILTER
         self.b_notch, self.a_notch = iirnotch(w0=50.0, Q=30.0, fs=self.SAMPLE_RATE)
@@ -1826,7 +1827,7 @@ class ECGTestPage(QWidget):
         data = np.nan_to_num(data * gain_factor, nan=0.0, posinf=0.0, neginf=0.0)
 
         try:
-            if data.size > 5:
+            if self.SMOOTH_SIGMA > 0 and data.size > 5:
                 data = gaussian_filter1d(data, sigma=self.SMOOTH_SIGMA)
         except Exception:
             pass
