@@ -203,9 +203,20 @@ def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
         usable = np.ones(n, dtype=bool)
         if blank_qrs:
             try:
-                usable = ~detect_qrs_regions(x - np.mean(x), sampling_rate)
-                if usable.sum() < n // 4:
-                    usable = np.ones(n, dtype=bool)
+                # Find the QRS complexes on a 5-35 Hz view of the signal, NOT on the
+                # raw trace: detect_qrs_regions() thresholds by amplitude percentile,
+                # so strong mains would have its own peaks flagged as QRS. Excluding
+                # those from the fit removes exactly the samples that carry the
+                # interference and the estimate collapses.
+                b_qrs, a_qrs = butter(2, [5.0 / (sampling_rate / 2.0),
+                                          35.0 / (sampling_rate / 2.0)], btype='band')
+                qrs_view = filtfilt(b_qrs, a_qrs, x - np.mean(x))
+                mask = detect_qrs_regions(qrs_view, sampling_rate)
+                # Never blank so much that the fit loses the interference: the QRS
+                # occupies ~10% of a beat, so anything past a third is a bad mask.
+                if mask.sum() > n // 3:
+                    mask = np.zeros(n, dtype=bool)
+                usable = ~mask
             except Exception:
                 usable = np.ones(n, dtype=bool)
 
