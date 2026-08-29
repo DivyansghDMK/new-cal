@@ -1691,6 +1691,7 @@ REPORT_ALLOWED_CONCLUSIONS = (
     "Sinus Bradycardia",
     "Sinus Tachycardia",
     "Narrow QRS",
+    "Borderline QRS duration",
     "Wide QRS",
     "Prolonged QTc",
 )
@@ -1706,6 +1707,9 @@ _CONCLUSION_CANONICAL = {
     "athlete bradycardia": "Sinus Bradycardia",
     "sinus tachycardia": "Sinus Tachycardia",
     "tachycardia": "Sinus Tachycardia",
+    "borderline qrs duration": "Borderline QRS duration",
+    "intraventricular conduction delay": "Borderline QRS duration",
+    "ivcd": "Borderline QRS duration",
     "narrow qrs": "Narrow QRS",
     "normal qrs": "Narrow QRS",                     # the detector's wording for < 120 ms
     "narrow qrs complex": "Narrow QRS",

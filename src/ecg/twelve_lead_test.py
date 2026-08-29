@@ -8321,12 +8321,21 @@ class ECGTestPage(QWidget):
         # Without this, the doctor only sees the raw number buried in the header — easy to miss.
         # ── QRS width, stated from the measured duration ────────────────────
         # The rhythm engine only mentions QRS width when it is abnormal, so a
-        # normal complex left the box silent on the question. 120 ms is the
-        # standard narrow/wide boundary.
+        # normal complex left the box silent on the question.
+        #
+        # Three bands, not two: 120 ms is the threshold required to diagnose
+        # bundle branch block or a ventricular rhythm, but the upper limit of
+        # normal is 110 ms. Calling 110-119 ms "narrow" would report an
+        # intraventricular conduction delay as a normal complex.
         try:
             qrs_ms = int(frozen.get('QRS', 0) or 0)
             if qrs_ms > 0 and not any('qrs' in str(c).lower() for c in conc_list):
-                conc_list.append("Wide QRS" if qrs_ms >= 120 else "Narrow QRS")
+                if qrs_ms >= 120:
+                    conc_list.append("Wide QRS")
+                elif qrs_ms >= 110:
+                    conc_list.append("Borderline QRS duration")
+                else:
+                    conc_list.append("Narrow QRS")
         except Exception:
             pass
 

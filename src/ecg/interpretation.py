@@ -29,7 +29,13 @@ _STATIC_CRITERIA = {
 _NORMAL_FINDINGS = {"Normal Sinus Rhythm", "Narrow QRS"}
 
 # Findings that are a deviation worth flagging but not, on their own, abnormal.
-_BORDERLINE_FINDINGS = {"Sinus Bradycardia", "Sinus Tachycardia"}
+_BORDERLINE_FINDINGS = {
+    "Sinus Bradycardia",
+    "Sinus Tachycardia",
+    # 110-119 ms is past the upper limit of normal but short of the 120 ms a
+    # bundle branch block diagnosis requires.
+    "Borderline QRS duration",
+}
 
 
 def _as_int(value, default: int = 0) -> int:
@@ -53,7 +59,9 @@ def criterion_for(finding: str, measurements: Dict) -> str:
     if finding == "Normal Sinus Rhythm":
         return f"V-rate {hr}, 60-100" if hr else "V-rate 60-100"
     if finding == "Narrow QRS":
-        return f"QRSD {qrs}, < 120mS" if qrs else "QRSD < 120mS"
+        return f"QRSD {qrs}, < 110mS" if qrs else "QRSD < 110mS"
+    if finding == "Borderline QRS duration":
+        return f"QRSD {qrs}, 110-119mS" if qrs else "QRSD 110-119mS"
     if finding == "Wide QRS":
         return f"QRSD {qrs}, >= 120mS" if qrs else "QRSD >= 120mS"
     if finding == "Prolonged QTc":
