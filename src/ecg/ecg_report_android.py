@@ -833,8 +833,10 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
 
+    # Title and the advice sit together on the top row: the reader sees what the
+    # box is and what to do about it in one glance.
     _t(ax, "PROBABLE CONCLUSION",
-       box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
+       box_x+box_w/2-2.0, box_y+1, 7, bold=True, ha='right', zorder=9)
 
     # Each finding is printed with the measurement that triggered it, right
     # aligned, so the reader can check the statement against the header values.
@@ -845,9 +847,8 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
                                   signed=bool(frozen.get("signed")))
 
-    # Classification sits on the title row, where a cart prints it.
-    _t(ax, f"- {report['severity']} -",
-       box_x+box_w-4.0, box_y+1, 7, bold=True, ha='right', zorder=9)
+    _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
+       box_x+box_w/2+2.0, box_y+1, 7, italic=True, ha='left', zorder=9)
 
     row_h = 3.3
     sx    = box_x + 4.0
@@ -858,8 +859,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         # Drop a finding rather than let it print outside the box. The test is on
         # the text height (~2.8 mm at 8.5 pt), not a whole row, so the last line
         # is not thrown away for the sake of the gap beneath it.
-        # The bottom 4 mm of the box is reserved for the advisory line.
-        if ty + 2.8 > box_y + box_h - 4.3: break
+        if ty + 2.8 > box_y + box_h - 0.8: break
         label = f"{i+1}. {finding}"
         _t(ax, label, sx, ty, 8.5, zorder=9)
         if criterion:
@@ -872,10 +872,6 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
 
-    # The advice belongs with the findings, not off in the signature block.
-    _t(ax, report.get("advisory", "Please consult your doctor"),
-       box_x + box_w/2, box_y + box_h - 3.4, 7.5, italic=True,
-       ha='center', zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
@@ -921,7 +917,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                             facecolor='none', zorder=8))
 
     _t(ax, "PROBABLE CONCLUSION",
-       box_x+box_w/2, box_y+2, 9, bold=True, ha='center', zorder=9)
+       box_x+box_w/2-2.0, box_y+2, 9, bold=True, ha='right', zorder=9)
 
     try:
         from ecg.interpretation import build_interpretation
@@ -929,13 +925,13 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
         from .interpretation import build_interpretation
     report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
                                   signed=bool(frozen.get("signed")))
-    _t(ax, f"- {report['severity']} -",
-       box_x+box_w-5.0, box_y+2, 8, bold=True, ha='right', zorder=9)
+    _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
+       box_x+box_w/2+2.0, box_y+2, 8, italic=True, ha='left', zorder=9)
 
     sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+6.0; row_gap=3.4
     for i, (finding, criterion) in enumerate(report["statements"]):
         ty = sy + i*row_gap
-        if ty + 2.8 > box_y + box_h - 4.3: break
+        if ty + 2.8 > box_y + box_h - 0.8: break
         label = f"{i+1}. {finding}"
         _t(ax, label, sx, ty, 8.5, zorder=9)
         if criterion:
@@ -946,9 +942,6 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
 
-    _t(ax, report.get("advisory", "Please consult your doctor"),
-       box_x + box_w/2, box_y + box_h - 3.4, 7.5, italic=True,
-       ha='center', zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
