@@ -22,6 +22,16 @@ from typing import Any, Dict, List
 
 import numpy as np
 from scipy.signal import butter, filtfilt, iirnotch, find_peaks
+try:
+    from ecg.ecg_filters import _compensate_zero_phase_cutoff
+except ImportError:
+    def _compensate_zero_phase_cutoff(cutoff_hz: float, order: int, highpass: bool = False) -> float:
+        """Fallback: correct filtfilt squared-response -3 dB shift."""
+        try:
+            factor = (2.0 ** 0.5 - 1.0) ** (1.0 / (2.0 * order))  # 0.8957 at order 4
+            return cutoff_hz * factor if highpass else cutoff_hz / factor
+        except Exception:
+            return cutoff_hz
 
 import neurokit2 as nk
 
@@ -60,17 +70,35 @@ class PQRSTAnalyzerNK:
         Order matters:
           1) High-pass 0.5 Hz  — remove baseline wander / sweat / respiration.
           2) 50 Hz notch       — India powerline.
-          3) Low-pass 150 Hz   — remove muscle noise, keep ECG band.
+          3) Low-pass 150 Hz   — remove muscle noise, keep ECG band
+                                 (IEC 60601-2-25 diagnostic bandwidth upper limit).
+
+        All Butterworth stages are pre-compensated for filtfilt's zero-phase
+        double-pass: the forward+backward run squares the magnitude response,
+        so the real -3 dB point shifts inward. Without correction a nominal
+        "150 Hz" low-pass measures ~134 Hz — below the IEC 60601-2-25 limit.
+        _compensate_zero_phase_cutoff() solves |H(f)|^2 = 1/2 and returns the
+        design cutoff that lands -3 dB on the requested frequency.
+
+        The correction is derived in the analog domain, so it is exact where
+        the cutoff sits well below Nyquist (the 0.5 Hz high-pass measures
+        -3.01 dB at 0.500 Hz). At 150 Hz on a 500 Hz record the bilinear
+        warping is significant and the corner lands wide, near 160 Hz — the
+        safe direction, since it keeps the full diagnostic band.
         """
         sig = np.asarray(signal, dtype=float)
         if sig.size == 0:
             return sig
 
         fs = float(self.fs) if self.fs > 0 else 500.0
+        nyquist = fs / 2.0
 
         # Step 1: High-pass 0.5 Hz
+        # Compensate: a 2nd-order HP sees the same filtfilt squaring.
         try:
-            b, a = butter(2, 0.5 / (fs / 2.0), btype="high")
+            design_hp = _compensate_zero_phase_cutoff(0.5, order=2, highpass=True)
+            wn_hp = max(1e-4, min(design_hp / nyquist, 0.9999))
+            b, a = butter(2, wn_hp, btype="high")
             if sig.size > len(b) * 3:
                 sig = filtfilt(b, a, sig)
         except Exception:
@@ -83,9 +111,13 @@ class PQRSTAnalyzerNK:
         except Exception:
             pass
 
-        # Step 3: Low-pass 150 Hz
+        # Step 3: Low-pass 150 Hz — IEC 60601-2-25 diagnostic upper limit.
+        # Compensate cutoff so filtfilt's squared response is -3 dB at 150 Hz,
+        # not ~134 Hz as a naive butter(4, 150/nyquist) would give.
         try:
-            b, a = butter(4, 150.0 / (fs / 2.0), btype="low")
+            design_lp = _compensate_zero_phase_cutoff(150.0, order=4, highpass=False)
+            wn_lp = min(design_lp / nyquist, 0.9999)  # must stay below Nyquist
+            b, a = butter(4, wn_lp, btype="low")
             if sig.size > len(b) * 3:
                 sig = filtfilt(b, a, sig)
         except Exception:
