@@ -28,6 +28,7 @@ _STATIC_CRITERIA = {
 # ── Thresholds, defined once ────────────────────────────────────────────────
 # Both the report and the dashboard read these, so the two cannot publish
 # different definitions of "normal" for the same measurement.
+QRS_NORMAL_MIN_MS = 70      # below this is short - usually a measurement problem
 QRS_NORMAL_MAX_MS = 110     # upper limit of normal; 70-100 is the normal range
 QRS_WIDE_MIN_MS = 120       # required to diagnose BBB or a ventricular rhythm
 QTC_PROLONGED_MS = 460
@@ -37,7 +38,13 @@ HR_TACHY_MIN = 100
 
 
 def qrs_finding(qrs_ms) -> str:
-    """Narrow / Borderline / Wide from the measured QRS duration."""
+    """Short / Narrow / Borderline / Wide from the measured QRS duration.
+
+    "Narrow" is the normal band and is not a finding. Below 70 ms is reported,
+    because a QRS that short is outside physiological range and in practice
+    usually means the onset/offset detection is clipping a weak signal - which
+    the reader needs to know either way.
+    """
     qrs = _as_int(qrs_ms)
     if qrs <= 0:
         return ""
@@ -45,6 +52,8 @@ def qrs_finding(qrs_ms) -> str:
         return "Wide QRS"
     if qrs >= QRS_NORMAL_MAX_MS:
         return "Borderline QRS duration"
+    if qrs < QRS_NORMAL_MIN_MS:
+        return "Short QRS duration"
     return "Narrow QRS"
 
 
@@ -58,6 +67,7 @@ _BORDERLINE_FINDINGS = {
     # 110-119 ms is past the upper limit of normal but short of the 120 ms a
     # bundle branch block diagnosis requires.
     "Borderline QRS duration",
+    "Short QRS duration",
 }
 
 
@@ -83,6 +93,8 @@ def criterion_for(finding: str, measurements: Dict) -> str:
         return f"V-rate {hr}, 60-100" if hr else "V-rate 60-100"
     if finding == "Narrow QRS":
         return f"QRSD {qrs}, < 110mS" if qrs else "QRSD < 110mS"
+    if finding == "Short QRS duration":
+        return f"QRSD {qrs}, < 70mS - verify signal" if qrs else "QRSD < 70mS"
     if finding == "Borderline QRS duration":
         return f"QRSD {qrs}, 110-119mS" if qrs else "QRSD 110-119mS"
     if finding == "Wide QRS":
