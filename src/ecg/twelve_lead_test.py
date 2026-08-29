@@ -8332,7 +8332,10 @@ class ECGTestPage(QWidget):
             qrs_ms = int(frozen.get('QRS', 0) or 0)
             if qrs_ms > 0 and not any('qrs' in str(c).lower() for c in conc_list):
                 finding = qrs_finding(qrs_ms)
-                if finding:
+                # Only report the width when it is a finding. A narrow QRS is
+                # the normal case, and printing it on every tracing turns the
+                # box into boilerplate that hides the statements that matter.
+                if finding and finding != "Narrow QRS":
                     conc_list.append(finding)
         except Exception:
             pass

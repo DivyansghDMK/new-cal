@@ -817,9 +817,9 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # "Unconfirmed Diagnosis" stands only while no clinician has signed. The
     # advice to consult a doctor stands either way — the box holds an
     # algorithm's reading, not a clinical opinion.
-    _caveats = [c for c in (_interp_caveat(frozen, conc_list),
-                            "Please consult your doctor") if c]
-    _t(ax, "   ".join(_caveats), ML-2.4, footer_y+8.5, 7)
+    _unconfirmed = _interp_caveat(frozen, conc_list)
+    if _unconfirmed:
+        _t(ax, _unconfirmed, ML-2.4, footer_y+8.5, 7)
 
     # Conclusion box — TRANSPARENT (grid shows through)
     # Widened left to 63 mm and deepened to 22 mm so five findings fit and each
@@ -858,7 +858,8 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         # Drop a finding rather than let it print outside the box. The test is on
         # the text height (~2.8 mm at 8.5 pt), not a whole row, so the last line
         # is not thrown away for the sake of the gap beneath it.
-        if ty + 2.8 > box_y + box_h - 0.8: break
+        # The bottom 4 mm of the box is reserved for the advisory line.
+        if ty + 2.8 > box_y + box_h - 4.3: break
         label = f"{i+1}. {finding}"
         _t(ax, label, sx, ty, 8.5, zorder=9)
         if criterion:
@@ -870,6 +871,11 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
             if rx - lx > 3.0:
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
+
+    # The advice belongs with the findings, not off in the signature block.
+    _t(ax, report.get("advisory", "Please consult your doctor"),
+       box_x + box_w/2, box_y + box_h - 3.4, 7.5, italic=True,
+       ha='center', zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
@@ -901,9 +907,9 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        ML+2.2, footer_top_y+5.5, 8)
     _t(ax, "Doctor Sign:",
        ML+2.2, footer_top_y+10.5, 8)
-    _caveats = [c for c in (_interp_caveat(frozen, conc_list),
-                            "Please consult your doctor") if c]
-    _t(ax, "   ".join(_caveats), ML+2.2, footer_top_y+15.0, 7)
+    _unconfirmed = _interp_caveat(frozen, conc_list)
+    if _unconfirmed:
+        _t(ax, _unconfirmed, ML+2.2, footer_top_y+15.0, 7)
 
     # Conclusion box — TRANSPARENT
     # Same reasoning as the portrait box: wider and deeper so five findings fit.
@@ -929,7 +935,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+6.0; row_gap=3.4
     for i, (finding, criterion) in enumerate(report["statements"]):
         ty = sy + i*row_gap
-        if ty + 2.8 > box_y + box_h - 0.8: break
+        if ty + 2.8 > box_y + box_h - 4.3: break
         label = f"{i+1}. {finding}"
         _t(ax, label, sx, ty, 8.5, zorder=9)
         if criterion:
@@ -939,6 +945,10 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
             if rx - lx > 3.0:
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
+
+    _t(ax, report.get("advisory", "Please consult your doctor"),
+       box_x + box_w/2, box_y + box_h - 3.4, 7.5, italic=True,
+       ha='center', zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
