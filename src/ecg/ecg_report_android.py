@@ -57,6 +57,9 @@ REPORT_DEMO_MODE = False
 # its filters off. Cross-checked against a 0.20 mV ST step, which then reads
 # 0.194 mV. The old 1280 was inherited from other code and never measured.
 ADC_PER_MV    = 1184.0
+# The 1 mV calibration pulse must be wave_gain millimetres tall, not a fixed 10:
+# at 5 mm/mV a 10 mm pulse tells the reader every wave is half its real size.
+REPORT_GAIN_MM_MV = FIXED_GAIN
 ADC_PER_MM    = ADC_PER_MV / 10.0   # updated from wave_gain in generate_report()
 # Gaussian smoothing applied to each printed strip, in samples.
 #   0.0 = off, prints every corner exactly as acquired
@@ -110,7 +113,7 @@ def generate_report(
     conc_list : conclusion strings (max 5 shown)
     fs        : sampling rate Hz
     """
-    global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM, REPORT_DEMO_MODE
+    global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM, REPORT_DEMO_MODE, REPORT_GAIN_MM_MV
     global REPORT_AC_SETTING, REPORT_EMG_SETTING, REPORT_DFT_SETTING
     ECG_FS = float(fs)
     # effective_speed is resolved below, once the user's Settings are loaded.
@@ -203,6 +206,7 @@ def generate_report(
         wave_gain_val = 10.0
     # mm on paper = mV x wave_gain, so ADC per mm = ADC per mV / wave_gain.
     ADC_PER_MM = ADC_PER_MV / max(wave_gain_val, 1.0)
+    REPORT_GAIN_MM_MV = wave_gain_val
     print(f"[ecg_report_android] wave_gain={wave_gain_val} mm/mV  →  ADC_PER_MM={ADC_PER_MM:.2f}")
 
     # ── Freeze raw snapshots for all 12 leads; strip preparation happens
@@ -632,7 +636,7 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     for i, lead in enumerate(ordered_leads):
         mid_y   = top_offset + i * cell_h + cell_h / 2.0
         label_y = mid_y - 8.0
-        _draw_calibration(ax, ML, mid_y, FIXED_GAIN)
+        _draw_calibration(ax, ML, mid_y, REPORT_GAIN_MM_MV)
         _t(ax, lead, ML+11, label_y, 8.5, bold=True)
         _draw_waveform(ax, lead_mv.get(lead, np.array([])),
                        ML+13, mid_y, wave_w, half_clip, target_samples=target_samples)
@@ -673,7 +677,7 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
         label_y = mid_y - 9.0
         half_clip = row_h * 0.90
 
-        _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
+        _draw_calibration_pad(ax, left_margin-4, mid_y, REPORT_GAIN_MM_MV)
 
         # lead_strip_samples: only request as many samples as 'lead_w' mm can
         # physically display at 25 mm/s (MM_PER_SAMPLE = 0.05 mm/sample).
@@ -690,7 +694,7 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
                        right_x+5, mid_y, lead_w, half_clip, target_samples=lead_strip_samples)
 
     rhythm_mid = start_y + 6*row_h + row_h/2.0
-    _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
+    _draw_calibration_pad(ax, left_margin-4, rhythm_mid, REPORT_GAIN_MM_MV)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
     # Rhythm strip target: use all samples the physical width can hold at 25 mm/s.
     # (249 mm / 0.05 mm·sample⁻¹ = 4980 samples ≈ 9.96 s). The 10-second snapshot
@@ -742,7 +746,7 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
         label_y = mid_y - 9.0
         # half_clip: 90% of row half-height to show true peak amplitude
         half_clip = row_h * 0.90
-        _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
+        _draw_calibration_pad(ax, left_margin-4, mid_y, REPORT_GAIN_MM_MV)
         # lead_strip_samples: only request as many samples as 'lead_w' mm can
         # physically display at 25 mm/s (MM_PER_SAMPLE = 0.05 mm/sample).
         # Forcing 7-second (3500-sample) data into an 80 mm strip caused heavy
@@ -759,7 +763,7 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
                     col_dividers.append(div_x)
 
     rhythm_mid = start_y + 4*row_h + row_h/2.0
-    _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
+    _draw_calibration_pad(ax, left_margin-4, rhythm_mid, REPORT_GAIN_MM_MV)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     # Rhythm strip target: use all samples the physical width can hold at 25 mm/s.
     # (249 mm / 0.05 mm·sample⁻¹ = 4980 samples ≈ 9.96 s). The 10-second snapshot
