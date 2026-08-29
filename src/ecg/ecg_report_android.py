@@ -822,22 +822,9 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         _t(ax, _unconfirmed, ML-2.4, footer_y+8.5, 7)
 
     # Conclusion box — TRANSPARENT (grid shows through)
-    # Widened left to 63 mm and deepened to 22 mm so five findings fit and each
-    # has room for a full sentence. The left edge still clears the doctor block
-    # (which ends around 50 mm) and the bottom stays above the brand line.
-    box_x = 63.0
-    box_y = footer_y + 3.0
-    box_w = PW - box_x - MR - 5.0
-    box_h = 22.0
-    ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
-                            linewidth=0.8, edgecolor='black',
-                            facecolor='none', zorder=8))
-
-    # Title and the advice sit together on the top row: the reader sees what the
-    # box is and what to do about it in one glance.
-    _t(ax, "PROBABLE CONCLUSION",
-       box_x+box_w/2-2.0, box_y+1, 7, bold=True, ha='right', zorder=9)
-
+    # Widened left to 63 mm so a finding has room for a full sentence; the left
+    # edge still clears the doctor block, which ends around 50 mm.
+    #
     # Each finding is printed with the measurement that triggered it, right
     # aligned, so the reader can check the statement against the header values.
     try:
@@ -847,13 +834,30 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
                                   signed=bool(frozen.get("signed")))
 
+    row_h = 3.3
+    head_h = 5.2          # title row
+    pad_h = 1.6           # breathing room under the last finding
+    rows = max(1, min(len(report["statements"]), 5))
+    box_x = 63.0
+    box_y = footer_y + 3.0
+    box_w = PW - box_x - MR - 5.0
+    # Height follows the content: a two-finding box was leaving 12 mm of empty
+    # paper below the text.
+    box_h = min(22.0, head_h + rows * row_h + pad_h)
+    ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
+                            linewidth=0.8, edgecolor='black',
+                            facecolor='none', zorder=8))
+
+    # Title and the advice sit together on the top row: the reader sees what the
+    # box is and what to do about it in one glance.
+    _t(ax, "PROBABLE CONCLUSION",
+       box_x+box_w/2-2.0, box_y+1, 7, bold=True, ha='right', zorder=9)
     _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
        box_x+box_w/2+2.0, box_y+1, 7, italic=True, ha='left', zorder=9)
 
-    row_h = 3.3
     sx    = box_x + 4.0
     ex    = box_x + box_w - 4.0
-    sy    = box_y + 5.2
+    sy    = box_y + head_h
     for i, (finding, criterion) in enumerate(report["statements"]):
         ty  = sy + i*row_h
         # Drop a finding rather than let it print outside the box. The test is on
@@ -908,8 +912,21 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
         _t(ax, _unconfirmed, ML+2.2, footer_top_y+15.0, 7)
 
     # Conclusion box — TRANSPARENT
-    # Same reasoning as the portrait box: wider and deeper so five findings fit.
-    box_w = 205.0; box_h = 21.0
+    try:
+        from ecg.interpretation import build_interpretation
+    except Exception:
+        from .interpretation import build_interpretation
+    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
+                                  signed=bool(frozen.get("signed")))
+
+    row_gap = 3.4
+    head_h = 6.0
+    pad_h = 1.6
+    rows = max(1, min(len(report["statements"]), 5))
+    # Same reasoning as the portrait box: wide enough for a full sentence, and
+    # only as tall as the findings need.
+    box_w = 205.0
+    box_h = min(21.0, head_h + rows * row_gap + pad_h)
     box_x = PW - box_w - MR - 7.0
     box_y = footer_top_y - 7.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
@@ -919,16 +936,10 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2-2.0, box_y+2, 9, bold=True, ha='right', zorder=9)
 
-    try:
-        from ecg.interpretation import build_interpretation
-    except Exception:
-        from .interpretation import build_interpretation
-    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
-                                  signed=bool(frozen.get("signed")))
     _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
        box_x+box_w/2+2.0, box_y+2, 8, italic=True, ha='left', zorder=9)
 
-    sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+6.0; row_gap=3.4
+    sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+head_h
     for i, (finding, criterion) in enumerate(report["statements"]):
         ty = sy + i*row_gap
         if ty + 2.8 > box_y + box_h - 0.8: break
