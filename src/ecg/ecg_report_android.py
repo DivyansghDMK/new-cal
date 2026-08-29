@@ -793,6 +793,16 @@ def _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait):
         _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH)
 
 
+def _interp_caveat(frozen, conc_list):
+    """"Unconfirmed Diagnosis" unless the tracing carries a clinician's signature."""
+    try:
+        from ecg.interpretation import build_interpretation
+    except Exception:
+        from .interpretation import build_interpretation
+    return build_interpretation(frozen, conc_list or [],
+                                signed=bool(frozen.get("signed"))).get("caveat", "")
+
+
 def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     footer_y = PH - MB - 25.0   # 267mm
 
@@ -804,8 +814,12 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
        ML-2.4, footer_y+18.2, 8)
     _t(ax, "Doctor Sign:",
        ML-2.4, footer_y+23.2, 8)
-    # Machine-produced findings that no physician has read yet.
-    _t(ax, "Unconfirmed Diagnosis", ML-2.4, footer_y+8.5, 7)
+    # "Unconfirmed Diagnosis" stands only while no clinician has signed. The
+    # advice to consult a doctor stands either way — the box holds an
+    # algorithm's reading, not a clinical opinion.
+    _caveats = [c for c in (_interp_caveat(frozen, conc_list),
+                            "Please consult your doctor") if c]
+    _t(ax, "   ".join(_caveats), ML-2.4, footer_y+8.5, 7)
 
     # Conclusion box — TRANSPARENT (grid shows through)
     # Widened left to 63 mm and deepened to 22 mm so five findings fit and each
@@ -828,7 +842,8 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         from ecg.interpretation import build_interpretation
     except Exception:
         from .interpretation import build_interpretation
-    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"))
+    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
+                                  signed=bool(frozen.get("signed")))
 
     # Classification sits on the title row, where a cart prints it.
     _t(ax, f"- {report['severity']} -",
@@ -886,7 +901,9 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        ML+2.2, footer_top_y+5.5, 8)
     _t(ax, "Doctor Sign:",
        ML+2.2, footer_top_y+10.5, 8)
-    _t(ax, "Unconfirmed Diagnosis", ML+2.2, footer_top_y+15.0, 7)
+    _caveats = [c for c in (_interp_caveat(frozen, conc_list),
+                            "Please consult your doctor") if c]
+    _t(ax, "   ".join(_caveats), ML+2.2, footer_top_y+15.0, 7)
 
     # Conclusion box — TRANSPARENT
     # Same reasoning as the portrait box: wider and deeper so five findings fit.
@@ -904,7 +921,8 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
         from ecg.interpretation import build_interpretation
     except Exception:
         from .interpretation import build_interpretation
-    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"))
+    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"),
+                                  signed=bool(frozen.get("signed")))
     _t(ax, f"- {report['severity']} -",
        box_x+box_w-5.0, box_y+2, 8, bold=True, ha='right', zorder=9)
 

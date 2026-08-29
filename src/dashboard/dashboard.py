@@ -4768,17 +4768,24 @@ class Dashboard(QWidget):
             qrs_status  = None  # None = normal / not measured
             qrs_label   = ""
             if qrs > 0:
-                if qrs >= 120:
+                # Thresholds come from ecg.interpretation so the screen and the
+                # printed report cannot disagree about what "normal" means.
+                try:
+                    from ecg.interpretation import (QRS_NORMAL_MAX_MS, QRS_WIDE_MIN_MS)
+                except Exception:
+                    QRS_NORMAL_MAX_MS, QRS_WIDE_MIN_MS = 110, 120
+                _rng = f"Normal: 70–{QRS_NORMAL_MAX_MS} ms"
+                if qrs >= QRS_WIDE_MIN_MS:
                     qrs_status = "wide"
-                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e74c3c;'>Wide (Normal: 60–120 ms)</span>"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e74c3c;'>Wide ({_rng})</span>"
                 elif qrs < 60:
                     qrs_status = "narrow"
-                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e67e22;'>Narrow (Normal: 60–120 ms)</span>"
-                elif qrs >= 110:
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e67e22;'>Narrow ({_rng})</span>"
+                elif qrs >= QRS_NORMAL_MAX_MS:
                     qrs_status = "borderline"
-                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#f39c12;'>Borderline Wide (Normal: 60–120 ms)</span>"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#f39c12;'>Borderline ({_rng})</span>"
                 else:
-                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#27ae60;'>Normal (60–120 ms)</span>"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#27ae60;'>Normal ({_rng})</span>"
 
             # ─── HR status ──────────────────────────────────────────────────────
             hr_label = ""

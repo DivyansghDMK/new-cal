@@ -25,6 +25,29 @@ _STATIC_CRITERIA = {
     "Atrial Flutter": "flutter waves, fixed conduction ratio",
 }
 
+# ── Thresholds, defined once ────────────────────────────────────────────────
+# Both the report and the dashboard read these, so the two cannot publish
+# different definitions of "normal" for the same measurement.
+QRS_NORMAL_MAX_MS = 110     # upper limit of normal; 70-100 is the normal range
+QRS_WIDE_MIN_MS = 120       # required to diagnose BBB or a ventricular rhythm
+QTC_PROLONGED_MS = 460
+QTC_BORDERLINE_MS = 440
+HR_BRADY_MAX = 60
+HR_TACHY_MIN = 100
+
+
+def qrs_finding(qrs_ms) -> str:
+    """Narrow / Borderline / Wide from the measured QRS duration."""
+    qrs = _as_int(qrs_ms)
+    if qrs <= 0:
+        return ""
+    if qrs >= QRS_WIDE_MIN_MS:
+        return "Wide QRS"
+    if qrs >= QRS_NORMAL_MAX_MS:
+        return "Borderline QRS duration"
+    return "Narrow QRS"
+
+
 # A tracing is only NORMAL when every finding is one of these.
 _NORMAL_FINDINGS = {"Normal Sinus Rhythm", "Narrow QRS"}
 
@@ -107,11 +130,17 @@ def artifact_statement(lead_noise: Optional[Dict[str, float]], limit: float = 0.
 
 def build_interpretation(measurements: Dict,
                          findings: Sequence[str],
-                         lead_noise: Optional[Dict[str, float]] = None) -> Dict:
+                         lead_noise: Optional[Dict[str, float]] = None,
+                         signed: bool = False) -> Dict:
     """Assemble the findings box content.
 
     Returns statements as (finding, criterion) pairs, the overall
-    classification, and the caveat that must accompany any machine reading.
+    classification, and the caveats that must accompany a machine reading.
+
+    `signed` says whether a clinician has confirmed the tracing. Until one has,
+    the report carries "Unconfirmed Diagnosis"; the advice to consult a doctor
+    stands either way, because the box holds an algorithm's reading and not a
+    clinical opinion.
     """
     kept = [str(f).strip() for f in (findings or []) if str(f).strip()]
     statements: List[Tuple[str, str]] = [(f, criterion_for(f, measurements)) for f in kept]
@@ -125,7 +154,8 @@ def build_interpretation(measurements: Dict,
     return {
         "statements": statements,
         "severity": classify(kept),
-        "caveat": "Unconfirmed Diagnosis",
+        "caveat": "" if signed else "Unconfirmed Diagnosis",
+        "advisory": "Please consult your doctor",
         "axis": {
             "P": measurements.get("p_axis", "--"),
             "QRS": measurements.get("QRS_axis", "--"),

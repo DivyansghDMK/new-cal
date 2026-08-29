@@ -8328,14 +8328,12 @@ class ECGTestPage(QWidget):
         # normal is 110 ms. Calling 110-119 ms "narrow" would report an
         # intraventricular conduction delay as a normal complex.
         try:
+            from ecg.interpretation import qrs_finding
             qrs_ms = int(frozen.get('QRS', 0) or 0)
             if qrs_ms > 0 and not any('qrs' in str(c).lower() for c in conc_list):
-                if qrs_ms >= 120:
-                    conc_list.append("Wide QRS")
-                elif qrs_ms >= 110:
-                    conc_list.append("Borderline QRS duration")
-                else:
-                    conc_list.append("Narrow QRS")
+                finding = qrs_finding(qrs_ms)
+                if finding:
+                    conc_list.append(finding)
         except Exception:
             pass
 
