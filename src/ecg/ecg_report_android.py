@@ -817,9 +817,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # "Unconfirmed Diagnosis" stands only while no clinician has signed. The
     # advice to consult a doctor stands either way — the box holds an
     # algorithm's reading, not a clinical opinion.
-    _unconfirmed = _interp_caveat(frozen, conc_list)
-    if _unconfirmed:
-        _t(ax, _unconfirmed, ML-2.4, footer_y+8.5, 7)
+
 
     # Conclusion box — TRANSPARENT (grid shows through)
     # Widened left to 63 mm so a finding has room for a full sentence; the left
@@ -858,7 +856,10 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # box is and what to do about it in one glance.
     _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2-2.0, box_y+1, 7, bold=True, ha='right', zorder=9)
-    _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
+    _caveat_line = "-  " + report.get("advisory", "Please consult your doctor")
+    if report.get("caveat"):
+        _caveat_line += "  -  " + report["caveat"]
+    _t(ax, _caveat_line,
        box_x+box_w/2+2.0, box_y+1, 7, italic=True, ha='left', zorder=9)
 
     sx    = box_x + 4.0
@@ -922,9 +923,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        ML+2.2, footer_top_y+5.5, 8)
     _t(ax, "Doctor Sign:",
        ML+2.2, footer_top_y+10.5, 8)
-    _unconfirmed = _interp_caveat(frozen, conc_list)
-    if _unconfirmed:
-        _t(ax, _unconfirmed, ML+2.2, footer_top_y+15.0, 7)
+
 
     # Conclusion box — TRANSPARENT
     try:
@@ -952,7 +951,10 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2-2.0, box_y+2, 9, bold=True, ha='right', zorder=9)
 
-    _t(ax, "-  " + report.get("advisory", "Please consult your doctor"),
+    _caveat_line = "-  " + report.get("advisory", "Please consult your doctor")
+    if report.get("caveat"):
+        _caveat_line += "  -  " + report["caveat"]
+    _t(ax, _caveat_line,
        box_x+box_w/2+2.0, box_y+2, 8, italic=True, ha='left', zorder=9)
 
     sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+head_h
