@@ -806,10 +806,13 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
        ML-2.4, footer_y+23.2, 8)
 
     # Conclusion box — TRANSPARENT (grid shows through)
-    box_x = 95.0
-    box_y = footer_y + 5.0
+    # Widened left to 63 mm and deepened to 22 mm so five findings fit and each
+    # has room for a full sentence. The left edge still clears the doctor block
+    # (which ends around 50 mm) and the bottom stays above the brand line.
+    box_x = 63.0
+    box_y = footer_y + 3.0
     box_w = PW - box_x - MR - 5.0
-    box_h = 18.0
+    box_h = 22.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
@@ -819,14 +822,16 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
 
     # Draw conclusions in a single column to avoid overlapping
     items = conc_list[:5]
-    row_h = 4.0
+    row_h = 3.3
     sx    = box_x + 4.0
-    sy    = box_y + 8.0
+    sy    = box_y + 5.2
     for i, line in enumerate(items):
         ty  = sy + i*row_h
-        # User request: If getting cropped (exceeds box height), don't put in this.
-        if ty + row_h > box_y + box_h - 1.0: break 
-        _t(ax, f"{i+1}. {line}", sx, ty, 9, zorder=9)
+        # Drop a finding rather than let it print outside the box. The test is on
+        # the text height (~2.8 mm at 8.5 pt), not a whole row, so the last line
+        # is not thrown away for the sake of the gap beneath it.
+        if ty + 2.8 > box_y + box_h - 0.8: break
+        _t(ax, f"{i+1}. {line}", sx, ty, 8.5, zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
@@ -860,9 +865,10 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        ML+2.2, footer_top_y+10.5, 8)
 
     # Conclusion box — TRANSPARENT
-    box_w = 155.0; box_h = 18.0
+    # Same reasoning as the portrait box: wider and deeper so five findings fit.
+    box_w = 205.0; box_h = 21.0
     box_x = PW - box_w - MR - 7.0
-    box_y = footer_top_y - 5.0
+    box_y = footer_top_y - 7.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
@@ -872,12 +878,11 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
 
     # Draw conclusions in a single column to avoid overlapping
     items   = conc_list[:5]
-    sx      = box_x+5.0; sy = box_y+8.0; row_gap=5.0
+    sx      = box_x+5.0; sy = box_y+6.0; row_gap=3.4
     for i, txt in enumerate(items):
         ty = sy + i*row_gap
-        # User request: If getting cropped (exceeds box height), don't put in this.
-        if ty+row_gap > box_y+box_h-1.5: break
-        _t(ax, f"{i+1}. {txt}", sx, ty, 9, zorder=9)
+        if ty + 2.8 > box_y + box_h - 0.8: break
+        _t(ax, f"{i+1}. {txt}", sx, ty, 8.5, zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
