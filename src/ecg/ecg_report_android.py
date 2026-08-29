@@ -804,6 +804,8 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
        ML-2.4, footer_y+18.2, 8)
     _t(ax, "Doctor Sign:",
        ML-2.4, footer_y+23.2, 8)
+    # Machine-produced findings that no physician has read yet.
+    _t(ax, "Unconfirmed Diagnosis", ML-2.4, footer_y+8.5, 7)
 
     # Conclusion box — TRANSPARENT (grid shows through)
     # Widened left to 63 mm and deepened to 22 mm so five findings fit and each
@@ -820,18 +822,39 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
 
-    # Draw conclusions in a single column to avoid overlapping
-    items = conc_list[:5]
+    # Each finding is printed with the measurement that triggered it, right
+    # aligned, so the reader can check the statement against the header values.
+    try:
+        from ecg.interpretation import build_interpretation
+    except Exception:
+        from .interpretation import build_interpretation
+    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"))
+
+    # Classification sits on the title row, where a cart prints it.
+    _t(ax, f"- {report['severity']} -",
+       box_x+box_w-4.0, box_y+1, 7, bold=True, ha='right', zorder=9)
+
     row_h = 3.3
     sx    = box_x + 4.0
+    ex    = box_x + box_w - 4.0
     sy    = box_y + 5.2
-    for i, line in enumerate(items):
+    for i, (finding, criterion) in enumerate(report["statements"]):
         ty  = sy + i*row_h
         # Drop a finding rather than let it print outside the box. The test is on
         # the text height (~2.8 mm at 8.5 pt), not a whole row, so the last line
         # is not thrown away for the sake of the gap beneath it.
         if ty + 2.8 > box_y + box_h - 0.8: break
-        _t(ax, f"{i+1}. {line}", sx, ty, 8.5, zorder=9)
+        label = f"{i+1}. {finding}"
+        _t(ax, label, sx, ty, 8.5, zorder=9)
+        if criterion:
+            _t(ax, criterion, ex, ty, 7.5, ha='right', zorder=9)
+            # Dotted leader between the two, so the pairing is unambiguous when
+            # the criterion column is far from the end of a short finding.
+            lx = sx + len(label) * 1.55 + 1.5        # ~1.55 mm per char at 8.5 pt
+            rx = ex - len(criterion) * 1.35 - 1.5
+            if rx - lx > 3.0:
+                ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
+                        linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
@@ -863,6 +886,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        ML+2.2, footer_top_y+5.5, 8)
     _t(ax, "Doctor Sign:",
        ML+2.2, footer_top_y+10.5, 8)
+    _t(ax, "Unconfirmed Diagnosis", ML+2.2, footer_top_y+15.0, 7)
 
     # Conclusion box — TRANSPARENT
     # Same reasoning as the portrait box: wider and deeper so five findings fit.
@@ -876,13 +900,27 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2, box_y+2, 9, bold=True, ha='center', zorder=9)
 
-    # Draw conclusions in a single column to avoid overlapping
-    items   = conc_list[:5]
-    sx      = box_x+5.0; sy = box_y+6.0; row_gap=3.4
-    for i, txt in enumerate(items):
+    try:
+        from ecg.interpretation import build_interpretation
+    except Exception:
+        from .interpretation import build_interpretation
+    report = build_interpretation(frozen, conc_list[:5], frozen.get("lead_noise"))
+    _t(ax, f"- {report['severity']} -",
+       box_x+box_w-5.0, box_y+2, 8, bold=True, ha='right', zorder=9)
+
+    sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+6.0; row_gap=3.4
+    for i, (finding, criterion) in enumerate(report["statements"]):
         ty = sy + i*row_gap
         if ty + 2.8 > box_y + box_h - 0.8: break
-        _t(ax, f"{i+1}. {txt}", sx, ty, 8.5, zorder=9)
+        label = f"{i+1}. {finding}"
+        _t(ax, label, sx, ty, 8.5, zorder=9)
+        if criterion:
+            _t(ax, criterion, ex, ty, 7.5, ha='right', zorder=9)
+            lx = sx + len(label) * 1.55 + 1.5
+            rx = ex - len(criterion) * 1.35 - 1.5
+            if rx - lx > 3.0:
+                ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
+                        linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
 
     # Brand line
     serial_num = frozen.get("machine_serial", "") or frozen.get("machine_serial_number", "")
