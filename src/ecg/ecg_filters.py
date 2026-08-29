@@ -184,7 +184,12 @@ EMG_QRS_GATED = True
 
 # Above this ratio of high-frequency content to signal span, the trace is too
 # noisy to gate and the muscle filter runs plainly across the whole beat.
-EMG_GATE_NOISE_LIMIT = 0.04
+#
+# Set from measurements on this hardware: genuinely clean captures sit at
+# 0.006-0.011, while traces still carrying mains interference measure 0.013-0.032
+# even on battery. Gating those prints the interference as a burst at every QRS,
+# so the limit goes between the two populations rather than above both.
+EMG_GATE_NOISE_LIMIT = 0.012
 
 # Baseline estimator for the DFT 0.5 setting:
 #   "median2"     two median passes (200 ms then 600 ms) — the published
