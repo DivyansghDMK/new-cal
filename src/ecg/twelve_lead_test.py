@@ -8319,6 +8319,17 @@ class ECGTestPage(QWidget):
         # FIX-3: Auto-add QTc warning to conclusion when clinically significant.
         # A prolonged QTc is a risk for life-threatening arrhythmias (Torsades de Pointes).
         # Without this, the doctor only sees the raw number buried in the header — easy to miss.
+        # ── QRS width, stated from the measured duration ────────────────────
+        # The rhythm engine only mentions QRS width when it is abnormal, so a
+        # normal complex left the box silent on the question. 120 ms is the
+        # standard narrow/wide boundary.
+        try:
+            qrs_ms = int(frozen.get('QRS', 0) or 0)
+            if qrs_ms > 0 and not any('qrs' in str(c).lower() for c in conc_list):
+                conc_list.append("Wide QRS" if qrs_ms >= 120 else "Narrow QRS")
+        except Exception:
+            pass
+
         try:
             qtc_for_warning = frozen.get('QTc', 0) or 0
             qtc_already_noted = any('qtc' in c.lower() or 'qt' in c.lower() for c in conc_list)

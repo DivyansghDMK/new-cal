@@ -22,6 +22,7 @@ import sys
 import json
 import matplotlib.pyplot as plt  
 import matplotlib
+import re
 import numpy as np
 
 # matplotlib.use('Agg') # Removed - isolated FigureCanvasAgg used instead
@@ -1689,6 +1690,7 @@ REPORT_ALLOWED_CONCLUSIONS = (
     "Normal Sinus Rhythm",
     "Sinus Bradycardia",
     "Sinus Tachycardia",
+    "Narrow QRS",
     "Wide QRS",
     "Prolonged QTc",
 )
@@ -1704,6 +1706,9 @@ _CONCLUSION_CANONICAL = {
     "athlete bradycardia": "Sinus Bradycardia",
     "sinus tachycardia": "Sinus Tachycardia",
     "tachycardia": "Sinus Tachycardia",
+    "narrow qrs": "Narrow QRS",
+    "normal qrs": "Narrow QRS",                     # the detector's wording for < 120 ms
+    "narrow qrs complex": "Narrow QRS",
     "wide qrs": "Wide QRS",
     "wide qrs complex": "Wide QRS",
     "prolonged qtc": "Prolonged QTc",
@@ -1724,7 +1729,19 @@ def restrict_to_allowed_conclusions(conclusions):
         text = str(item).strip()
         if not text or text == "---":
             continue
-        canonical = _CONCLUSION_CANONICAL.get(text.lower(), text)
+        low = text.lower()
+        canonical = _CONCLUSION_CANONICAL.get(low)
+        if canonical is None:
+            # Findings often carry their measured value - "Prolonged QTc (486 ms)".
+            # Match on the wording with the value stripped, so a real finding is
+            # never dropped for carrying its own evidence.
+            stripped = re.sub(r"\s*[\(\[].*?[\)\]]\s*", " ", low)
+            stripped = re.sub(r"\s*[-—–].*$", "", stripped).strip()
+            canonical = _CONCLUSION_CANONICAL.get(stripped)
+            if canonical is None and "prolonged qtc" in stripped:
+                canonical = "Prolonged QTc"
+            if canonical is None:
+                canonical = text
         if canonical in REPORT_ALLOWED_CONCLUSIONS and canonical not in kept:
             kept.append(canonical)
     order = {label: i for i, label in enumerate(REPORT_ALLOWED_CONCLUSIONS)}
