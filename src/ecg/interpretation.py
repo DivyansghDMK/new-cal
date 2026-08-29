@@ -28,6 +28,7 @@ _STATIC_CRITERIA = {
 # ── Thresholds, defined once ────────────────────────────────────────────────
 # Both the report and the dashboard read these, so the two cannot publish
 # different definitions of "normal" for the same measurement.
+ADC_PER_MV_DEFAULT = 1184.0   # measured against the Fluke; see ecg_report_android
 QRS_NORMAL_MIN_MS = 70      # below this is short - usually a measurement problem
 QRS_NORMAL_MAX_MS = 110     # upper limit of normal; 70-100 is the normal range
 QRS_WIDE_MIN_MS = 120       # required to diagnose BBB or a ventricular rhythm
@@ -195,6 +196,10 @@ def build_interpretation(measurements: Dict,
         (f, criterion_for(f, measurements), implication_for(f)) for f in kept
     ]
 
+    # ST deviation is measured per lead rather than produced by the rhythm
+    # engine, so it is added here rather than arriving through `findings`.
+    statements = st_findings(measurements.get("st_mm")) + statements
+
     # A rate and a width that are dangerous together lead, ahead of the two
     # findings that produced them.
     caution = combined_caution(measurements, kept)
@@ -221,3 +226,87 @@ def build_interpretation(measurements: Dict,
             "T": measurements.get("t_axis", "--"),
         },
     }
+
+# ─── ST deviation ───────────────────────────────────────────────────────────
+# Thresholds from the Fourth Universal Definition of MI: elevation >= 1 mm in
+# two contiguous leads, depression >= 0.5 mm horizontal or downsloping.
+#
+# Two known simplifications, both deliberate and both flagged in the criterion
+# text rather than hidden: deviation is measured at J+60 ms rather than at the
+# J point itself, and the higher V2-V3 thresholds (2 mm men >= 40, 2.5 mm men
+# < 40, 1.5 mm women) are not applied because age and sex are not captured.
+ST_ELEVATION_MM = 1.0
+ST_DEPRESSION_MM = -0.5
+
+ST_TERRITORIES = {
+    "anterior": ("V1", "V2", "V3", "V4"),
+    "lateral": ("I", "aVL", "V5", "V6"),
+    "inferior": ("II", "III", "aVF"),
+}
+# The lead group electrically opposite each territory.
+ST_RECIPROCAL = {
+    "anterior": ("II", "III", "aVF"),
+    "lateral": ("III", "aVF"),
+    "inferior": ("I", "aVL"),
+}
+
+
+def _lead_list(leads: Sequence[str]) -> str:
+    order = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+    return " ".join(sorted(leads, key=lambda l: order.index(l) if l in order else 99))
+
+
+def st_findings(st_mm: Optional[Dict[str, float]]) -> List[Tuple[str, str, str]]:
+    """Statements for ST deviation, per the decision spec's section 4 and 4.1.
+
+    aVR is excluded from the lead groups: it faces the cavity, so its deviation
+    is reciprocal to everything and would otherwise make every pattern look
+    territorial.
+    """
+    if not st_mm:
+        return []
+    elevated = [l for l, v in st_mm.items()
+                if l != "aVR" and isinstance(v, (int, float)) and v >= ST_ELEVATION_MM]
+    depressed = [l for l, v in st_mm.items()
+                 if l != "aVR" and isinstance(v, (int, float)) and v <= ST_DEPRESSION_MM]
+
+    out: List[Tuple[str, str, str]] = []
+    hits = {t: [l for l in leads if l in elevated] for t, leads in ST_TERRITORIES.items()}
+    named = [t for t, ls in hits.items() if len(ls) >= 2]
+
+    if len(named) >= 2:
+        # Elevation spread across territories is not an infarct pattern.
+        out.append(("ST elevation, diffuse",
+                    f"ST >0.10mV, {_lead_list(elevated)}",
+                    "diffuse elevation without a single territory - consider pericarditis "
+                    "or early repolarisation rather than STEMI"))
+    elif len(named) == 1:
+        t = named[0]
+        recip = [l for l in ST_RECIPROCAL[t] if l in depressed]
+        crit = f"ST >0.10mV, {_lead_list(hits[t])}"
+        if recip:
+            crit += f"; STd {_lead_list(recip)}"
+            impl = (f"{t} territory with reciprocal change - STEMI pattern, "
+                    "immediate physician review required")
+        else:
+            impl = (f"{t} territory, no reciprocal change - STEMI, pericarditis or "
+                    "early repolarisation; physician review required")
+        out.append((f"ST elevation, {t} leads", crit, impl))
+        # An inferior pattern with V1-V3 depression is a posterior mirror, not a
+        # separate anterior finding.
+        if t == "inferior" and any(l in depressed for l in ("V1", "V2", "V3")):
+            out.append(("Posterior extension suspected",
+                        f"STd {_lead_list([l for l in ('V1','V2','V3') if l in depressed])}",
+                        "posterior mirror pattern - record posterior leads V7-V9"))
+        depressed = [l for l in depressed if l not in recip and l not in ("V1", "V2", "V3")]
+    elif elevated:
+        out.append(("ST elevation",
+                    f"ST >0.10mV, {_lead_list(elevated)}",
+                    "fewer than two contiguous leads in one territory - below STEMI criteria"))
+
+    if depressed:
+        out.append(("ST depression",
+                    f"ST <-0.05mV, {_lead_list(depressed)}",
+                    "subendocardial ischaemia, digoxin effect, or reciprocal to an "
+                    "opposite-wall STEMI"))
+    return out

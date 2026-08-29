@@ -784,6 +784,48 @@ ADC_PER_MV = 1184.0
 DISPLAY_HALF_SPAN_ADC = 19.5 * ADC_PER_MV / 20.0
 
 
+def _measure_st_per_lead(snap_raw, lead_names, fs, adc_per_mv=1184.0):
+    """ST deviation per lead in mm, averaged over the beats in the snapshot.
+
+    Measured at J+60 ms against the PQ segment, which is the point the ST
+    detection in clinical_measurements uses. Returns {} when the snapshot has
+    too few clean beats to average, so a noisy tracing reports nothing rather
+    than a number nobody should trust.
+    """
+    try:
+        ref = np.asarray(snap_raw[1], dtype=float)   # lead II drives beat detection
+        if ref.size < int(3 * fs):
+            return {}
+        d = np.abs(np.diff(ref))
+        idx = np.flatnonzero(d > np.percentile(d, 99.3))
+        if idx.size < 3:
+            return {}
+        groups = [[idx[0]]]
+        for k in idx[1:]:
+            (groups[-1].append(k) if k - groups[-1][-1] < int(0.2 * fs) else groups.append([k]))
+        peaks = [int(np.argmax(np.abs(ref[max(0, g[0]-25):g[0]+25] - np.median(ref)))) + max(0, g[0]-25)
+                 for g in groups]
+        peaks = [r for r in peaks if r > int(0.3 * fs) and r + int(0.7 * fs) < ref.size]
+        if len(peaks) < 3:
+            return {}
+
+        pq_a, pq_b = int(0.140 * fs), int(0.110 * fs)
+        j60 = int(0.100 * fs)
+        out = {}
+        for i, name in enumerate(lead_names):
+            if i >= len(snap_raw):
+                continue
+            x = np.asarray(snap_raw[i], dtype=float)
+            if x.size != ref.size:
+                continue
+            vals = [(x[r + j60] - np.median(x[r - pq_a:r - pq_b])) for r in peaks]
+            out[name] = float(np.median(vals)) / adc_per_mv * 10.0     # mm at 10 mm/mV
+        return out
+    except Exception as e:
+        print(f" ST measurement skipped: {e}")
+        return {}
+
+
 class ECGTestPage(QWidget):
     LEADS_MAP = {
         "Lead II ECG Test": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
@@ -8327,6 +8369,18 @@ class ECGTestPage(QWidget):
         # bundle branch block or a ventricular rhythm, but the upper limit of
         # normal is 110 ms. Calling 110-119 ms "narrow" would report an
         # intraventricular conduction delay as a normal complex.
+        # Per-lead ST deviation, for the ST statements in the findings box.
+        try:
+            from ecg.interpretation import ADC_PER_MV_DEFAULT
+        except Exception:
+            ADC_PER_MV_DEFAULT = 1184.0
+        try:
+            frozen['st_mm'] = _measure_st_per_lead(
+                snap_raw, ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"],
+                fs, ADC_PER_MV_DEFAULT)
+        except Exception:
+            frozen['st_mm'] = {}
+
         try:
             from ecg.interpretation import qrs_finding
             qrs_ms = int(frozen.get('QRS', 0) or 0)
