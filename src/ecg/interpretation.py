@@ -115,6 +115,7 @@ _IMPLICATIONS = {
     "Borderline QRS duration": "intraventricular conduction delay",
     "Short QRS duration": "below physiological range - check signal quality first",
     "Prolonged QTc": "repolarisation delay - drug effect, electrolytes, congenital",
+    "Normal Sinus Rhythm": "P wave before every QRS, 1:1 conduction, rate 60-100",
     "Sinus Bradycardia": "athletic conditioning, vagal tone, drugs or sinus node disease",
     "Sinus Tachycardia": "fever, pain, hypovolaemia, anxiety or thyrotoxicosis",
     "Atrial Fibrillation": "no organised atrial activity - thromboembolic risk",

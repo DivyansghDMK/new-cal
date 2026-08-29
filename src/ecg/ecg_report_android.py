@@ -846,7 +846,9 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # paper below the text. The box grows UPWARD from a fixed bottom edge, so it
     # can never run into the brand line however many findings there are.
     box_bottom = footer_y + 25.0
-    box_h = min(24.0, head_h + rows * row_h + pad_h)
+    # Floor as well as a cap: a single-finding box sized purely to its content
+    # looked cramped against the width of the page.
+    box_h = max(15.0, min(24.0, head_h + rows * row_h + pad_h))
     box_y = box_bottom - box_h
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
                             linewidth=0.8, edgecolor='black',
@@ -940,7 +942,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     # Same reasoning as the portrait box: wide enough for a full sentence, and
     # only as tall as the findings need.
     box_w = 205.0
-    box_h = min(30.0, head_h + rows * row_gap + pad_h)
+    box_h = max(14.0, min(24.0, head_h + rows * row_gap + pad_h))
     box_x = PW - box_w - MR - 7.0
     box_y = footer_top_y - 7.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
