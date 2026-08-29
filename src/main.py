@@ -22,14 +22,30 @@ import os
 
 def _dev_autologin_enabled() -> bool:
     """
-    True only when the developer auto-login bypass is explicitly switched on.
+    True when the login screen and the licence gate are switched off.
 
-    The bypass skips the password prompt AND the licence gate (heartbeat,
-    revocation, offline grace), so it defaults to OFF and is never enabled in a
-    distributed build — CARDIOX_DEV_AUTOLOGIN is stripped from the installer's
-    .env by build_exe.py.
+    Enabled by either CARDIOX_NO_LOGIN or the older CARDIOX_DEV_AUTOLOGIN. This
+    skips the password prompt AND the licence/seat gate (heartbeat, revocation,
+    offline grace), which is what lets the same account run on any number of
+    machines: the seat check is the thing that binds one install to one device.
+
+    It defaults to OFF, and build_exe.py strips these keys from the .env staged
+    into the installer, so a distributed build still asks for credentials unless
+    the .env shipped with it says otherwise.
     """
-    return os.getenv("CARDIOX_DEV_AUTOLOGIN", "").strip().lower() in ("1", "true", "yes", "on")
+    for var in ("CARDIOX_NO_LOGIN", "CARDIOX_DEV_AUTOLOGIN"):
+        if os.getenv(var, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
+def _autologin_username() -> str:
+    """Account to sign in as when the login screen is disabled.
+
+    CARDIOX_AUTOLOGIN_USER picks one explicitly; otherwise the first account in
+    users.json is used, so a fresh machine works without extra configuration.
+    """
+    return os.getenv("CARDIOX_AUTOLOGIN_USER", "").strip()
 import shutil
 
 # Ensure the main src directory is at the absolute front of sys.path
@@ -1091,8 +1107,13 @@ class LoginRegisterDialog(QDialog):
         # stripped from the .env staged into the installer by build_exe.py.
         if _dev_autologin_enabled():
             try:
-                print("🔑 [DEV] Bypassing login screen for user: cardiomac (9560350477)")
-                found = self.sign_in_logic._find_user_record("cardiomac")
+                wanted = _autologin_username()
+                if not wanted:
+                    # No account named: take the first one on this machine.
+                    accounts = list(getattr(self.sign_in_logic, "users", {}) or {})
+                    wanted = accounts[0] if accounts else ""
+                print(f"🔑 Login disabled — signing in as: {wanted or '(no local account)'}")
+                found = self.sign_in_logic._find_user_record(wanted) if wanted else None
                 if found:
                     username, record = found
                     self.result = True
@@ -1100,7 +1121,8 @@ class LoginRegisterDialog(QDialog):
                     self.user_details = record
                     return QDialog.Accepted
                 else:
-                    print("⚠️ User 'cardiomac' not found in users.json! Showing login dialog...")
+                    print(f"⚠️ No local account to auto-login as ({wanted!r}); showing the login dialog. "
+                          f"Sign in once so the account is cached, or set CARDIOX_AUTOLOGIN_USER.")
             except Exception as e:
                 print(f"⚠️ Bypass login error: {e}")
 
@@ -2945,7 +2967,15 @@ def main():
                 is_stale_seat_error,
             )
 
-            stored_key = load_stored_key()
+            if _dev_autologin_enabled():
+                # Login disabled: skip the seat/licence enforcement entirely. This
+                # is what allows the software to run on more than one device at a
+                # time — the startup check is where a seat is claimed and a second
+                # machine gets refused.
+                logger.info("Login disabled — skipping startup licence and seat verification")
+                stored_key = None
+            else:
+                stored_key = load_stored_key()
             if stored_key:
                 # ── Run license check in background so no-internet ────────────
                 # doesn't freeze the main thread.  _post_json now times out in

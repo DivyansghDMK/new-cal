@@ -1,536 +1,5 @@
 [
   {
-    "timestamp": "2026-04-07T17:46:32.318336",
-    "message": "HRV report generation error: local variable 'HR' referenced before assignment\nTraceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\utils\\pdf_process_runner.py\", line 71, in _child_hrv_report\n    generate_hrv_ecg_report(**kwargs)\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_ecg_report_generator.py\", line 3299, in generate_hrv_ecg_report\n    if \"Tachycardia\" in conclusion and HR <= 100: continue\nUnboundLocalError: local variable 'HR' referenced before assignment\n",
-    "category": "HRV_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:24:45.467786"
-  },
-  {
-    "timestamp": "2026-04-07T17:54:12.794668",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:05:23.117808",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-07T18:23:31.461983",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:06:15.745135",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-07T18:24:14.737170",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:36.291876",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-08T10:50:44.000810",
-    "message": "HRV report generation error: name '_cell' is not defined\nTraceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\utils\\pdf_process_runner.py\", line 71, in _child_hrv_report\n    generate_hrv_ecg_report(**kwargs)\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_ecg_report_generator.py\", line 4437, in generate_hrv_ecg_report\n    _cell(\"SDNN\",     sdnn_display, \"ms\") if not isinstance(sdnn_display, float)\nNameError: name '_cell' is not defined\n",
-    "category": "HRV_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:15.789254"
-  },
-  {
-    "timestamp": "2026-04-08T12:05:53.117953",
-    "message": "HRV report generation error: local variable 'HR' referenced before assignment\nTraceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\utils\\pdf_process_runner.py\", line 71, in _child_hrv_report\n    generate_hrv_ecg_report(**kwargs)\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_ecg_report_generator.py\", line 3278, in generate_hrv_ecg_report\n    if HR > 100:\nUnboundLocalError: local variable 'HR' referenced before assignment\n",
-    "category": "HRV_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:22.200213"
-  },
-  {
-    "timestamp": "2026-04-08T14:25:26.659974",
-    "message": "Hyperkalemia report generation error: name 'full_name' is not defined",
-    "category": "HYPERKALemia_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:22:54.363661",
-    "exception_type": "NameError",
-    "exception_message": "name 'full_name' is not defined",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1510, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2936, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3754, in generate_hyperkalemia_ecg_report\n    patient_name_label = String(15, patient_info_start_y, f\"Name: {full_name}\",\nNameError: name 'full_name' is not defined\n"
-  },
-  {
-    "timestamp": "2026-04-08T14:25:32.300114",
-    "message": "Hyperkalemia report generation error: name 'full_name' is not defined",
-    "category": "HYPERKALemia_REPORT_ERROR",
-    "error_count": 2,
-    "session_duration": "0:23:00.003801",
-    "exception_type": "NameError",
-    "exception_message": "name 'full_name' is not defined",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1510, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2936, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3754, in generate_hyperkalemia_ecg_report\n    patient_name_label = String(15, patient_info_start_y, f\"Name: {full_name}\",\nNameError: name 'full_name' is not defined\n"
-  },
-  {
-    "timestamp": "2026-04-08T14:29:42.170105",
-    "message": "Hyperkalemia report generation error: name 'filtered_conclusions' is not defined",
-    "category": "HYPERKALemia_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:01:36.609844",
-    "exception_type": "NameError",
-    "exception_message": "name 'filtered_conclusions' is not defined",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1510, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2936, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 4052, in generate_hyperkalemia_ecg_report\n    for i in range(0, len(filtered_conclusions), 2):\nNameError: name 'filtered_conclusions' is not defined\n"
-  },
-  {
-    "timestamp": "2026-04-08T14:32:02.548457",
-    "message": "Hyperkalemia report generation error: Flowable <Drawing at 0x14e45730910 frame=portrait_frame>...(535 x 780) too large on page 2 in frame 'portrait_frame'(523.2755905511812 x 769.8897637795277*) of template 'portrait'",
-    "category": "HYPERKALemia_REPORT_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:43.281213",
-    "exception_type": "LayoutError",
-    "exception_message": "Flowable <Drawing at 0x14e45730910 frame=portrait_frame>...(535 x 780) too large on page 2 in frame 'portrait_frame'(523.2755905511812 x 769.8897637795277*) of template 'portrait'",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1510, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2936, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 4086, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x14e45730910 frame=portrait_frame>...(535 x 780) too large on page 2 in frame 'portrait_frame'(523.2755905511812 x 769.8897637795277*) of template 'portrait'\n"
-  },
-  {
-    "timestamp": "2026-04-08T15:49:33.295727",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:08:23.623938",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-08T15:53:03.832624",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "0:11:54.160835",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-08T16:52:19.259570",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:19:34.079195",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-09T11:34:55.297204",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:06:32.378909",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-09T11:49:14.641755",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:01:56.337318",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-09T11:55:41.589527",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "0:08:23.285090",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T11:42:10.084687",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:55:37.190962",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T12:09:14.250618",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:25:12.534022",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T14:37:02.403113",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:09:04.508781",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T15:20:09.354567",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:40:26.539064",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T15:21:19.248342",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "0:41:36.432839",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-10T15:23:13.596182",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 3,
-    "session_duration": "0:43:30.780679",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-11T10:37:42.280052",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:17:48.222602",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-11T15:07:27.115729",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:02:27.811334",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-11T16:28:55.144090",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:07:17.711821",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-14T11:09:48.294059",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:58:56.004750",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-14T11:11:13.103376",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "1:00:20.814067",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-04-16T14:18:37.294736",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:08:02.191094",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-16T14:57:49.907563",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:11:39.871951",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-16T15:44:06.968564",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:25:30.503282",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-16T16:38:46.806420",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:05:34.553373",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-17T10:34:56.307215",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:49:08.699265",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-17T12:16:51.644322",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:13:47.562250",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-18T10:10:54.175692",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:27:05.924265",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-18T14:00:04.853300",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "1:19:58.186204",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-20T12:31:01.024870",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:01:35.917512",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-21T11:04:00.280205",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:08:04.939603",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/QWW/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-21T12:11:20.870734",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:22.887903",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-21T14:24:26.531798",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "1:44:19.052210",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-21T15:04:52.382580",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "2:24:44.903005",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-28T17:56:30.449159",
-    "message": "Packet parsing error: [Errno 6] Device not configured",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:24:51.911241",
-    "exception_type": "OSError",
-    "exception_message": "[Errno 6] Device not configured",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
-  },
-  {
-    "timestamp": "2026-04-29T10:16:59.959962",
-    "message": "Serial communication error: module 'os' has no attribute 'startfile'",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "16:45:21.422043",
-    "exception_type": "AttributeError",
-    "exception_message": "module 'os' has no attribute 'startfile'",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 8915, in update_plots\n    self.stop_acquisition()\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 6222, in stop_acquisition\n    self._stop_holter_session_internal()\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 8661, in _stop_holter_session_internal\n    os.startfile(report_path)\n    ^^^^^^^^^^^^\nAttributeError: module 'os' has no attribute 'startfile'\n"
-  },
-  {
-    "timestamp": "2026-05-01T14:36:07.727673",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "4:05:36.035102",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-05T10:10:19.694993",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:29.880773",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-06T12:47:46.298743",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "2:06:42.608444",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-07T16:39:10.265068",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:24.534582",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-11T11:11:12.805548",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:20:07.210455",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-11T12:38:43.893890",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "1:47:38.310571",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-11T14:50:26.431210",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:02:44.105431",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-11T15:15:57.751904",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:00:49.381915",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-12T11:12:49.433988",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:03:43.387311",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-18T10:30:42.223458",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:02:59.883127",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-18T10:35:14.717769",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 2,
-    "session_duration": "0:07:32.377438",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
-    "timestamp": "2026-05-22T16:57:49.385326",
-    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "category": "SERIAL_ERROR",
-    "error_count": 1,
-    "session_duration": "0:04:36.515784",
-    "exception_type": "SerialException",
-    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
-    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
-  },
-  {
     "timestamp": "2026-05-29T15:07:43.699417",
     "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
     "category": "SERIAL_ERROR",
@@ -989,5 +458,545 @@
     "exception_type": "SerialException",
     "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
     "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-08-26T10:12:32.984199",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:09.530078",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T12:53:33.449498",
+    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:00:07.276698",
+    "exception_type": "SerialException",
+    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 621, in read_packets\n    chunk = self.ser.read(read_size)\n            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
+  },
+  {
+    "timestamp": "2026-08-26T12:53:41.369488",
+    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:04:34.802868",
+    "exception_type": "SerialException",
+    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 621, in read_packets\n    chunk = self.ser.read(read_size)\n            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
+  },
+  {
+    "timestamp": "2026-08-26T13:02:12.144148",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:21.044162",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T13:27:58.776474",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:02:00.214309",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T13:48:01.079206",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:14:07.929078",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T13:56:04.348793",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:07:20.956935",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T14:23:29.755128",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:07:23.549221",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T14:29:02.091706",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:05:09.678744",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T14:34:41.163038",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:10:48.750075",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-26T15:59:57.408667",
+    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:03:44.720121",
+    "exception_type": "SerialException",
+    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 621, in read_packets\n    chunk = self.ser.read(read_size)\n            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
+  },
+  {
+    "timestamp": "2026-08-26T17:21:01.634365",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "1:24:48.945815",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T09:53:04.899652",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:31.123164",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T10:17:35.093759",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:26:01.317277",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T10:27:03.453517",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 3,
+    "session_duration": "0:35:29.677032",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T10:45:17.672707",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:14:10.017633",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T11:25:00.101567",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:05:32.193681",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T12:27:00.041253",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:12:12.028366",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T13:01:21.906715",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:46:33.893815",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T15:12:37.338571",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 3,
+    "session_duration": "2:57:49.325669",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T16:34:37.473438",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:04:42.208040",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T16:42:48.945810",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:12:53.680413",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T17:37:11.168764",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:18:33.816336",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T17:48:24.424058",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:29:47.071621",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T18:11:32.382742",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 3,
+    "session_duration": "0:52:55.030308",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T18:12:08.629908",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 4,
+    "session_duration": "0:53:31.277473",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T18:22:21.014204",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 5,
+    "session_duration": "1:03:43.661767",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T18:26:17.209260",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 6,
+    "session_duration": "1:07:39.856837",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T18:27:54.969748",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 7,
+    "session_duration": "1:09:17.617324",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T19:11:01.353859",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 8,
+    "session_duration": "1:52:24.001422",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T19:14:54.275576",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 9,
+    "session_duration": "1:56:16.923138",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-27T19:30:39.248044",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 10,
+    "session_duration": "2:12:01.895607",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T10:13:23.084669",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 11,
+    "session_duration": "16:54:45.732229",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T10:51:36.238488",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 12,
+    "session_duration": "17:32:58.886053",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:22:05.908869",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 13,
+    "session_duration": "18:03:28.556429",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:23:20.209911",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 14,
+    "session_duration": "18:04:42.857486",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:26:35.106273",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 15,
+    "session_duration": "18:07:57.753839",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:41:59.044816",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 16,
+    "session_duration": "18:23:21.692392",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:43:24.593351",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 17,
+    "session_duration": "18:24:47.240915",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:43:58.312832",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 18,
+    "session_duration": "18:25:20.960408",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:44:26.899997",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 19,
+    "session_duration": "18:25:49.547576",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:47:15.957593",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 20,
+    "session_duration": "18:28:38.605161",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-28T11:56:57.603676",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 21,
+    "session_duration": "18:38:20.251256",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T10:23:50.702107",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 22,
+    "session_duration": "1 day, 17:05:13.349671",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T11:25:44.874160",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:02:44.834333",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T11:53:44.947998",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:15:08.233928",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T12:00:50.299123",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:06:56.527353",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T12:05:23.631772",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:02:34.218703",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T12:05:54.714834",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:03:05.301760",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T12:27:22.868858",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:06:38.142538",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T13:48:42.271873",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:48:32.021221",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T14:11:42.536133",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:03:03.212739",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T15:56:56.978528",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:43.409158",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-08-29T16:17:03.807148",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:00:36.456933",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/new/qww_new/src/ecg/serial/serial_reader.py\", line 602, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
   }
 ]
