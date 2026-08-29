@@ -106,6 +106,41 @@ def criterion_for(finding: str, measurements: Dict) -> str:
     return _STATIC_CRITERIA.get(finding, "")
 
 
+# What each finding means — the "Working interpretation" column of the decision
+# spec. The criterion says which measurement fired; this says what it implies,
+# so the reader is not left to translate a threshold into a differential.
+_IMPLICATIONS = {
+    "Wide QRS": "bundle branch block, ventricular rhythm, hyperkalaemia, "
+                "Na-channel blockade or paced rhythm",
+    "Borderline QRS duration": "intraventricular conduction delay",
+    "Short QRS duration": "below physiological range - check signal quality first",
+    "Prolonged QTc": "repolarisation delay - drug effect, electrolytes, congenital",
+    "Sinus Bradycardia": "athletic conditioning, vagal tone, drugs or sinus node disease",
+    "Sinus Tachycardia": "fever, pain, hypovolaemia, anxiety or thyrotoxicosis",
+    "Atrial Fibrillation": "no organised atrial activity - thromboembolic risk",
+    "Atrial Flutter": "organised atrial re-entry, usually 2:1 to 4:1 conduction",
+    "First-degree AV Block (Prolonged PR)": "conduction delay at the AV node",
+}
+
+# Combinations that must not be read as two independent findings. The spec calls
+# for a confidence flag whenever the algorithm meets a wide-complex rhythm,
+# ambiguous P waves, or a diagnostic overlap, rather than committing to one
+# unqualified label.
+def combined_caution(measurements: Dict, findings: Sequence[str]) -> Optional[Tuple[str, str, str]]:
+    hr = _as_int(measurements.get("HR"))
+    qrs = _as_int(measurements.get("QRS"))
+    if hr > HR_TACHY_MIN and qrs >= QRS_WIDE_MIN_MS:
+        return ("Wide-complex tachycardia",
+                f"V-rate {hr}, QRSD {qrs}",
+                "cannot exclude VT vs SVT with aberrancy - physician review required")
+    return None
+
+
+def implication_for(finding: str) -> str:
+    """What the finding suggests, per the decision spec's interpretation column."""
+    return _IMPLICATIONS.get(finding, "")
+
+
 def classify(findings: Sequence[str]) -> str:
     """Overall classification of the tracing: NORMAL, BORDERLINE or ABNORMAL.
 
@@ -155,11 +190,20 @@ def build_interpretation(measurements: Dict,
     clinical opinion.
     """
     kept = [str(f).strip() for f in (findings or []) if str(f).strip()]
-    statements: List[Tuple[str, str]] = [(f, criterion_for(f, measurements)) for f in kept]
+    statements: List[Tuple[str, str, str]] = [
+        (f, criterion_for(f, measurements), implication_for(f)) for f in kept
+    ]
+
+    # A rate and a width that are dangerous together lead, ahead of the two
+    # findings that produced them.
+    caution = combined_caution(measurements, kept)
+    if caution:
+        statements.insert(0, caution)
 
     artifact = artifact_statement(lead_noise)
     if artifact:
-        statements.append((artifact, "high-frequency content"))
+        statements.append((artifact, "high-frequency content",
+                           "interpret this tracing with care"))
 
     # The artifact note describes the recording, not the heart, so it must not
     # push a clean tracing out of NORMAL.

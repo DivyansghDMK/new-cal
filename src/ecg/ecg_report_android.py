@@ -835,15 +835,19 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
                                   signed=bool(frozen.get("signed")))
 
     row_h = 3.3
+    sub_h = 2.6           # the indented "what it means" line
     head_h = 5.2          # title row
     pad_h = 1.6           # breathing room under the last finding
-    rows = max(1, min(len(report["statements"]), 5))
+    _stmts = report["statements"][:5]
+    rows = max(1.0, sum(1 + (0.88 if len(st) > 2 and st[2] else 0) for st in _stmts))
     box_x = 63.0
-    box_y = footer_y + 3.0
     box_w = PW - box_x - MR - 5.0
     # Height follows the content: a two-finding box was leaving 12 mm of empty
-    # paper below the text.
-    box_h = min(22.0, head_h + rows * row_h + pad_h)
+    # paper below the text. The box grows UPWARD from a fixed bottom edge, so it
+    # can never run into the brand line however many findings there are.
+    box_bottom = footer_y + 25.0
+    box_h = min(24.0, head_h + rows * row_h + pad_h)
+    box_y = box_bottom - box_h
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
@@ -858,8 +862,10 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     sx    = box_x + 4.0
     ex    = box_x + box_w - 4.0
     sy    = box_y + head_h
-    for i, (finding, criterion) in enumerate(report["statements"]):
-        ty  = sy + i*row_h
+    ty = sy
+    for i, st in enumerate(_stmts):
+        finding, criterion = st[0], st[1]
+        implication = st[2] if len(st) > 2 else ""
         # Drop a finding rather than let it print outside the box. The test is on
         # the text height (~2.8 mm at 8.5 pt), not a whole row, so the last line
         # is not thrown away for the sake of the gap beneath it.
@@ -875,6 +881,13 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
             if rx - lx > 3.0:
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
+        ty += row_h
+        # What the finding means, indented beneath it, so the reader does not
+        # have to translate a threshold into a differential.
+        if implication and ty + 2.2 <= box_y + box_h - 0.8:
+            _t(ax, "- " + implication, sx + 4.0, ty - 0.6, 6.5,
+               italic=True, zorder=9)
+            ty += sub_h
 
 
     # Brand line
@@ -922,11 +935,12 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     row_gap = 3.4
     head_h = 6.0
     pad_h = 1.6
-    rows = max(1, min(len(report["statements"]), 5))
+    _ls = report["statements"][:5]
+    rows = max(1.0, sum(1 + (0.85 if len(st) > 2 and st[2] else 0) for st in _ls))
     # Same reasoning as the portrait box: wide enough for a full sentence, and
     # only as tall as the findings need.
     box_w = 205.0
-    box_h = min(21.0, head_h + rows * row_gap + pad_h)
+    box_h = min(30.0, head_h + rows * row_gap + pad_h)
     box_x = PW - box_w - MR - 7.0
     box_y = footer_top_y - 7.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
@@ -940,8 +954,10 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
        box_x+box_w/2+2.0, box_y+2, 8, italic=True, ha='left', zorder=9)
 
     sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+head_h
-    for i, (finding, criterion) in enumerate(report["statements"]):
-        ty = sy + i*row_gap
+    ty = sy
+    for i, st in enumerate(report["statements"][:5]):
+        finding, criterion = st[0], st[1]
+        implication = st[2] if len(st) > 2 else ""
         if ty + 2.8 > box_y + box_h - 0.8: break
         label = f"{i+1}. {finding}"
         _t(ax, label, sx, ty, 8.5, zorder=9)
@@ -952,6 +968,11 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
             if rx - lx > 3.0:
                 ax.plot([lx, rx], [ty + 1.6, ty + 1.6], color='black',
                         linewidth=0.4, linestyle=(0, (1, 2)), zorder=9)
+        ty += row_gap
+        if implication and ty + 2.2 <= box_y + box_h - 0.8:
+            _t(ax, "- " + implication, sx + 4.0, ty - 0.6, 6.5,
+               italic=True, zorder=9)
+            ty += 2.9
 
 
     # Brand line
