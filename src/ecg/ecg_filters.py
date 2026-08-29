@@ -182,6 +182,10 @@ EMG_FILTER_TYPE = "butter"
 # filtering. Set False for a plain single-cutoff low-pass.
 EMG_QRS_GATED = True
 
+# Above this ratio of high-frequency content to signal span, the trace is too
+# noisy to gate and the muscle filter runs plainly across the whole beat.
+EMG_GATE_NOISE_LIMIT = 0.04
+
 # Baseline estimator for the DFT 0.5 setting:
 #   "median2"     two median passes (200 ms then 600 ms) — the published
 #                 Van Alsté method commercial carts descend from
@@ -482,6 +486,22 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
             try:
                 sig = np.asarray(signal, dtype=float)
                 smoothed = _emg_lowpass_core(sig, sampling_rate, cutoff_freq)
+
+                # Gating only makes sense on a reasonably clean trace. Handing the
+                # QRS back unfiltered also hands back whatever interference is
+                # sitting on it, which prints as a burst of noise at every complex -
+                # worse than the smearing the gate exists to avoid. Raising the
+                # cutoff over the QRS does not help either, because mains and its
+                # harmonics are inside any diagnostic passband. So: measure the
+                # noise between beats first, and skip gating when it is high.
+                try:
+                    b_n, a_n = butter(2, 60.0 / (sampling_rate / 2.0), btype='high')
+                    hf = float(np.std(filtfilt(b_n, a_n, sig)))
+                    span = float(np.percentile(sig, 99) - np.percentile(sig, 1))
+                    if span > 0 and hf / span > EMG_GATE_NOISE_LIMIT:
+                        return smoothed
+                except Exception:
+                    pass
                 b_q, a_q = butter(2, [5.0 / (sampling_rate / 2.0),
                                       35.0 / (sampling_rate / 2.0)], btype='band')
                 qrs = detect_qrs_regions(filtfilt(b_q, a_q, sig - np.mean(sig)), sampling_rate)
