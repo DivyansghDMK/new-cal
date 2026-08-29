@@ -854,13 +854,15 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
 
     # Title and the advice sit together on the top row: the reader sees what the
     # box is and what to do about it in one glance.
+    # Title anchored left, caveats right: the pair cannot overrun the border
+    # however long the caveat text gets.
     _t(ax, "PROBABLE CONCLUSION",
-       box_x+box_w/2-2.0, box_y+1, 7, bold=True, ha='right', zorder=9)
-    _caveat_line = "-  " + report.get("advisory", "Please consult your doctor")
+       box_x+4.0, box_y+1, 7, bold=True, ha='left', zorder=9)
+    _caveat_line = report.get("advisory", "Please consult your doctor")
     if report.get("caveat"):
-        _caveat_line += "  -  " + report["caveat"]
+        _caveat_line += "   -   " + report["caveat"]
     _t(ax, _caveat_line,
-       box_x+box_w/2+2.0, box_y+1, 7, italic=True, ha='left', zorder=9)
+       box_x+box_w-4.0, box_y+1, 7, italic=True, ha='right', zorder=9)
 
     sx    = box_x + 4.0
     ex    = box_x + box_w - 4.0
@@ -949,13 +951,13 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                             facecolor='none', zorder=8))
 
     _t(ax, "PROBABLE CONCLUSION",
-       box_x+box_w/2-2.0, box_y+2, 9, bold=True, ha='right', zorder=9)
+       box_x+5.0, box_y+2, 9, bold=True, ha='left', zorder=9)
 
-    _caveat_line = "-  " + report.get("advisory", "Please consult your doctor")
+    _caveat_line = report.get("advisory", "Please consult your doctor")
     if report.get("caveat"):
-        _caveat_line += "  -  " + report["caveat"]
+        _caveat_line += "   -   " + report["caveat"]
     _t(ax, _caveat_line,
-       box_x+box_w/2+2.0, box_y+2, 8, italic=True, ha='left', zorder=9)
+       box_x+box_w-5.0, box_y+2, 8, italic=True, ha='right', zorder=9)
 
     sx = box_x+5.0; ex = box_x+box_w-5.0; sy = box_y+head_h
     ty = sy

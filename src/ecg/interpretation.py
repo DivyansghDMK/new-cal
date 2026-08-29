@@ -211,7 +211,9 @@ def build_interpretation(measurements: Dict,
     return {
         "statements": statements,
         "severity": classify(kept),
-        "caveat": "" if signed else "Unconfirmed Diagnosis",
+        # Worded for paper: the sheet is printed before anyone signs it, so it
+        # tells the reader the status depends on the signature line below.
+        "caveat": "" if signed else "Unconfirmed Diagnosis if not signed",
         "advisory": "Please consult your doctor",
         "axis": {
             "P": measurements.get("p_axis", "--"),
