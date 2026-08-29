@@ -4206,7 +4206,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     master_drawing.add(conclusion_box)
     
     # Conclusion header (CENTER adjusted for new X position and width)
-    conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "CONCLUSION", 
+    conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "PROBABLE CONCLUSION", 
                               fontSize=9, fontName=FONT_TYPE_BOLD,
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")

@@ -3737,7 +3737,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # CENTERED and STYLISH "Conclusion" header - DYNAMIC - SMALLER (AT TOP OF CONTAINER - CLOSE TO TOP LINE)
     # Box center: 450 + (355/2) = 627.5, so text should be centered around 627.5
     # Box top is at conclusion_y_start - 55, so header should be very close to top line
-    conclusion_header = String(627.5, conclusion_y_start + 8, "CONCLUSION",  # Centered in shifted box
+    conclusion_header = String(627.5, conclusion_y_start + 8, "PROBABLE CONCLUSION",  # Centered in shifted box
                               fontSize=9, fontName="Helvetica-Bold",  # Reduced from 11 to 9
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")  # This centers the text

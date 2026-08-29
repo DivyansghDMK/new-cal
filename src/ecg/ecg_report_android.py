@@ -817,7 +817,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
 
-    _t(ax, "CONCLUSION",
+    _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
 
     # Draw conclusions in a single column to avoid overlapping
@@ -873,7 +873,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
 
-    _t(ax, "CONCLUSION",
+    _t(ax, "PROBABLE CONCLUSION",
        box_x+box_w/2, box_y+2, 9, bold=True, ha='center', zorder=9)
 
     # Draw conclusions in a single column to avoid overlapping
