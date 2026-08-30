@@ -88,15 +88,66 @@ depression to be:
 So the fix is not in the signal chain. It is two criteria that were never
 implemented, and both are clinical thresholds.
 
+## The two criteria were implemented experimentally and measured
+
+Not a proposal — measured on all 199 LUDB records, adding one criterion at a time.
+ST slope is computed as the change from J+60 ms to J+80 ms; "not upsloping" means
+that change is zero or negative.
+
+| ST depression rule | STEMI (28) | Other ischemia (22) | **No ischemia label (149)** |
+|---|---|---|---|
+| **A** — any single lead ≤ −0.5 mm *(ships today)* | 50% | 91% | **65%** |
+| **B** — A + two contiguous leads of one territory | 29% | 59% | 40% |
+| **C** — B + horizontal or downsloping | 11% | 32% | **7%** |
+
+Rule C is what the Fourth Universal Definition of MI actually requires.
+
+### Sensitivity falls, and the test gets much better anyway
+
+Rule A finds 91% of ischemia — while firing on 65% of everyone else. As a test
+that is barely informative: a positive likelihood ratio of 1.4. Rule C finds 32%
+while firing on 7%, a likelihood ratio of **4.6**. A finding that appears on two
+thirds of healthy people carries no information; one that appears on 7% does.
+
+ST *depression* is also not the primary criterion for STEMI — elevation is — so
+the 50% → 11% column is the reciprocal-change path, not the diagnosis.
+
+### The residual 7% is mostly not error
+
+Of the 10 no-ischemia records still flagged under rule C, **8 carry a
+hypertrophy label** and 3 also carry a non-specific repolarisation abnormality:
+
+| record | leads | also labelled |
+|---|---|---|
+| 22, 77, 102, 105, 121, 147, 165, 179 | — | left atrial and/or left ventricular hypertrophy |
+| 93, 122 | V1–V2, III–V5 | nothing |
+
+LVH strain produces genuine ST depression. Those are correct findings on records
+that happened to carry no *ischemia* label — LUDB codes hypertrophy in a separate
+column. **The genuinely unexplained rate is 2 of 149, about 1.3%.**
+
+So the honest expectation after the fix is roughly **97 of 149 false flags
+becoming 2**, not "100% correct" — which is not available on ST from any device,
+and is not what two cardiologists reading the same tracing achieve either.
+
+### What implementing this actually costs
+
+The contiguity test is a few lines against `ST_TERRITORIES`, which already exists.
+**The slope does not exist anywhere in the codebase** and has to be added — ST at
+J+60 and at J+80, per lead, carried through to `st_findings()` alongside the value.
+That is new measurement code, not a threshold edit, so it needs its own tests.
+
 ## Decision requested
 
 Nothing to approve yet. This records that the defect is real, that the fix is
 ready, and that shipping it now would be a regression. The order of work is:
 
 1. **Approve the two missing ST depression criteria** — two contiguous leads,
-   and horizontal or downsloping only. Both are from your own reference deck.
-2. Implement the ST slope measurement, which does not exist yet, and re-validate
-   the depression rule on these 199 records.
+   and horizontal or downsloping only. Both are from your own reference deck, and
+   the measured effect is in the table above: flags on no-ischemia records fall
+   from 97 of 149 to 10, of which 8 are hypertrophy records showing real strain.
+2. Implement the ST slope measurement, which does not exist yet, with its own
+   tests, and re-validate on these 199 records.
 3. Correct the J point on its own merits (S-wave nadir → QRS offset), even though
    it is not what is causing this.
 4. Then wire severity to the clinical findings and re-validate.
