@@ -11,6 +11,8 @@ are about how PR and conduction change FROM BEAT TO BEAT:
     1st degree     every P conducts, PR fixed and > 200 ms
     2nd Mobitz I   PR lengthens progressively, then one P is not conducted
     2nd Mobitz II  PR fixed, then one P is suddenly not conducted
+                   (NEITHER is detected by this module; both scored 3 right
+                    against 5 wrong on real data, two errors being AF)
     3rd degree     P and QRS are independent — no consistent PR at all
                    (NOT detected by this module; it needs the atrial rate)
 
@@ -57,9 +59,6 @@ P_SEARCH_MAX_MS = 360.0
 # comfortably above the measurement noise and well below the 40-80 ms steps a
 # Wenckebach cycle produces.
 PR_FIXED_TOLERANCE_MS = 20.0
-
-# Wenckebach needs the increments to actually be increments, not jitter.
-PR_INCREMENT_MIN_MS = 15.0
 
 # Above this per-lead high-frequency ratio the P wave cannot be trusted, so no
 # conduction claim is made. Same measurement the muscle filter's gate uses; see
@@ -223,11 +222,11 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
         conducted        list of bool, whether a P was found for that QRS
         p_count          P waves detected, including any not followed by a QRS
         qrs_count        QRS complexes
-        classification   one of: "Normal AV conduction", "First-degree AV Block",
-                         "Second-degree AV Block (Mobitz I)",
-                         "Second-degree AV Block (Mobitz II)", or None when the
-                         strip does not support a claim. Third-degree block is
-                         NOT produced - see the note at the classification step.
+        classification   "Normal AV conduction", "First-degree AV Block", or
+                         None when the strip does not support a claim. The
+                         second- and third-degree blocks are NOT produced - see
+                         the notes at the classification step for the validation
+                         that removed them.
         reason           plain-text justification, always populated
         assessable       False when the trace is too noisy or too short
     """
@@ -288,29 +287,35 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
     fixed = rng <= PR_FIXED_TOLERANCE_MS
 
     if dropped:
-        # Does PR lengthen across the beats leading into the pause?
-        wenckebach = False
-        for d in dropped:
-            run = [prs[i] for i in range(max(0, d - 2), d + 1) if prs[i] is not None]
-            if len(run) >= 2:
-                steps = np.diff(run)
-                if np.all(steps > 0) and float(np.sum(steps)) >= PR_INCREMENT_MIN_MS:
-                    wenckebach = True
-                    break
-        if wenckebach:
-            out["classification"] = "Second-degree AV Block (Mobitz I)"
-            out["reason"] = (f"PR lengthens progressively then a beat is dropped; "
-                             f"PR {min(valid):.0f}-{max(valid):.0f} ms over "
-                             f"{len(valid)} conducted beats")
-        elif fixed:
-            out["classification"] = "Second-degree AV Block (Mobitz II)"
-            out["reason"] = (f"PR fixed at {med:.0f} ms (range {rng:.0f} ms) with a "
-                             f"non-conducted P wave")
-        else:
-            out["classification"] = None
-            out["reason"] = (f"a long pause is present but PR is neither fixed "
-                             f"({rng:.0f} ms range) nor progressively lengthening; "
-                             f"not classifiable from this strip")
+        # THERE IS DELIBERATELY NO SECOND-DEGREE RULE HERE EITHER.
+        #
+        # Mobitz I and Mobitz II were produced from this branch, and against the
+        # only real second-degree data available (11 PTB-XL records) they scored
+        # 3 right against 5 wrong. Two of the errors were ATRIAL FIBRILLATION
+        # (LUDB 51, 83), where the question does not apply at all; the others
+        # were a first-degree and a third-degree block.
+        #
+        # The textbook guard was tried and does not work. Second-degree block has
+        # a regular RR apart from the pause and atrial fibrillation is
+        # irregularly irregular, so RR regularity looks like the discriminator -
+        # but measured, the ordering is inverted:
+        #
+        #     true second-degree   RR CoV  0.560, 0.746, 0.764
+        #     false calls          RR CoV  0.340, 0.397, 0.437
+        #
+        # because the true cases drop several beats rather than one. No threshold
+        # in that ordering separates them.
+        #
+        # A pause is reported as a pause. Deciding WHY a beat was not conducted
+        # needs P-P regularity across the pause measured independently of the
+        # QRS, which this module does not do.
+        #
+        # See docs/pending/av-block-labels.md and docs/REFERENCE_VALIDATION.md.
+        out["classification"] = None
+        out["reason"] = (f"{len(dropped)} long pause(s) in {r_peaks.size} beats "
+                         f"(PR {min(valid):.0f}-{max(valid):.0f} ms); a dropped "
+                         f"beat is present but its cause is not established from "
+                         f"this strip")
         return out
 
     # ── No dropped beat ──────────────────────────────────────────────────────

@@ -193,35 +193,59 @@ now declines to answer, which is the correct behaviour for a device.
 Four regression tests pin this — including one that greps the module for a new
 assignment of the label.
 
-## Second-degree still produces false positives, and a rate guard does not fix it
+## Second-degree AV Block has been REMOVED too
 
-| | called Mobitz I/II | truth |
+Against the only real second-degree data available — 11 PTB-XL records — Mobitz I
+and II scored **3 right against 5 wrong**:
+
+| | called | truth |
 |---|---|---|
-| LUDB rec 51, 83 | Mobitz I | **atrial fibrillation** |
+| LUDB 51, 83 | Mobitz I | **atrial fibrillation** |
 | PTB-XL 00833, 04366 | Mobitz I | 1st degree |
 | PTB-XL 15368 | Mobitz I | 3rd degree |
-| PTB-XL 01222, 08048, 10300 | Mobitz I/II | **2nd degree ✓** |
+| PTB-XL 01222, 08048, 10300 | Mobitz I/II | 2nd degree ✓ |
 
-Three correct against five wrong, on 11 available second-degree records.
-
-The obvious guard — second-degree block has a regular RR apart from the pause,
-atrial fibrillation is irregularly irregular — was tested and **does not
-separate them**. RR coefficient of variation, excluding the longest interval:
+The textbook guard was tried and **does not work**. Second-degree block has a
+regular RR apart from the pause and atrial fibrillation is irregularly irregular,
+so RR regularity looks like the discriminator. Measured, the ordering is inverted:
 
 ```
-true 2nd degree   0.560, 0.746, 0.764
-false calls       0.340, 0.397, 0.437     (AF records: 0.285, 0.287)
+true second-degree   RR CoV  0.560, 0.746, 0.764
+false calls          RR CoV  0.340, 0.397, 0.437     (the AF pair: 0.285, 0.287)
 ```
 
-The true cases are *more* irregular than the false ones, because they have
-several dropped beats rather than one. No threshold in that ordering helps, so
-no guard was added.
+The true cases are *more* irregular, because they drop several beats rather than
+one. No threshold in that ordering separates them.
 
-**Recommendation:** second-degree should be removed on the same reasoning as
-third-degree — 3 right against 5 wrong is not a basis for a printed label, and
-two of the errors are atrial fibrillation, where the question does not apply.
-That is left as a decision rather than done, because it is the last block label
-in the module.
+A pause is now reported as a pause. Deciding **why** a beat was not conducted
+needs P-P regularity measured across the pause independently of the QRS, which
+this module does not do.
+
+## Where the module now stands
+
+It produces exactly three outcomes: `Normal AV conduction`, `First-degree AV
+Block`, or nothing with a stated reason.
+
+| LUDB truth | n | → NORM | 1AVB | any other block | n/a |
+|---|---|---|---|---|---|
+| Normal | 167 | 59 | **2** | 0 | 106 |
+| 1st degree | 10 | 3 | 2 | 0 | 5 |
+| 3rd degree | 5 | 0 | **1** | 0 | 4 |
+| **Atrial fibrillation** | 18 | 0 | 0 | **0** | **18** |
+
+| PTB-XL truth | n | → NORM | 1AVB | any other block | n/a |
+|---|---|---|---|---|---|
+| Normal | 150 | 43 | **0** | 0 | 107 |
+| 1st degree | 150 | 0 | 12 | 0 | 138 |
+| 2nd degree | 11 | 0 | 0 | 0 | 11 |
+| 3rd degree | 13 | 0 | 0 | 0 | 13 |
+
+Every atrial fibrillation record now refuses, where 8 were previously called
+complete heart block. Three false `First-degree AV Block` calls remain on LUDB
+and none on PTB-XL.
+
+66% of LUDB and 83% of PTB-XL now return "not assessable", and on our own
+recordings 35%.
 
 ## Recommendation: approve nothing
 

@@ -93,15 +93,23 @@ class TestRealBlocksAreDetected(unittest.TestCase):
         out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
         self.assertEqual(out["classification"], "First-degree AV Block")
 
-    def test_mobitz_i_wenckebach(self):
-        sig, r = _strip([160, 200, 240, 160, 200, 240, 160, 200], drop_after=2)
-        out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
-        self.assertEqual(out["classification"], "Second-degree AV Block (Mobitz I)")
+    def test_a_dropped_beat_is_reported_as_a_pause_not_a_block(self):
+        """Mobitz I and II were produced here and have been removed.
 
-    def test_mobitz_ii(self):
-        sig, r = _strip([180] * 8, drop_after=4)
-        out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
-        self.assertEqual(out["classification"], "Second-degree AV Block (Mobitz II)")
+        On the only real second-degree data available - 11 PTB-XL records - they
+        scored 3 right against 5 wrong, and two of the errors were atrial
+        fibrillation, where the question does not apply at all. A pause is now
+        reported as a pause; deciding WHY a beat was not conducted needs P-P
+        regularity measured across the pause independently of the QRS, which
+        this module does not do.
+        """
+        for pr_list, drop in (([160, 200, 240, 160, 200, 240, 160, 200], 2),
+                              ([180] * 8, 4)):
+            with self.subTest(drop_after=drop):
+                sig, r = _strip(pr_list, drop_after=drop)
+                out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
+                self.assertIsNone(out["classification"])
+                self.assertIn("pause", out["reason"])
 
 
 class TestNoBlockIsInvented(unittest.TestCase):
@@ -163,7 +171,7 @@ class TestNoBlockIsInvented(unittest.TestCase):
                             "a classification without a reason is not auditable")
 
 
-class TestThirdDegreeIsNotProduced(unittest.TestCase):
+class TestBlocksBeyondFirstDegreeAreNotProduced(unittest.TestCase):
     """The rule that labelled a third of all normal ECGs as complete heart block.
 
     A PR range wider than 80 ms with no dropped beat used to be reported as
@@ -209,18 +217,25 @@ class TestThirdDegreeIsNotProduced(unittest.TestCase):
         self.assertIsNone(out["classification"])
         self.assertTrue(out["reason"].strip())
 
-    def test_the_label_is_absent_from_the_module(self):
-        """Grep-level guard: the string must not come back with a new rule."""
+    def test_no_block_label_beyond_first_degree_is_assigned(self):
+        """Grep-level guard: none of the removed labels may come back.
+
+        Second- and third-degree were both removed after validation, for
+        different reasons recorded in docs/pending/av-block-labels.md. A new
+        rule that assigns either needs that evidence answered first.
+        """
         import inspect
         from ecg.metrics import av_conduction
         src = inspect.getsource(av_conduction)
-        assigns = [ln for ln in src.splitlines()
-                   if '"Third-degree AV Block"' in ln and "=" in ln
-                   and "classification" in ln and not ln.strip().startswith("#")]
-        self.assertEqual(assigns, [],
-                         "a rule now assigns Third-degree AV Block again — it needs "
-                         "the atrial rate, not PR variability; see "
-                         "docs/pending/av-block-labels.md")
+        for label in ("Third-degree AV Block",
+                      "Second-degree AV Block (Mobitz I)",
+                      "Second-degree AV Block (Mobitz II)"):
+            assigns = [ln for ln in src.splitlines()
+                       if f'"{label}"' in ln and "=" in ln
+                       and "classification" in ln and not ln.strip().startswith("#")]
+            self.assertEqual(assigns, [],
+                             f"a rule now assigns {label!r} again — see "
+                             f"docs/pending/av-block-labels.md")
 
 
 class TestSTThresholdsFollowTheDeck(unittest.TestCase):
