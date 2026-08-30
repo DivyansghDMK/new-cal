@@ -213,8 +213,36 @@ def build_interpretation(measurements: Dict,
         statements.append((artifact, "high-frequency content",
                            "interpret this tracing with care"))
 
-    # The artifact note describes the recording, not the heart, so it must not
-    # push a clean tracing out of NORMAL.
+    # SEVERITY IS DELIBERATELY STILL classify(kept) — the rhythm findings only.
+    #
+    # This is a known defect, not an oversight: a tracing with 2.5 mm of ST
+    # elevation across V2-V4 and an ordinary sinus rhythm prints its ST finding
+    # in the box and "NORMAL ECG" as the overall reading, on the same sheet,
+    # because ST deviation is merged into `statements` above and never reaches
+    # the classifier.
+    #
+    # The one-line fix — classify every clinical statement — was written and
+    # tested, and it CANNOT SHIP, because the ST measurement underneath is not
+    # good enough to drive a verdict. On the 149 LUDB records carrying no
+    # ischemia label it fires an ST finding on 114 of them (77%), and 34% of all
+    # lead measurements exceed 0.5 mm where a healthy lead should sit near zero.
+    # Wiring that to severity would print ABNORMAL ECG on three quarters of
+    # normal people.
+    #
+    # Restricting severity to the territorial STEMI patterns instead does not
+    # rescue it either: territorial findings fire on 6% of the no-ischemia
+    # records against 4% of the STEMI records, which is chance.
+    #
+    # The J point is measured as the S-wave NADIR (the argmin over R+20..60 ms in
+    # measure_st_deviation_from_median_beat), which looked like the cause. It was
+    # tested against the real QRS offset and is NOT: the scatter got slightly
+    # worse, 41% of leads over 0.5 mm against 34%.
+    #
+    # So the ST measurement needs diagnosing first, and this stays as it is until
+    # it is. See docs/pending/st-severity.md.
+    #
+    # The artifact note describes the recording, not the heart, and must not push
+    # a clean tracing out of NORMAL — that part is already correct.
     return {
         "statements": statements,
         "severity": classify(kept),
