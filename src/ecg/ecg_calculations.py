@@ -1073,8 +1073,25 @@ def calculate_hr_rr(lead_data: np.ndarray, fs: float = 500.0,
 #
 # Set ECG_GLOBAL_QRS=1 to enable it for validation work.
 import os as _os
+# Multi-lead global QRS boundary. ON by default; set ECG_GLOBAL_QRS=0 to disable.
+#
+# This defaulted to OFF, behind an environment variable nothing sets, so every
+# unit in the field measured QRS from Lead II alone. A single lead sees only its
+# own projection of the depolarisation wavefront, so its onset is late and its
+# offset early — the comment at the call site already said this reads 10-20 ms
+# short, and against the LUDB cardiologist annotations it measured -18 ms:
+#
+#                        median   bias   median|err|   <=10ms   <=20ms
+#     single-lead (was)    74 ms   -18        18 ms      27%      54%
+#     global multi-lead    93 ms    +1         7 ms      63%      84%
+#     cardiologists        93 ms
+#
+# 195 of 200 LUDB records, whose P/QRS/T boundaries are annotated per lead per
+# beat by two cardiologists. The `Wide QRS` conclusion triggers at 120 ms, and
+# an 18 ms short read hid it: with the global path on, 11% of records measure
+# >= 120 ms, exactly matching the reference. See docs/REFERENCE_VALIDATION.md.
 GLOBAL_QRS_ENABLED: bool = str(
-    _os.getenv("ECG_GLOBAL_QRS", "")
+    _os.getenv("ECG_GLOBAL_QRS", "1")
 ).strip().lower() in {"1", "true", "yes", "on"}
 
 _GLOBAL_QRS_REFRESH_SEC: float = 1.0

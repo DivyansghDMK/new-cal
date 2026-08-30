@@ -30,33 +30,75 @@ python tools/validate_against_reference.py --data ~/ecg-reference avblock
 which breaks matplotlib 3.7 with `ImportError: numpy.core.multiarray failed to
 import` and stops PDF generation. `pip install "numpy<2"` restores it.
 
-## Result 1 — QRS duration reads about 18 ms short
+## Result 1 — QRS duration read 18 ms short: FOUND AND FIXED
 
 Measured through `calculate_all_ecg_metrics()`, the function that fills the
 report header, against the cardiologist boundaries on the same records:
 
 | | n | our median | reference median | bias | median abs err | ≤10 ms | ≤20 ms |
 |---|---|---|---|---|---|---|---|
-| PR | 172 | 160 ms | 160 ms | **−2 ms** | 14 ms | 41% | 66% |
-| **QRS** | 195 | **74 ms** | **93 ms** | **−18 ms** | 18 ms | 27% | 54% |
-| QT | 195 | 400 ms | 398 ms | **+1 ms** | 22 ms | 32% | 46% |
+| PR | 172 | 160 ms | 160 ms | −2 ms | 14 ms | 41% | 66% |
+| **QRS (was)** | 195 | **74 ms** | **93 ms** | **−18 ms** | 18 ms | 27% | 54% |
+| QT | 195 | 400 ms | 398 ms | +1 ms | 22 ms | 32% | 46% |
 
-PR and QT are unbiased. **QRS is not.** A reference median of 93 ms is textbook
-for a mixed population; ours reads 74 ms, below the normal range entirely.
+PR and QT were unbiased. QRS was not — a reference median of 93 ms is textbook
+for a mixed population, and ours read 74 ms, below the normal range entirely.
 
-The same −19 ms bias appears through `measure_pr_from_median_beat` /
-`measure_qrs_duration_paper`, a separate code path. Two independent
-implementations agreeing on the same offset points at the shared QRS
-onset/offset detection, not at either caller.
+### Isolating it
 
-**Why it matters clinically.** `Wide QRS` triggers at 120 ms. An 18 ms short read
-means a genuine 120–135 ms QRS prints as 102–117 ms and the finding never
-appears — bundle branch block and wide-complex rhythms are missed. This is the
-same `Wide QRS` label already flagged as questionable in the conclusion box.
+Comparing our per-beat borders against the cardiologist's, in Lead II, over
+1806 beats:
 
-**Not yet fixed.** Where the 18 ms is lost — onset, offset, or both — needs to be
-isolated against the LUDB boundaries before anything is changed, and a threshold
-that decides a printed conclusion needs Dr. Rahman's sign-off.
+| | bias | IQR |
+|---|---|---|
+| QRS **onset** | **+12 ms** (starts too late) | +6 … +16 |
+| QRS **offset** | **−8 ms** (ends too early) | −16 … 0 |
+| QRS width | −20 ms | −32 … −8 |
+
+Both borders err *inward*. That is not a tuning problem — it is what a
+**single lead** looks like. A single lead sees one projection of the
+depolarisation wavefront, so the earliest deflection and the latest return to
+baseline both happen in *other* leads.
+
+The codebase already knew this. `qrs_detection.py` implements
+`compute_global_qrs_duration_12lead()` — the Glasgow/Marquette boundary rule,
+earliest onset to latest offset across the lead set — and its own comment says
+single-lead delineation "typically reads 10-20 ms short". Run directly on these
+records it measures **93 ms against the reference's 93 ms**.
+
+### The cause
+
+```python
+GLOBAL_QRS_ENABLED = os.getenv("ECG_GLOBAL_QRS", "") in {"1","true","yes","on"}
+```
+
+The default was the empty string, so this was **False**. The multi-lead path was
+behind an environment variable nothing sets, and every unit in the field measured
+QRS from Lead II alone. Across all 200 LUDB records `qrs_method` came back
+`single-lead` 200 times and `qrs_leads_used` was 1 every time, with 12 leads
+passed in.
+
+### After enabling it
+
+| | median | reference | bias | median abs err | ≤10 ms | ≤20 ms |
+|---|---|---|---|---|---|---|
+| single-lead (was) | 74 ms | 93 ms | −18 ms | 18 ms | 27% | 54% |
+| **global multi-lead (now)** | **93 ms** | 93 ms | **+1 ms** | **7 ms** | **63%** | **84%** |
+
+195 of 200 records took the multi-lead path; 5 fell back, which is the intended
+behaviour when too few leads delineate.
+
+**The `Wide QRS` conclusion is the point.** It triggers at 120 ms, and an 18 ms
+short read hid it. With the global path on, 11% of LUDB records measure ≥ 120 ms —
+**exactly matching the 11% the cardiologists call wide**.
+
+**Fixed** in `src/ecg/ecg_calculations.py`: the default is now `"1"`. Set
+`ECG_GLOBAL_QRS=0` to restore the old single-lead behaviour.
+
+**For Dr. Rahman:** this changes the printed QRS value on every report, and with
+it how often `Wide QRS` appears. It is not a new threshold — the 120 ms criterion
+is unchanged — it is the measurement being taken across the lead set instead of
+one lead, which is what every 12-lead cart does. The evidence is the table above.
 
 ## Result 2 — the AV conduction module labels normal ECGs as complete heart block
 
