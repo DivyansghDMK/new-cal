@@ -12,6 +12,7 @@ are about how PR and conduction change FROM BEAT TO BEAT:
     2nd Mobitz I   PR lengthens progressively, then one P is not conducted
     2nd Mobitz II  PR fixed, then one P is suddenly not conducted
     3rd degree     P and QRS are independent — no consistent PR at all
+                   (NOT detected by this module; it needs the atrial rate)
 
 Averaging destroys exactly the information that separates these. A Wenckebach
 cycle of PR 160/200/240/dropped averages to a single unremarkable ~200 ms.
@@ -224,8 +225,9 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
         qrs_count        QRS complexes
         classification   one of: "Normal AV conduction", "First-degree AV Block",
                          "Second-degree AV Block (Mobitz I)",
-                         "Second-degree AV Block (Mobitz II)",
-                         "Third-degree AV Block", or None when not assessable
+                         "Second-degree AV Block (Mobitz II)", or None when the
+                         strip does not support a claim. Third-degree block is
+                         NOT produced - see the note at the classification step.
         reason           plain-text justification, always populated
         assessable       False when the trace is too noisy or too short
     """
@@ -312,13 +314,37 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
         return out
 
     # ── No dropped beat ──────────────────────────────────────────────────────
-    if not fixed and rng > 80.0:
-        # PR wandering this much with no dropped beat suggests P and QRS are not
-        # related at all. Genuine dissociation also needs the atrial rate to be
-        # faster than the ventricular one, which a 10 s strip may not settle.
-        out["classification"] = "Third-degree AV Block"
-        out["reason"] = (f"no consistent PR relationship (range {rng:.0f} ms across "
-                         f"{len(valid)} beats) — possible AV dissociation")
+    #
+    # THERE IS DELIBERATELY NO THIRD-DEGREE RULE HERE.
+    #
+    # There was one: a PR range wider than 80 ms with no dropped beat was called
+    # "Third-degree AV Block". Validated against cardiologist-annotated data it
+    # labelled 55 of 167 normal LUDB records (33%) and 77 of 150 normal PTB-XL
+    # records (51%) as complete heart block, plus 8 of 18 atrial fibrillation
+    # records, which have no P waves and cannot be an AV-conduction question at
+    # all.
+    #
+    # The defect is the statistic, not the threshold. max-minus-min over ~10
+    # beats fires on a single mis-detected P. LUDB record 27 reads
+    # [168,168,170,174,176,180,184,184,356] - eight beats inside 16 ms, MAD 8 ms -
+    # and was reported as complete heart block. No robust replacement rescues it:
+    # an IQR bar at 40 ms still fired on 32 of 55 false positives while keeping 1
+    # of 3 true detections. PR variability is simply not what third-degree block
+    # is; the diagnosis needs the ATRIAL RATE compared against the VENTRICULAR
+    # rate, which this module does not measure.
+    #
+    # See docs/pending/av-block-labels.md and docs/REFERENCE_VALIDATION.md.
+    #
+    # A wandering PR must not fall through to "Normal AV conduction" either -
+    # that would be the same error in the opposite, quieter direction. Normal
+    # conduction is a claim that every P conducted at a CONSISTENT interval, so
+    # without a fixed PR there is no claim to make.
+    if not fixed:
+        out["classification"] = None
+        out["reason"] = (f"PR is not fixed (range {rng:.0f} ms across {len(valid)} "
+                         f"beats) and no beat is dropped; distinguishing AV "
+                         f"dissociation from P wave mis-detection needs the atrial "
+                         f"rate, which this strip does not establish")
         return out
 
     if fixed and med > PR_NORMAL_MAX_MS:

@@ -157,6 +157,72 @@ on our own recordings from 26 to 14. **That is the onset defect being repaired,
 not the classifier becoming safe** — 25% of normal LUDB and 38% of normal PTB-XL
 records are still called complete heart block, because defect 1 is untouched.
 
+## Third-degree AV Block has been REMOVED from the module
+
+The rule is gone, not adjusted. In its place the module refuses: a PR that is not
+fixed, with no dropped beat, now returns no classification and a reason saying
+the atrial rate would be needed to tell dissociation from P wave mis-detection.
+
+A wandering PR deliberately does **not** fall through to "Normal AV conduction"
+either — that would be the same error in the opposite, quieter direction. Normal
+conduction is a claim that every P conducted at a *consistent* interval.
+
+### After removal
+
+| LUDB truth | n | → NORM | 1AVB | 2AVB | 3AVB | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 167 | 59 | 2 | 0 | **0** | 106 |
+| 1st degree | 10 | 3 | 2 | 0 | **0** | 5 |
+| 3rd degree | 5 | 0 | 1 | 0 | **0** | 4 |
+| Atrial fibrillation | 18 | 0 | 0 | 2 | **0** | 16 |
+
+| PTB-XL truth | n | → NORM | 1AVB | 2AVB | 3AVB | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 150 | 43 | 0 | 0 | **0** | 107 |
+| 1st degree | 150 | 0 | 12 | 2 | **0** | 136 |
+| 2nd degree | 11 | 0 | 0 | 3 | **0** | 8 |
+| 3rd degree | 13 | 0 | 0 | 1 | **0** | 12 |
+
+**Zero false third-degree calls anywhere.** On our own 239 recordings it fell
+from 26 to 0.
+
+The cost is refusal: 66% of LUDB and 81% of PTB-XL now return "not assessable".
+That is the honest number. Everything the old rule was confidently wrong about
+now declines to answer, which is the correct behaviour for a device.
+
+Four regression tests pin this — including one that greps the module for a new
+assignment of the label.
+
+## Second-degree still produces false positives, and a rate guard does not fix it
+
+| | called Mobitz I/II | truth |
+|---|---|---|
+| LUDB rec 51, 83 | Mobitz I | **atrial fibrillation** |
+| PTB-XL 00833, 04366 | Mobitz I | 1st degree |
+| PTB-XL 15368 | Mobitz I | 3rd degree |
+| PTB-XL 01222, 08048, 10300 | Mobitz I/II | **2nd degree ✓** |
+
+Three correct against five wrong, on 11 available second-degree records.
+
+The obvious guard — second-degree block has a regular RR apart from the pause,
+atrial fibrillation is irregularly irregular — was tested and **does not
+separate them**. RR coefficient of variation, excluding the longest interval:
+
+```
+true 2nd degree   0.560, 0.746, 0.764
+false calls       0.340, 0.397, 0.437     (AF records: 0.285, 0.287)
+```
+
+The true cases are *more* irregular than the false ones, because they have
+several dropped beats rather than one. No threshold in that ordering helps, so
+no guard was added.
+
+**Recommendation:** second-degree should be removed on the same reasoning as
+third-degree — 3 right against 5 wrong is not a basis for a printed label, and
+two of the errors are atrial fibrillation, where the question does not apply.
+That is left as a decision rather than done, because it is the last block label
+in the module.
+
 ## Recommendation: approve nothing
 
 The earlier recommendation to approve first-degree and normal is **withdrawn**.

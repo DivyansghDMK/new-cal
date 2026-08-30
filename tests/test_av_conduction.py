@@ -163,6 +163,66 @@ class TestNoBlockIsInvented(unittest.TestCase):
                             "a classification without a reason is not auditable")
 
 
+class TestThirdDegreeIsNotProduced(unittest.TestCase):
+    """The rule that labelled a third of all normal ECGs as complete heart block.
+
+    A PR range wider than 80 ms with no dropped beat used to be reported as
+    "Third-degree AV Block". Against cardiologist-annotated data that fired on
+    55 of 167 normal LUDB records (33%) and 77 of 150 normal PTB-XL records
+    (51%), plus 8 of 18 atrial fibrillation records, which have no P waves at
+    all. The statistic was the defect, not the threshold: max-minus-min over ~10
+    beats fires on one mis-detected P, and no robust replacement separated the
+    false positives from the true ones.
+
+    The rule is gone. These tests keep it gone.
+    """
+
+    def _wandering(self):
+        """A strip whose PR varies far too much to be called fixed."""
+        return _strip([140, 190, 150, 260, 160, 240, 145, 250])
+
+    def test_third_degree_is_never_returned(self):
+        sig, r = self._wandering()
+        out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
+        self.assertNotEqual(out["classification"], "Third-degree AV Block")
+
+    def test_one_outlier_beat_does_not_create_a_block(self):
+        """LUDB record 27's shape: eight beats inside 16 ms and one outlier.
+
+        Read as [168,168,170,174,176,180,184,184,356] it was reported as
+        complete heart block. MAD was 8 ms.
+        """
+        sig, r = _strip([168, 168, 170, 174, 176, 180, 184, 184, 350])
+        out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
+        self.assertNotEqual(out["classification"], "Third-degree AV Block")
+
+    def test_a_wandering_pr_is_not_called_normal_either(self):
+        """The same error in the opposite, quieter direction.
+
+        Removing the third-degree branch must not let a wandering PR fall
+        through to "Normal AV conduction". Normal conduction claims every P
+        conducted at a CONSISTENT interval; without a fixed PR there is no
+        claim to make.
+        """
+        sig, r = self._wandering()
+        out = analyse_av_conduction(sig, r, FS, noise_ratio=0.005)
+        self.assertIsNone(out["classification"])
+        self.assertTrue(out["reason"].strip())
+
+    def test_the_label_is_absent_from_the_module(self):
+        """Grep-level guard: the string must not come back with a new rule."""
+        import inspect
+        from ecg.metrics import av_conduction
+        src = inspect.getsource(av_conduction)
+        assigns = [ln for ln in src.splitlines()
+                   if '"Third-degree AV Block"' in ln and "=" in ln
+                   and "classification" in ln and not ln.strip().startswith("#")]
+        self.assertEqual(assigns, [],
+                         "a rule now assigns Third-degree AV Block again — it needs "
+                         "the atrial rate, not PR variability; see "
+                         "docs/pending/av-block-labels.md")
+
+
 class TestSTThresholdsFollowTheDeck(unittest.TestCase):
     """2.0 mm men >= 40, 2.5 mm men < 40, 1.5 mm women, 1.0 mm elsewhere."""
 
