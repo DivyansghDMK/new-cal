@@ -8,13 +8,14 @@
   "machine_serial_number": "",
   "report_format": "12_1",
   "filter_ac": "50",
-  "filter_emg": "25",
-  "filter_dft": "off",
+  "filter_emg": "150",
+  "filter_dft": "0.05",
   "system_beat_vol": "on",
   "system_language": "en",
   "factory_calibration": "skip",
   "factory_self_test": "skip",
   "factory_memory_reset": "keep",
   "factory_reset": "cancel",
-  "printer_average_wave": "on"
+  "printer_average_wave": "on",
+  "settings_version": 1
 }

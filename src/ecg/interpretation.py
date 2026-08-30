@@ -198,7 +198,9 @@ def build_interpretation(measurements: Dict,
 
     # ST deviation is measured per lead rather than produced by the rhythm
     # engine, so it is added here rather than arriving through `findings`.
-    statements = st_findings(measurements.get("st_mm")) + statements
+    statements = st_findings(measurements.get("st_mm"),
+                             measurements.get("age"),
+                             measurements.get("sex")) + statements
 
     # A rate and a width that are dangerous together lead, ahead of the two
     # findings that produced them.
@@ -211,8 +213,36 @@ def build_interpretation(measurements: Dict,
         statements.append((artifact, "high-frequency content",
                            "interpret this tracing with care"))
 
-    # The artifact note describes the recording, not the heart, so it must not
-    # push a clean tracing out of NORMAL.
+    # SEVERITY IS DELIBERATELY STILL classify(kept) — the rhythm findings only.
+    #
+    # This is a known defect, not an oversight: a tracing with 2.5 mm of ST
+    # elevation across V2-V4 and an ordinary sinus rhythm prints its ST finding
+    # in the box and "NORMAL ECG" as the overall reading, on the same sheet,
+    # because ST deviation is merged into `statements` above and never reaches
+    # the classifier.
+    #
+    # The one-line fix — classify every clinical statement — was written and
+    # tested, and it CANNOT SHIP, because the ST measurement underneath is not
+    # good enough to drive a verdict. On the 149 LUDB records carrying no
+    # ischemia label it fires an ST finding on 114 of them (77%), and 34% of all
+    # lead measurements exceed 0.5 mm where a healthy lead should sit near zero.
+    # Wiring that to severity would print ABNORMAL ECG on three quarters of
+    # normal people.
+    #
+    # Restricting severity to the territorial STEMI patterns instead does not
+    # rescue it either: territorial findings fire on 6% of the no-ischemia
+    # records against 4% of the STEMI records, which is chance.
+    #
+    # The J point is measured as the S-wave NADIR (the argmin over R+20..60 ms in
+    # measure_st_deviation_from_median_beat), which looked like the cause. It was
+    # tested against the real QRS offset and is NOT: the scatter got slightly
+    # worse, 41% of leads over 0.5 mm against 34%.
+    #
+    # So the ST measurement needs diagnosing first, and this stays as it is until
+    # it is. See docs/pending/st-severity.md.
+    #
+    # The artifact note describes the recording, not the heart, and must not push
+    # a clean tracing out of NORMAL — that part is already correct.
     return {
         "statements": statements,
         "severity": classify(kept),
@@ -228,15 +258,46 @@ def build_interpretation(measurements: Dict,
     }
 
 # ─── ST deviation ───────────────────────────────────────────────────────────
-# Thresholds from the Fourth Universal Definition of MI: elevation >= 1 mm in
-# two contiguous leads, depression >= 0.5 mm horizontal or downsloping.
+# Thresholds from the Fourth Universal Definition of MI and Dr. Rahman's
+# reference deck: elevation >= 1 mm in two contiguous leads, depression
+# >= 0.5 mm horizontal or downsloping.
 #
-# Two known simplifications, both deliberate and both flagged in the criterion
-# text rather than hidden: deviation is measured at J+60 ms rather than at the
-# J point itself, and the higher V2-V3 thresholds (2 mm men >= 40, 2.5 mm men
-# < 40, 1.5 mm women) are not applied because age and sex are not captured.
+# V2-V3 carry HIGHER thresholds than the rest, and they depend on age and sex:
+#     men >= 40      2.0 mm
+#     men <  40      2.5 mm
+#     women          1.5 mm
+# These used to be skipped with the note "age and sex are not captured". That
+# was wrong - patient_details carries both (e.g. age 22, gender "Male") - so a
+# flat 1 mm was being applied to V2-V3 and over-calling elevation there. They
+# are applied now, and fall back to the flat 1 mm only when age or sex really is
+# missing, which is the conservative direction for a screening threshold.
+#
+# One simplification remains, flagged in the criterion text rather than hidden:
+# deviation is measured at J+60 ms rather than at the J point itself.
 ST_ELEVATION_MM = 1.0
 ST_DEPRESSION_MM = -0.5
+ST_ELEV_V2V3_MEN_OVER_40 = 2.0
+ST_ELEV_V2V3_MEN_UNDER_40 = 2.5
+ST_ELEV_V2V3_WOMEN = 1.5
+
+
+def st_elevation_threshold(lead: str, age=None, sex=None) -> float:
+    """The elevation threshold in mm for one lead, per age and sex."""
+    if lead not in ("V2", "V3"):
+        return ST_ELEVATION_MM
+    s = str(sex or "").strip().lower()
+    if s.startswith("f"):
+        return ST_ELEV_V2V3_WOMEN
+    if s.startswith("m"):
+        try:
+            a = float(age)
+        except (TypeError, ValueError):
+            return ST_ELEVATION_MM      # sex known, age not - stay conservative
+        if a <= 0:
+            return ST_ELEVATION_MM
+        return (ST_ELEV_V2V3_MEN_OVER_40 if a >= 40
+                else ST_ELEV_V2V3_MEN_UNDER_40)
+    return ST_ELEVATION_MM              # unknown sex - conservative
 
 ST_TERRITORIES = {
     "anterior": ("V1", "V2", "V3", "V4"),
@@ -256,7 +317,8 @@ def _lead_list(leads: Sequence[str]) -> str:
     return " ".join(sorted(leads, key=lambda l: order.index(l) if l in order else 99))
 
 
-def st_findings(st_mm: Optional[Dict[str, float]]) -> List[Tuple[str, str, str]]:
+def st_findings(st_mm: Optional[Dict[str, float]],
+                age=None, sex=None) -> List[Tuple[str, str, str]]:
     """Statements for ST deviation, per the decision spec's section 4 and 4.1.
 
     aVR is excluded from the lead groups: it faces the cavity, so its deviation
@@ -266,7 +328,8 @@ def st_findings(st_mm: Optional[Dict[str, float]]) -> List[Tuple[str, str, str]]
     if not st_mm:
         return []
     elevated = [l for l, v in st_mm.items()
-                if l != "aVR" and isinstance(v, (int, float)) and v >= ST_ELEVATION_MM]
+                if l != "aVR" and isinstance(v, (int, float))
+                and v >= st_elevation_threshold(l, age, sex)]
     depressed = [l for l, v in st_mm.items()
                  if l != "aVR" and isinstance(v, (int, float)) and v <= ST_DEPRESSION_MM]
 

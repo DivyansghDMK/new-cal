@@ -1823,7 +1823,7 @@ class ECGTestPage(QWidget):
 
             dft_setting = None
             if hasattr(self, "settings_manager"):
-                dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+                dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.05")).strip()
 
             if dft_setting and dft_setting not in ("off", ""):
                 if str(dft_setting).strip() == "0.5":
@@ -9332,7 +9332,7 @@ class ECGTestPage(QWidget):
                                 from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
-                                    dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+                                    dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.05")).strip()
                                 if dft_setting and dft_setting not in ("off", ""):
                                     # Always apply 0.5 Hz in streaming-safe mode when selected.
                                     # Gating on/off per frame can cause visible baseline "wobble" on real body signals.
@@ -10225,7 +10225,7 @@ class ECGTestPage(QWidget):
                                 from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
-                                    dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+                                    dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.05")).strip()
                                 if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
                                         raw = apply_baseline_wander_median_mean(raw, float(sampling_rate))
@@ -10772,7 +10772,7 @@ class ECGTestPage(QWidget):
                                             self._last_display_dft_applied[i] = False
                                         dft_setting = None
                                         if hasattr(self, "settings_manager"):
-                                            dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+                                            dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.05")).strip()
                                         if dft_setting and dft_setting not in ("off", ""):
                                             # Always apply 0.5 Hz in streaming-safe mode when selected.
                                             # Per-frame gating can cause visible baseline wobble on body signals.
@@ -11371,7 +11371,7 @@ class ECGTestPage(QWidget):
                                             self._last_display_dft_applied[i] = False
                                         dft_setting = None
                                         if hasattr(self, "settings_manager"):
-                                            dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
+                                            dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.05")).strip()
                                         if dft_setting and dft_setting not in ("off", ""):
                                             if str(dft_setting).strip() == "0.5":
                                                 filtered_slice = apply_baseline_wander_median_mean(filtered_slice, float(sampling_rate))

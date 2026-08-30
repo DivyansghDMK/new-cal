@@ -317,11 +317,16 @@ def _resolve_master_phone(patient: Dict, data: Dict, signup: Dict) -> str:
 
 def _settings_details(settings_manager: Any) -> Dict[str, str]:
     """Extract ECG settings from SettingsManager."""
+    # These are what gets uploaded when the settings are unavailable. They must not
+    # name a filter band, because the PDF prints the band that was ACTUALLY applied and
+    # the two then disagree on the same recording: A999_20260829_183033's PDF reads
+    # "Filter: Off  AC:Off" while its JSON claimed "0.5-150 Hz" / "50 Hz". A report and
+    # its payload describing one acquisition differently is a traceability defect.
     defaults = {
         "paper_speed": "25 mm/s",
         "gain": "10 mm/mV",
-        "filter_band": "0.5-150 Hz",
-        "ac_filter": "50 Hz",
+        "filter_band": "unknown",
+        "ac_filter": "unknown",
         "lead_arrangement": "standard",
     }
     if settings_manager is None:
@@ -330,8 +335,8 @@ def _settings_details(settings_manager: Any) -> Dict[str, str]:
         speed = settings_manager.get_setting('wave_speed', '25')
         gain = settings_manager.get_setting('wave_gain', '10')
         ac = settings_manager.get_setting('filter_ac', '50')
-        emg = settings_manager.get_setting('filter_emg', '25')
-        dft = settings_manager.get_setting('filter_dft', 'off')
+        emg = settings_manager.get_setting('filter_emg', '150')
+        dft = settings_manager.get_setting('filter_dft', '0.05')
         lead_seq = str(settings_manager.get_setting('lead_sequence', 'Standard') or 'Standard').lower()
         arrangement = 'cabrera' if lead_seq == 'cabrera' else 'standard'
         return {

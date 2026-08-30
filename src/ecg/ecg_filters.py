@@ -71,32 +71,55 @@ def detect_qrs_regions(ecg: np.ndarray, fs: float = 500.0) -> np.ndarray:
     
     Algorithm:
     1. Find R-peaks using peak detection
-    2. Create QRS windows (±80 ms around each R-peak)
+    2. Create QRS windows (±60 ms around each R-peak)
     3. Return mask indicating QRS regions
-    
+
+    THE MASK MUST COVER THE QRS AND NOTHING ELSE. Every caller uses it to hand a
+    region back less filtered than the rest of the trace, so anything wrongly
+    included keeps its noise on the printed page.
+
+    The threshold used to be the 75th percentile of |signal| — a quarter of all
+    samples clear that — paired with a 300 ms minimum peak gap. At 59 bpm the T
+    wave sits right at that gap and cleared that threshold, so it registered as a
+    second R peak: measured on A300_20260829_161810, 20 peaks for 10 real beats in
+    8 of 12 leads, and a mask covering 32.4% of the record instead of ~12%. The
+    muscle filter then handed the T wave back unfiltered, mains ripple included,
+    which is exactly where the printed trace looked fuzzy next to a commercial
+    cart's. Tightening this cut the visible out-of-QRS fuzz by 76% (median across
+    480 leads, 9.44 -> 2.26 uV rms above 30 Hz).
+
+    The 99th-percentile-halved threshold is the same criterion the R detection
+    elsewhere in this module already uses, so the two agree on what a beat is.
+
     Args:
         ecg: ECG signal
         fs: Sampling rate (Hz)
-    
+
     Returns:
         Boolean array: True where QRS regions are located
     """
     if len(ecg) < 10:
         return np.zeros(len(ecg), dtype=bool)
-    
+
     try:
         # Find R-peaks (simple peak detection)
         # Use absolute value to handle inverted leads
         abs_ecg = np.abs(ecg)
-        threshold = np.percentile(abs_ecg, 75)  # 75th percentile as threshold
-        
-        # Find peaks with minimum distance (corresponds to ~200 BPM max)
-        min_distance = int(0.3 * fs)  # 300 ms minimum between peaks
-        
+        threshold = np.percentile(abs_ecg, 99) * 0.5   # selective: R peaks only
+        if threshold <= 0:
+            return np.zeros(len(ecg), dtype=bool)
+
+        # 250 ms minimum between peaks (240 bpm ceiling). The threshold, not the
+        # gap, is what keeps the T wave out — a gap wide enough to exclude it by
+        # itself would also start dropping real beats at high rates.
+        min_distance = int(0.25 * fs)
+
         peaks, _ = find_peaks(abs_ecg, height=threshold, distance=min_distance)
-        
-        # Create QRS region mask (±80 ms around each R-peak)
-        qrs_window_ms = 80.0  # ±80 ms QRS window
+
+        # Create QRS region mask (±60 ms around each R-peak). A QRS is ~100 ms
+        # wide, so ±60 ms covers it with margin; ±80 ms reached into the ST
+        # segment and carried its noise back with it.
+        qrs_window_ms = 60.0
         qrs_window_samples = int(qrs_window_ms * fs / 1000.0)
         
         mask = np.zeros(len(ecg), dtype=bool)
@@ -183,13 +206,30 @@ EMG_FILTER_TYPE = "butter"
 EMG_QRS_GATED = True
 
 # Above this ratio of high-frequency content to signal span, the trace is too
-# noisy to gate and the muscle filter runs plainly across the whole beat.
+# noisy to hand the QRS back untouched.
 #
 # Set from measurements on this hardware: genuinely clean captures sit at
 # 0.006-0.011, while traces still carrying mains interference measure 0.013-0.032
-# even on battery. Gating those prints the interference as a burst at every QRS,
-# so the limit goes between the two populations rather than above both.
+# even on battery. Handing those back raw prints the interference as a burst at
+# every QRS, so the limit goes between the two populations rather than above both.
 EMG_GATE_NOISE_LIMIT = 0.012
+
+# What the QRS is protected WITH on a lead that is too noisy to hand back raw.
+#
+# This used to be nothing at all: a noisy lead fell all the way back to the plain
+# low-pass, which ran the selected cutoff straight across the complex. Measured on
+# recordings/raw_all_leads_20260827_120820.csv at the 25 Hz setting, that pulled
+# the J point down by 0.54-1.12 mm in V1-V6 (worst V3) while the clean limb leads
+# on the same recording moved 0.000 mm, and cost 20-29% of the QRS peak-to-peak in
+# those same leads. A J-point depression confined to the chest leads is shaped
+# exactly like anterior ischaemia, and the chest leads are the noisy ones far more
+# often than the limb leads are, so the artifact is not evenly spread — it lands
+# where it is most likely to be read as a finding.
+#
+# 100 Hz keeps the complex its own height and leaves the J point where it was,
+# while still removing the muscle band above it. It is never allowed to be
+# NARROWER than the cutoff the operator selected.
+EMG_GATE_FALLBACK_HZ = 100.0
 
 # Baseline estimator for the DFT 0.5 setting:
 #   "median2"     two median passes (200 ms then 600 ms) — the published
@@ -275,17 +315,36 @@ def apply_ac_filter_adaptive(signal: np.ndarray, sampling_rate: float,
         return signal
 
 
-def _compensate_zero_phase_cutoff(cutoff_hz: float, order: int, highpass: bool = False) -> float:
+def _compensate_zero_phase_cutoff(cutoff_hz: float, order: int, highpass: bool = False,
+                                  sampling_rate: float = 500.0) -> float:
     """Shift a Butterworth cutoff so filtfilt lands -3 dB on the requested frequency.
 
     filtfilt runs the filter forwards and backwards, so the magnitude response is
-    squared and the real -3 dB point moves inward — a "150 Hz" low-pass measured
-    134 Hz, well inside the 150 Hz diagnostic bandwidth IEC 60601-2-25 asks for.
-    Solving |H(f)|^2 = 1/2 for a Butterworth gives the correction below.
+    squared and the real -3 dB point moves inward. Solving |H(f)|^2 = 1/2 for a
+    Butterworth gives the factor below.
+
+    The factor must be applied in the ANALOG frequency domain, because butter()
+    designs through the bilinear transform and that mapping is non-linear. Scaling
+    the digital frequency directly - what this did previously - over-corrects, and
+    the error grows with the cutoff. Measured against freqz at fs = 500 Hz, the old
+    form landed a "150 Hz" setting at 159.7 Hz (+6.5%), 100 Hz at 103.1 (+3.1%),
+    75 Hz at 76.3 (+1.8%): every low-pass label was wider than it stated, and the
+    150 Hz setting consequently measured -1.18 dB at 150 Hz instead of -3.01.
+    Pre-warping through tan/arctan lands every cutoff on its label to within 0.005%.
+
+    The high-pass settings are unaffected either way - warping is negligible at
+    0.05 Hz - but they take the same path so both stay correct.
     """
     try:
         factor = (2.0 ** 0.5 - 1.0) ** (1.0 / (2.0 * order))   # 0.8957 at order 4
-        return cutoff_hz * factor if highpass else cutoff_hz / factor
+        fs = float(sampling_rate)
+        nyq = fs / 2.0
+        if not (0.0 < cutoff_hz < nyq):
+            return cutoff_hz
+        omega = np.tan(np.pi * cutoff_hz / fs)          # digital -> analog
+        omega = omega * factor if highpass else omega / factor
+        warped = float(fs / np.pi * np.arctan(omega))   # analog -> digital
+        return warped if 0.0 < warped < nyq else cutoff_hz
     except Exception:
         return cutoff_hz
 
@@ -435,10 +494,32 @@ def restore_frontend_droop(signal, sampling_rate: float = 500.0, tau_s: float = 
 EMG_FILTER_ENABLED = True
 
 
+def lead_noise_ratio(signal: np.ndarray, sampling_rate: float = 500.0) -> float:
+    """High-frequency content of a lead as a fraction of its own signal span.
+
+    This is the number the muscle filter's QRS gate is keyed to. It is exposed so
+    the report can name the leads where the gate had to fall back, using the same
+    measurement rather than a second opinion computed elsewhere — the reader is
+    then told about exactly the leads whose QRS was smoothed.
+
+    Returns 0.0 when the lead is too short or flat to judge.
+    """
+    try:
+        x = np.asarray(signal, dtype=float)
+        if x.size < int(0.5 * sampling_rate):
+            return 0.0
+        b, a = butter(2, 60.0 / (sampling_rate / 2.0), btype='high')
+        hf = float(np.std(filtfilt(b, a, x)))
+        span = float(np.percentile(x, 99) - np.percentile(x, 1))
+        return hf / span if span > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 def _emg_lowpass_core(signal: np.ndarray, sampling_rate: float, cutoff_freq: float) -> np.ndarray:
     """The plain zero-phase low-pass, cutoff already compensated for filtfilt."""
     nyquist = sampling_rate / 2.0
-    design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4), nyquist * 0.95)
+    design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4, sampling_rate=sampling_rate), nyquist * 0.95)
     b, a = butter(4, design_cut / nyquist, btype='low')
     return filtfilt(b, a, signal)
 
@@ -492,21 +573,37 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
                 sig = np.asarray(signal, dtype=float)
                 smoothed = _emg_lowpass_core(sig, sampling_rate, cutoff_freq)
 
-                # Gating only makes sense on a reasonably clean trace. Handing the
-                # QRS back unfiltered also hands back whatever interference is
-                # sitting on it, which prints as a burst of noise at every complex -
-                # worse than the smearing the gate exists to avoid. Raising the
-                # cutoff over the QRS does not help either, because mains and its
-                # harmonics are inside any diagnostic passband. So: measure the
-                # noise between beats first, and skip gating when it is high.
+                # Handing the QRS back unfiltered also hands back whatever
+                # interference is sitting on it, which prints as a burst of noise at
+                # every complex. So the noise decides WHAT the complex is handed
+                # back as — not whether it is protected at all.
+                #
+                # A noisy lead used to fall through to `return smoothed`, i.e. the
+                # selected cutoff run straight across the QRS, with the J-point and
+                # amplitude cost recorded at EMG_GATE_FALLBACK_HZ above. Now it gets
+                # a wide-cutoff version of itself instead: the muscle band above
+                # 100 Hz is still removed, but the complex keeps its height and the
+                # S wave does not smear into the J point.
+                noisy = False
                 try:
                     b_n, a_n = butter(2, 60.0 / (sampling_rate / 2.0), btype='high')
                     hf = float(np.std(filtfilt(b_n, a_n, sig)))
                     span = float(np.percentile(sig, 99) - np.percentile(sig, 1))
-                    if span > 0 and hf / span > EMG_GATE_NOISE_LIMIT:
-                        return smoothed
+                    noisy = span > 0 and hf / span > EMG_GATE_NOISE_LIMIT
                 except Exception:
                     pass
+
+                if noisy:
+                    # Never narrower than the operator's own setting: at EMG 150 the
+                    # "protection" must not quietly become a 100 Hz low-pass.
+                    wide = max(float(cutoff_freq), EMG_GATE_FALLBACK_HZ)
+                    if wide >= nyquist * 0.9:
+                        inside = sig
+                    else:
+                        inside = _emg_lowpass_core(sig, sampling_rate, wide)
+                else:
+                    inside = sig
+
                 b_q, a_q = butter(2, [5.0 / (sampling_rate / 2.0),
                                       35.0 / (sampling_rate / 2.0)], btype='band')
                 qrs = detect_qrs_regions(filtfilt(b_q, a_q, sig - np.mean(sig)), sampling_rate)
@@ -517,7 +614,7 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
                     win = np.hanning(2 * fade + 1); win /= win.sum()
                     keep = np.convolve(keep, win, mode="same")
                     keep = np.clip(keep, 0.0, 1.0)
-                    return smoothed * (1.0 - keep) + sig * keep
+                    return smoothed * (1.0 - keep) + inside * keep
                 return smoothed
             except Exception as e:
                 print(f" Gated EMG filter failed ({e}) — using the plain low-pass")
@@ -535,7 +632,7 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
 
         # Design 4th order low-pass Butterworth filter (zero-phase). The cutoff is
         # pre-compensated so filtfilt's squared response is -3 dB at the setting.
-        design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4), nyquist * 0.95)
+        design_cut = min(_compensate_zero_phase_cutoff(cutoff_freq, 4, sampling_rate=sampling_rate), nyquist * 0.95)
         normalized_cutoff = design_cut / nyquist
         b, a = butter(4, normalized_cutoff, btype='low')
         
@@ -577,7 +674,7 @@ def apply_dft_filter(signal: np.ndarray, sampling_rate: float, dft_filter: str) 
         
         # Pre-compensate for the zero-phase double pass (see the low-pass above),
         # so a "0.05 Hz" setting really is -3 dB at 0.05 Hz.
-        cutoff_freq = _compensate_zero_phase_cutoff(cutoff_freq, 2, highpass=True)
+        cutoff_freq = _compensate_zero_phase_cutoff(cutoff_freq, 2, highpass=True, sampling_rate=sampling_rate)
         normalized_cutoff = cutoff_freq / nyquist
         
         # Ensure cutoff is within valid range
@@ -1120,9 +1217,13 @@ def apply_ecg_filters_from_settings(
         settings_manager = SettingsManager()
     
     # Get filter settings
+    # These fallbacks must match SettingsManager.default_settings, or the same
+    # install filters differently depending on which entry point ran. EMG was "25"
+    # here long after the shipped default became "150", which is a monitoring
+    # bandwidth, not the IEC 60601-2-25 diagnostic one.
     ac_filter = settings_manager.get_setting("filter_ac", "50")
-    emg_filter = settings_manager.get_setting("filter_emg", "25")
-    dft_filter = settings_manager.get_setting("filter_dft", "off")
+    emg_filter = settings_manager.get_setting("filter_emg", "150")
+    dft_filter = settings_manager.get_setting("filter_dft", "0.05")
     
     # Apply filters
     return apply_ecg_filters(

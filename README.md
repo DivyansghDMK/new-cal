@@ -220,7 +220,414 @@ tamper detection requires moving to RS256 and shipping only the public key.
 
 ---
 
+## 🩺 The Filter Chain
+
+Reference for what each filter setting does, what it has been measured at, and the
+one artifact it used to produce. The rules live in
+[src/ecg/ecg_filters.py](src/ecg/ecg_filters.py); thresholds shared with the
+dashboard live in [src/ecg/interpretation.py](src/ecg/interpretation.py).
+
+### Order and settings
+
+`apply_ecg_filters()` runs three stages, always in this order:
+
+| Stage | Setting | Options | What it does |
+|---|---|---|---|
+| 1. DFT | `filter_dft` | `off` / `0.05` / `0.5` | Baseline wander. `0.05` is a 2nd-order zero-phase Butterworth high-pass; `0.5` routes to the beat-anchored spline estimator instead. |
+| 2. EMG | `filter_emg` | `off` / `25` / `35` / `40` / `75` / `100` / `150` | Muscle artifact low-pass, QRS-gated. **Default `150`.** |
+| 3. AC | `filter_ac` | `off` / `50` / `60` | Mains. Adaptive least-squares canceller by default, fixed IIR notch available. |
+
+Cutoffs are pre-compensated for `filtfilt`'s double pass
+(`_compensate_zero_phase_cutoff()`), so a "150 Hz" setting really is −3 dB at
+150 Hz. Without it the real corner lands at ~134 Hz — inside the diagnostic band.
+
+### Measured against IEC 60601-2-25
+
+Full chain at 500 Hz, DFT 0.05 / EMG 150 / AC 50, coherent detection at each tone:
+
+| Test | Limit | Measured | |
+|---|---|---|---|
+| Frequency response 0.05–150 Hz | +0.4 / −3.0 dB | −3.01 dB @ 0.05 Hz, −1.18 dB @ 150 Hz, −0.44 … +0.03 dB between | PASS |
+| Impulse response (3 mV × 100 ms), displacement | ≤ 0.1 mV | 0.027 mV @ DFT 0.05, 0.015 mV @ 0.5 | PASS |
+| Impulse response, post-pulse slope | ≤ 0.30 mV/s | 0.000 mV/s | PASS |
+| Mains rejection at the selected frequency | — | −110 dB (50), −121 dB (60) | |
+| Selectivity: 60 Hz tone with the 50 Hz setting | untouched | −0.00 dB | |
+| Stopband 175 / 200 / 240 Hz | — | −10.8 / −39.3 / −81.0 dB | |
+
+**Why the adaptive canceller is the default.** Measured side by side against the
+fixed IIR notch it replaced:
+
+```
+              40 Hz    45 Hz    50 Hz     55 Hz    60 Hz
+adaptive      -0.00    -0.00   -240.0    -0.00    +0.00
+fixed notch   -1.60    -5.63   -240.0    -6.38    -2.21
+```
+
+The notch's −5.63 dB at 45 Hz and −6.38 dB at 55 Hz would on their own fail the
+±3 dB IEC window, and that band carries real QRS energy. On a mains-free beat the
+notch injects 3.3 µV pk of ringing against the canceller's 0.3 µV. Only the
+fundamental is cancelled (`AC_FILTER_HARMONICS = 1`); the 3rd harmonic that often
+dominates chest-lead pickup is left alone, because a sharp edge has genuine energy
+there too.
+
+**The `0.5` DFT setting is not a 0.5 Hz high-pass.** It is the beat-anchored spline
+estimator, which is signal-adaptive, so a sine sweep does not characterise it — and
+the sweep bears that out: −0.08 dB @ 0.5 Hz, −0.04 @ 0.3, but −27.6 @ 0.2 and
+−2.31 @ 1.0 Hz, non-monotonic. It is a good baseline remover and it leaves genuine
+ST shift intact (3 mm injected → 3.04 mm measured), but it cannot be validated by
+the IEC method and should not be described as a 0.5 Hz band.
+
+### The QRS gate, and the artifact it used to leave
+
+The muscle filter does not run one cutoff across the whole beat. It smooths hard
+between beats and hands the QRS back, so the complex keeps its amplitude and
+nothing smears into the J point. A 25 Hz cutoff has a 52 ms impulse response,
+which is longer than the 20 ms feature it would otherwise be filtering.
+
+Handing the QRS back *unfiltered* only works on a clean lead — on a noisy one it
+hands back the interference too, printing as a burst at every complex. So
+`lead_noise_ratio()` measures each lead's high-frequency content as a fraction of
+its own span, and `EMG_GATE_NOISE_LIMIT = 0.012` decides. Clean captures on this
+hardware sit at 0.005–0.011; leads still carrying mains measure 0.013–0.106.
+
+**The defect:** a lead over that limit used to fall all the way back to the plain
+low-pass — the selected cutoff run straight across the QRS. Measured on
+`recordings/raw_all_leads_20260827_120820.csv` at 25 Hz:
+
+| lead | noise ratio | gate | J-point shift | QRS retained |
+|---|---|---|---|---|
+| I, II, III, aVR, aVL, aVF | 0.006–0.008 | held | **0.000 mm** | 100.0% |
+| V1 | 0.106 | fell back | −0.541 mm | 70.6% |
+| V2 | 0.060 | fell back | −0.980 mm | 77.0% |
+| V3 | 0.038 | fell back | **−1.115 mm** | 79.8% |
+| V4 | 0.033 | fell back | −0.921 mm | 82.3% |
+| V5 | 0.035 | fell back | −0.731 mm | 81.3% |
+| V6 | 0.041 | fell back | −0.594 mm | 80.5% |
+
+The millimetres understate it. The gate is decided **per lead**, and the chest
+leads are the noisy ones far more often than the limb leads are — so the artifact
+is not spread evenly across the page. A J-point depression sitting on V1–V6 with
+I–aVF at exactly 0.000 mm has the shape of a regional finding, and reads as
+anterior ischaemia. The 20–29% voltage loss in the same leads also lands directly
+on Sokolow-Lyon (SV1 + RV5), which the report prints.
+
+No new notch is invented — the S-wave minimum is already there on 11/11 beats
+either way. What moves is the *level* of the J point.
+
+**The fix.** `EMG_GATE_FALLBACK_HZ = 100.0`. The QRS is protected either way; the
+noise decides what it is protected *with* — the untouched trace on a clean lead, a
+100 Hz version on a noisy one. Never narrower than the operator's own setting, so
+EMG 150 does not quietly become a 100 Hz low-pass. Same recording, after:
+
+| | before | after |
+|---|---|---|
+| J-point shift, V3 @ 25 Hz | −1.115 mm | **+0.147 mm** |
+| QRS retained, V1 @ 25 Hz | 70.6% | **92.3%** |
+| QRS retained, V3 @ 25 Hz | 79.8% | **98.1%** |
+| limb leads | 0.000 mm / 100% | unchanged |
+
+Pinned by [tests/test_filters_jpoint.py](tests/test_filters_jpoint.py), which
+compares the fallback against the plain low-pass it replaced rather than against a
+constant, so the test fails if the old behaviour ever returns.
+
+### The gate mask must cover the QRS and nothing else
+
+`detect_qrs_regions()` decides which samples get handed back less filtered than
+the rest of the trace. Every caller depends on it — the muscle filter's gate, the
+adaptive mains canceller's QRS blanking, and `sharpen_qrs_gated()` — so anything
+wrongly inside the mask keeps its noise on the printed page.
+
+It used to threshold at the **75th percentile of |signal|** (a quarter of all
+samples clear that) with a 300 ms minimum peak gap. At 59 bpm the T wave sits
+right at that gap and cleared that threshold, so it registered as a second R peak.
+Measured on `ECG_Report_..._A300_20260829_161810`:
+
+| lead | peaks found | real beats | mask duty | a QRS-only mask |
+|---|---|---|---|---|
+| I, II, aVR, V1, V4, V5, V6 … | **20** | 10 | **32.4%** | ~12% |
+| III, aVL, V2, V3 | 10 | 10 | 16.2% | ~12% |
+
+The muscle filter then handed the **T wave** back unfiltered, mains ripple and
+all. That is what made a 25 Hz print look fuzzy beside a commercial cart's at the
+same setting, on a recording whose leads are otherwise clean (noise 0.006–0.012,
+50 Hz only 0.01–0.14 mm). It also explains why turning the AC filter on barely
+helped: the ripple being restored sat *inside* the gated region, downstream of the
+notch.
+
+Fixed by using the same R-peak criterion the rest of the module already uses —
+99th percentile halved, 250 ms gap — and a ±60 ms window instead of ±80 ms, since
+a QRS is ~100 ms wide and ±80 ms reached into the ST segment:
+
+| | before | after |
+|---|---|---|
+| gated regions per beat | 1.7 | **1.0** |
+| mask duty at 59 bpm | 24–32% | **11–12%** |
+| T wave inside the mask | 6 of 9 beats | **0 of 9** |
+| visible fuzz outside the QRS (>30 Hz residual, 480 leads) | 9.44 µV rms median | **2.26 µV** (−76%) |
+
+Raising `AC_FILTER_HARMONICS` to also cancel the 150 Hz third harmonic was
+measured alongside and left out: once the gate is correct the muscle filter
+already removes 150 Hz everywhere outside the QRS, so it changed the median fuzz
+by 0.04 µV while costing the sharp-edge fidelity the constant's comment warns
+about.
+
+### Why the default is 150 Hz
+
+Across the 116 reports captured on 2026-08-28/29 — 1392 leads in total.
+
+**A shift can only be measured where there is something to shift.** 335 of those
+leads (24%) have no measurable J point in the *raw* trace at all: it swings more
+than 0.5 mm beat to beat before any filter touches it. Beat-to-beat scatter of the
+raw J point, against the lead's own noise ratio:
+
+| lead noise ratio | leads | median raw J scatter (SD) |
+|---|---|---|
+| 0.000 – 0.012 (clean) | 846 | 0.09 mm |
+| 0.012 – 0.03 | 170 | 0.30 mm |
+| 0.03 – 0.06 | 226 | 0.42 mm |
+| 0.06 – 0.12 | 121 | **1.70 mm** |
+| above 0.12 | 29 | **2.85 mm** |
+
+On the 1057 leads where the raw J point IS measurable, filter-induced shift:
+
+| setting | worst J | p99 J | median J | worst ST | median ST | leads with ST shift > 0.5 mm |
+|---|---|---|---|---|---|---|
+| 25 Hz | 0.324 mm | 0.231 | 0.007 mm | 0.140 mm | 0.015 mm | **0 / 1057** |
+| 35 Hz | 0.331 mm | 0.238 | 0.002 mm | 0.129 mm | 0.006 mm | 0 / 1057 |
+| 40 Hz | 0.331 mm | 0.238 | 0.001 mm | 0.136 mm | 0.005 mm | 0 / 1057 |
+| 100 Hz | 0.346 mm | 0.237 | 0.000 mm | 0.245 mm | 0.002 mm | 0 / 1057 |
+| **150 Hz** | 0.300 mm | 0.191 | 0.000 mm | **0.044 mm** | 0.001 mm | 0 / 1057 |
+
+With the fallback fix in place every setting is well inside a clinically read
+amount — the worst single lead at 25 Hz moves 0.32 mm and the median moves 0.007 mm.
+150 Hz is still the tightest by a factor of three on ST, which is why it is the
+default, but 25 Hz is no longer producing an artifact.
+
+> **A measurement trap worth recording.** Counting *every* lead instead of only the
+> measurable ones puts the worst-case J shift at 25 Hz at 2.59 mm and flags 10 of
+> 116 reports as moving ST by more than 0.5 mm. Those numbers are not the filter.
+> On a lead whose raw J point already swings 7.35 mm beat to beat, the difference
+> between two medians is dominated by the noise the filter removed, not by anything
+> the filter did to the signal. The tell is that the 25 Hz filter *reduces* the
+> scatter — 2.15 mm SD raw to 0.67 mm filtered on that same lead. Always check that
+> the quantity is measurable in the unfiltered trace before attributing a change in
+> it to the filter.
+
+150 Hz is also the bandwidth IEC 60601-2-25 asks for. Carts ship it as the
+diagnostic default and label 25/35/40 as an explicit operator choice; so do we.
+Existing installations keep whatever is in their own `ecg_settings.json` — the
+change affects new installs only.
+
+### Naming the leads that were smoothed
+
+`artifact_statement()` has always been able to print which leads carry enough
+interference to affect interpretation, but nothing ever populated
+`frozen["lead_noise"]`, so it returned `""` on every report and the reader was
+never told. It is now populated in
+[ecg_report_android.generate_report()](src/ecg/ecg_report_android.py) from
+`lead_noise_ratio()` — the same measurement the gate switches on, so the leads
+named are exactly the leads that took the fallback path:
+
+```
+2. Artifact in lead(s) V4,V5 ······················· high-frequency content
+   - interpret this tracing with care
+```
+
+Of the 116 recent reports, 44 had every lead clean and 72 had at least one lead
+over the limit — most often V1 and V4 (61 reports each).
+
+---
+
+## 🧾 The PROBABLE CONCLUSION Box
+
+Reference for what is printed inside the conclusion box on the 12-lead report, and
+for the rules that decide it. This section describes the **current** behaviour; the
+changelog entry below it records the state at the time the allow-list was introduced.
+
+### Which generator actually draws it
+
+There are several report generators in the tree and only one of them reaches paper
+for the 12-lead PDF:
+
+| File | Status |
+|---|---|
+| [src/ecg/ecg_report_android.py](src/ecg/ecg_report_android.py) | **Live.** `generate_report()` is what [twelve_lead_test.py:8524](src/ecg/twelve_lead_test.py) and [analysis_window.py:3202](src/dashboard/analysis_window.py) call. `_draw_footer_portrait()` / `_draw_footer_landscape()` draw the box. |
+| [src/ecg/interpretation.py](src/ecg/interpretation.py) | **Live.** `build_interpretation()` supplies the box contents. Free of Qt, matplotlib and file I/O so the rules can be tested directly. |
+| [src/ecg/ecg_report_generator.py](src/ecg/ecg_report_generator.py) | Owns the allow-list helpers that the live path imports, but its own ReportLab drawing code (`conclusion_header` at line 4237) is **not** the box on the PDF. |
+| `hrv_ecg_report_generator.py`, `hyperkalemia_ecg_report_generator.py`, `6_2_ecg_report_generator.py` | Separate modules, separate boxes. |
+
+This distinction is not cosmetic: the allow-list was originally applied only to
+`ecg_report_generator.generate_ecg_report()`, which the 12-lead page never calls, so
+`Asystole` kept printing after the restriction was supposedly in place. It is pinned
+by `TestAndroidReportPathIsFiltered` in `tests/test_report_conclusions.py`.
+
+### What appears in the box
+
+```
+PROBABLE CONCLUSION                Please consult your doctor  -  Unconfirmed Diagnosis if not signed
+1. Normal Sinus Rhythm ························································· V-rate 60, 60-100
+   - P wave before every QRS, 1:1 conduction, rate 60-100
+2. Wide QRS ···················································································· QRSD 132, >= 120mS
+   - bundle branch block, ventricular rhythm, hyperkalaemia, Na-channel blockade or paced rhythm
+```
+
+**Header row.** `PROBABLE CONCLUSION` bold left; right-aligned italic carries
+`advisory` + `caveat`. The advisory (*"Please consult your doctor"*) always prints —
+the box holds an algorithm's reading, not a clinical opinion. The caveat
+(*"Unconfirmed Diagnosis if not signed"*) drops once `frozen["signed"]` is true.
+
+**Up to 5 numbered statement rows**, each a `(finding, criterion, implication)` triple:
+
+| Part | Size | Position | Source |
+|---|---|---|---|
+| **Finding** | 8.5 pt | left | the permitted label |
+| **Criterion** | 7.5 pt | right, dotted leader between | `criterion_for()` — the measurement and threshold that fired |
+| **Implication** | 6.5 pt italic | indented on its own line | `_IMPLICATIONS` — what the finding suggests |
+
+Printing the criterion beside the finding is what makes the output auditable: the
+reader can see which measurement drove the statement and check it against the values
+in the report header, rather than taking the label on trust. The implication line
+saves them translating a threshold into a differential.
+
+**Assembly order** inside `build_interpretation()` — highest-consequence first:
+
+1. `combined_caution()` — **Wide-complex tachycardia** when HR > 100 **and** QRS ≥ 120 ms, inserted at the very top. A rate and a width that are dangerous together must not be read as two independent findings, so it leads and carries *"cannot exclude VT vs SVT with aberrancy - physician review required"*.
+2. **ST findings** from `measurements["st_mm"]` — diffuse elevation, elevation by territory (anterior / lateral / inferior, with reciprocal change noted), suspected posterior extension, and ST depression.
+3. **The rhythm and interval findings** passed in as `conc_list`.
+4. **`Artifact in lead(s) …`** appended last, when a lead's high-frequency ratio exceeds 0.012 — the same measurement the muscle filter's QRS gate is keyed to, so one number drives both the filtering decision and what the report admits to.
+
+**Sizing.** The box grows upward from a fixed bottom edge, height clamped to 15–24 mm,
+so it can never collide with the brand line however many findings there are. Any row
+that would cross the bottom border is dropped rather than printed outside it — the
+test is on the text height (~2.8 mm), not a whole row, so the last line is not thrown
+away for the sake of the gap beneath it.
+
+### The permitted findings
+
+Only these eight labels can print. They are defined once as
+`REPORT_ALLOWED_CONCLUSIONS` in [ecg_report_generator.py:1689](src/ecg/ecg_report_generator.py)
+and print in this order; the thresholds live in
+[interpretation.py](src/ecg/interpretation.py) so the report and the dashboard cannot
+publish different definitions of "normal" for the same measurement.
+
+| # | Finding | Fires when | Criterion printed |
+|---|---|---|---|
+| 1 | Normal Sinus Rhythm | HR 60–100 | `V-rate 72, 60-100` |
+| 2 | Sinus Bradycardia | HR < 60 | `V-rate 58, < 60` |
+| 3 | Sinus Tachycardia | HR > 100 | `V-rate 118, > 100` |
+| 4 | Narrow QRS | QRS 70–109 ms | `QRSD 92, < 110mS` |
+| 5 | Short QRS duration | QRS < 70 ms | `QRSD 64, < 70mS - verify signal` |
+| 6 | Borderline QRS duration | QRS 110–119 ms | `QRSD 116, 110-119mS` |
+| 7 | Wide QRS | QRS ≥ 120 ms | `QRSD 132, >= 120mS` |
+| 8 | Prolonged QTc | QTc ≥ 460 ms | `QTc 486, >= 460mS` |
+
+Every one derives from a value that is also printed in the report header (HR, QRS,
+QTc), which is the property that lets a reader verify it on the same page. `Narrow
+QRS` is the normal band; `Short QRS duration` is reported because a QRS that short is
+outside physiological range and in practice usually means the onset/offset detection
+is clipping a weak signal — which the reader needs to know either way.
+
+**Variants fold in rather than being dropped**, so a real finding is never lost to
+wording alone (`_CONCLUSION_CANONICAL`): `Sinus Rhythm` → `Normal Sinus Rhythm` (the
+bare form emitted when P waves are undetected), `Bradycardia` / `Tachycardia` → the
+sinus forms, `IVCD` / `Intraventricular conduction delay` → `Borderline QRS
+duration`, `Normal QRS` → `Narrow QRS`, and `Long QT Syndrome` → `Prolonged QTc`
+(QTc > 500 is still prolonged). A finding carrying its own evidence — `Prolonged QTc
+(486 ms)` — has the value stripped before matching.
+
+### What deliberately does not print
+
+Asystole · Ventricular Fibrillation · Ventricular Tachycardia · Atrial Fibrillation ·
+Atrial Flutter · any AV block · any bundle branch block · PVC / PAC · Short PR ·
+Borderline QTc (440–459 ms)
+
+**Stated plainly:** the report will not name these even when the analyser detects
+them. The morphology and rhythm classifiers proved unreliable in the field — a normal
+65 bpm sinus ECG was printed with a conclusion of *"Ventricular Fibrillation"* — and a
+wrong lethal label on a signed report is worse than no label. The full waveform is
+still printed and every interval is still measured and shown in the header;
+interpretation beyond rate, QRS width and QTc is left to the reading clinician. **The
+live on-screen analysis is unchanged** — this is a printing restriction, not a
+detection one.
+
+ST findings are the exception to the list above: they are excluded from
+`REPORT_ALLOWED_CONCLUSIONS` but reach the box through `st_findings()`, which is a
+separate per-lead measurement path rather than a classifier verdict.
+
+### The pipeline, end to end
+
+1. `twelve_lead_test.generate_pdf_report()` builds `conc_list` from the live dashboard analysis, then adds QTc entries from the measured value.
+2. Status lines — `No cardiac activity detected`, `Rate below measurable range`, `No ECG data available`, `Please connect device` — are set aside. They are not findings and must survive filtering.
+3. QTc wordings are canonicalised to `Prolonged QTc`. `Borderline QTc` is deliberately **not** mapped: 440–459 ms is below the 460 ms the permitted label means.
+4. `restrict_to_allowed_conclusions()` folds variants and drops everything off-list.
+5. **Empty-box guard.** If everything was filtered out but a heart rate was measured, the rate is restated (`ensure_rate_conclusion()` does the same for the other generator). An empty box reads as *"nothing found"* rather than *"we are not reporting that class of finding"*, which is the more dangerous of the two.
+6. Hard cap at 5, applied **after** the filter — capping before it would cap labels rather than remove them.
+7. `ecg_report_android.generate_report(conc_list=…)` → `build_interpretation()` → the box is drawn.
+
+### Known gaps
+
+- **`severity` is computed but never drawn.** `classify()` returns `NORMAL ECG` / `BORDERLINE ECG` / `ABNORMAL ECG` / `UNINTERPRETABLE ECG` and `build_interpretation()` returns it under `severity`, but no renderer reads the key — `grep severity src/ecg/ecg_report_android.py` returns nothing. The module docstring shows `- ABNORMAL ECG -` as part of the intended layout, so the box is currently missing the line that classifies the tracing as a whole. Commercial carts print it.
+- **`axis` is computed but never drawn.** P / QRS / T axis is returned in the same dict and dropped.
+- **`tests/test_report_conclusions.py` is out of date.** It still asserts the permitted set is exactly five labels and that `Bradycardia (non-sinus)` / `Tachycardia (non-sinus)` are removed entirely; both changed when the three QRS-duration labels were added and the non-sinus forms were mapped to the sinus ones. Four tests fail as a result (`python -m unittest tests.test_report_conclusions`). The source is correct and the test file needs updating to the current eight-label set.
+
+---
+
 ## 📋 Changelog
+
+### 🩺 [2026-08-29] — Muscle Filter Left a False J-Point Depression on the Chest Leads
+
+At the 25 Hz setting a lead too noisy to gate fell all the way back to the plain
+low-pass, running the cutoff straight across the QRS. Measured on
+`recordings/raw_all_leads_20260827_120820.csv`: the J point dropped **0.54–1.12 mm
+in V1–V6** (worst V3) while the clean limb leads on the same recording moved
+**0.000 mm**, and 20–29% of the QRS peak-to-peak was lost in those same leads.
+
+#### Why it mattered more than the millimetres suggest
+The gate is decided per lead from that lead's own noise, and the chest leads are
+the noisy ones far more often than the limb leads are. So the artifact was not
+spread evenly across the page — a J-point depression sitting on V1–V6 with I–aVF
+at exactly zero has the shape of a regional finding and reads as anterior
+ischaemia. The voltage loss lands on Sokolow-Lyon (SV1 + RV5), which the report
+prints. No new notch was invented; what moved was the *level* of the J point.
+
+The automatic ST reading was never fooled — `interpretation.py` measures at
+J+60 ms, where the error is ≤ 0.02 mm. It was the printed waveform that misled.
+
+#### Four changes
+- **`EMG_GATE_FALLBACK_HZ = 100.0`.** The QRS is protected either way; the noise
+  now decides what it is protected *with* — the untouched trace on a clean lead, a
+  100 Hz version on a noisy one. Never narrower than the operator's own setting.
+  V3 @ 25 Hz: **−1.115 mm → +0.147 mm**. V1 QRS retention: **70.6% → 92.3%**.
+- **Default `filter_emg` 25 → 150 Hz.** The IEC 60601-2-25 diagnostic bandwidth.
+  Measured across the 116 reports captured 2026-08-28/29, on the 1057 of 1392 leads
+  whose raw J point is stable enough to measure: 150 Hz shifts ST by at most
+  0.044 mm, 25 Hz by at most 0.140 mm — both far inside a clinically read amount
+  now that the fallback is fixed. 150 Hz is chosen for the margin and the standard,
+  not to rescue a broken setting. Existing installations keep their own setting —
+  new installs only.
+- **The report now names the smoothed leads.** `artifact_statement()` could always
+  print them, but nothing ever populated `frozen["lead_noise"]`, so it returned
+  `""` on every report. It is now filled from `lead_noise_ratio()`, the same
+  measurement the gate switches on.
+
+#- **The gate mask was covering the T wave too.** `detect_qrs_regions()`
+  thresholded at the 75th percentile of |signal| with a 300 ms peak gap, so at
+  59 bpm the T wave registered as a second R peak — 20 peaks for 10 beats in 8 of
+  12 leads, a mask over 32% of the record. The muscle filter handed the T wave
+  back unfiltered, mains ripple included, which is why a 25 Hz print looked fuzzy
+  beside a commercial cart's at the same setting. Now uses the module's own R-peak
+  criterion and a ±60 ms window: **visible out-of-QRS fuzz down 76%** (9.44 →
+  2.26 µV rms across 480 leads).
+
+### 🧪 Verification — `tests/test_filters_jpoint.py` (9 tests)
+Compares the fallback against the plain low-pass it replaced rather than against a
+constant, so the test fails if the old behaviour returns. On the noisy fixture at
+25 Hz: old 0.660 mm J shift / 82.3% QRS, new 0.034 mm / 99.6%. Clean leads pinned
+unchanged, and the gate's threshold pinned to the ratio the report prints from.
+
+Also measured: the full chain passes the IEC frequency-response (+0.4/−3.0 dB
+across 0.05–150 Hz) and impulse-response (0.027 mV displacement, 0.000 mV/s slope
+against 0.1 mV / 0.30 mV/s limits) tests. Details in **The Filter Chain** above.
 
 ### ⏱️ [2026-08-24] — Stale Metrics: A Rate Change No Longer Leaves the Old Numbers on Screen
 
