@@ -198,7 +198,9 @@ def build_interpretation(measurements: Dict,
 
     # ST deviation is measured per lead rather than produced by the rhythm
     # engine, so it is added here rather than arriving through `findings`.
-    statements = st_findings(measurements.get("st_mm")) + statements
+    statements = st_findings(measurements.get("st_mm"),
+                             measurements.get("age"),
+                             measurements.get("sex")) + statements
 
     # A rate and a width that are dangerous together lead, ahead of the two
     # findings that produced them.
@@ -228,15 +230,46 @@ def build_interpretation(measurements: Dict,
     }
 
 # ─── ST deviation ───────────────────────────────────────────────────────────
-# Thresholds from the Fourth Universal Definition of MI: elevation >= 1 mm in
-# two contiguous leads, depression >= 0.5 mm horizontal or downsloping.
+# Thresholds from the Fourth Universal Definition of MI and Dr. Rahman's
+# reference deck: elevation >= 1 mm in two contiguous leads, depression
+# >= 0.5 mm horizontal or downsloping.
 #
-# Two known simplifications, both deliberate and both flagged in the criterion
-# text rather than hidden: deviation is measured at J+60 ms rather than at the
-# J point itself, and the higher V2-V3 thresholds (2 mm men >= 40, 2.5 mm men
-# < 40, 1.5 mm women) are not applied because age and sex are not captured.
+# V2-V3 carry HIGHER thresholds than the rest, and they depend on age and sex:
+#     men >= 40      2.0 mm
+#     men <  40      2.5 mm
+#     women          1.5 mm
+# These used to be skipped with the note "age and sex are not captured". That
+# was wrong - patient_details carries both (e.g. age 22, gender "Male") - so a
+# flat 1 mm was being applied to V2-V3 and over-calling elevation there. They
+# are applied now, and fall back to the flat 1 mm only when age or sex really is
+# missing, which is the conservative direction for a screening threshold.
+#
+# One simplification remains, flagged in the criterion text rather than hidden:
+# deviation is measured at J+60 ms rather than at the J point itself.
 ST_ELEVATION_MM = 1.0
 ST_DEPRESSION_MM = -0.5
+ST_ELEV_V2V3_MEN_OVER_40 = 2.0
+ST_ELEV_V2V3_MEN_UNDER_40 = 2.5
+ST_ELEV_V2V3_WOMEN = 1.5
+
+
+def st_elevation_threshold(lead: str, age=None, sex=None) -> float:
+    """The elevation threshold in mm for one lead, per age and sex."""
+    if lead not in ("V2", "V3"):
+        return ST_ELEVATION_MM
+    s = str(sex or "").strip().lower()
+    if s.startswith("f"):
+        return ST_ELEV_V2V3_WOMEN
+    if s.startswith("m"):
+        try:
+            a = float(age)
+        except (TypeError, ValueError):
+            return ST_ELEVATION_MM      # sex known, age not - stay conservative
+        if a <= 0:
+            return ST_ELEVATION_MM
+        return (ST_ELEV_V2V3_MEN_OVER_40 if a >= 40
+                else ST_ELEV_V2V3_MEN_UNDER_40)
+    return ST_ELEVATION_MM              # unknown sex - conservative
 
 ST_TERRITORIES = {
     "anterior": ("V1", "V2", "V3", "V4"),
@@ -256,7 +289,8 @@ def _lead_list(leads: Sequence[str]) -> str:
     return " ".join(sorted(leads, key=lambda l: order.index(l) if l in order else 99))
 
 
-def st_findings(st_mm: Optional[Dict[str, float]]) -> List[Tuple[str, str, str]]:
+def st_findings(st_mm: Optional[Dict[str, float]],
+                age=None, sex=None) -> List[Tuple[str, str, str]]:
     """Statements for ST deviation, per the decision spec's section 4 and 4.1.
 
     aVR is excluded from the lead groups: it faces the cavity, so its deviation
@@ -266,7 +300,8 @@ def st_findings(st_mm: Optional[Dict[str, float]]) -> List[Tuple[str, str, str]]
     if not st_mm:
         return []
     elevated = [l for l, v in st_mm.items()
-                if l != "aVR" and isinstance(v, (int, float)) and v >= ST_ELEVATION_MM]
+                if l != "aVR" and isinstance(v, (int, float))
+                and v >= st_elevation_threshold(l, age, sex)]
     depressed = [l for l, v in st_mm.items()
                  if l != "aVR" and isinstance(v, (int, float)) and v <= ST_DEPRESSION_MM]
 

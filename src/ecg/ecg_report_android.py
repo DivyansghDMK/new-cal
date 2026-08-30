@@ -200,6 +200,12 @@ def generate_report(
         filter_band += "  NON-DIAGNOSTIC"
 
     frozen = dict(frozen or {})
+    # Age and sex drive the V2-V3 ST-elevation thresholds (2.0 mm men >= 40,
+    # 2.5 mm men < 40, 1.5 mm women). They live on `patient`, and
+    # build_interpretation() only receives `frozen`, so carry them across.
+    _p = patient or {}
+    frozen.setdefault("age", _p.get("age"))
+    frozen.setdefault("sex", _p.get("gender") or _p.get("sex"))
     frozen["filter_band"] = filter_band
     frozen["ac_frequency"] = ac_freq
     # Header label only: print the speed/gain the user set in Settings (live).
