@@ -3,7 +3,7 @@
 **Prepared for:** Dr. Razzakur Rahman, MD (Lt Col, Retd.)
 **Date:** 30 August 2026
 **Decision requested:** whether any of five AV conduction labels may be printed
-**Status:** implemented and tested; **nothing reaches a report**
+**Status:** implemented; **validated against LUDB and NOT yet fit to print** — see §Recommendation
 
 ---
 
@@ -60,19 +60,76 @@ Four constructed cases, thresholds from your reference deck:
 
 | Result | Count |
 |---|---|
-| **Not assessable** | **101 (87%)** |
+| Not assessable | 101 (87%) |
 | Normal AV conduction | 15 |
-| Any AV block | **0** |
+| Any AV block | 0 |
 
-Why the 101 were refused:
+**This looked reassuring and was misleading.** The 87% refusal rate was read as a
+signal-quality problem on our recordings. It was not — see the next section.
 
-| Reason | Count |
+## Evidence — LUDB, 30 cardiologist-annotated records
+
+The Lobachevsky University Database (physionet.org/content/ludb/1.0.1/) is 200
+12-lead, 10 s, 500 Hz records from a Schiller Cardiovit AT-101, with P, QRS and T
+boundaries annotated per lead per beat by two cardiologists, and a diagnosis per
+record. It is the same acquisition parameters as this device, on a reference cart,
+with ground truth. 30 records were used: 10 first-degree AV block, 5 third-degree,
+15 clean sinus controls.
+
+**First run — the detector failed on clean reference data.**
+
+| | Agreement |
 |---|---|
-| P wave not found on enough beats | 72 |
-| Lead II too noisy (ratio > 0.030) | 25 |
+| First-degree AV block | 1 / 10 |
+| Third-degree AV block | 0 / 5 |
+| Clean sinus control | 2 / 15 |
 
-Where a PR could be measured, it agrees with the PR the report already prints:
-median difference **−6 ms**, within 20 ms on **13 of 15**.
+26 of 30 came back "not assessable" — **the same 87% as on our own recordings**.
+So the refusal rate was never about our signal quality. It was the algorithm.
+
+The cause: the P wave's amplitude was tested against noise estimated on the search
+window **that contains the P wave**, so a larger P raised its own threshold. On
+record 18 the P amplitudes were 0.59–1.12 mm against a bar of 0.73–1.60 mm, and
+every one failed. Fixed by estimating noise from the TP segment instead.
+
+**Second run — after the fix.**
+
+| | Agreement | |
+|---|---|---|
+| First-degree AV block | **2 / 10** | most read PR 197–212 ms, at or just under the 200 ms threshold |
+| Third-degree AV block | **3 / 5** | |
+| Clean sinus control | **11 / 15** | **2 false "Third-degree AV Block" on clean sinus** |
+| Not assessable | 5 / 30 | down from 26 |
+
+P wave detection is now working — found on 8–13 of 9–13 beats on most records.
+**The classification is not.**
+
+## Recommendation: approve nothing yet
+
+The earlier recommendation (approve first-degree and normal) is **withdrawn**.
+
+1. **First-degree agreement is 2/10.** Eight records the cardiologists called
+   first-degree measure 182–212 ms here — at or below the 200 ms threshold. Either
+   the PR measurement is systematically 10–20 ms short against the reference, or
+   the threshold cannot be applied to this measurement as it stands. That has to be
+   resolved against the LUDB per-beat annotations before any threshold is trusted.
+2. **Third-degree produced 2 false positives on clean sinus records** (5 and 37),
+   which is the most dangerous direction for the most serious label. The current
+   rule infers dissociation from PR variability alone, which is too weak. It should
+   be dropped from consideration entirely until it tests atrial rate against
+   ventricular rate.
+3. **Normal AV conduction** is 11/15 with the 2 false positives above counted
+   against it. It is the least risky label but should wait for the same fix.
+
+## What to do next
+
+- Use LUDB's per-beat P and QRS boundary annotations as ground truth for the PR
+  measurement itself, rather than comparing classifications. That isolates whether
+  the 10–20 ms gap is in P onset detection, QRS onset detection, or both.
+- Rebuild the third-degree rule around atrial-versus-ventricular rate.
+- Re-validate on the full 200 LUDB records, not 30.
+- LUDB contains **no Mobitz I or Mobitz II cases at all**, so those two remain
+  unvalidated against real data. PTB-XL or Chapman-Shaoxing would be needed.
 
 ## The false positives this nearly shipped with
 
@@ -95,26 +152,22 @@ refusal counts above rather than a confident answer on every strip.
   cycle can be 3–4 beats, so one strip may hold two cycles, one, or a fragment.
   **Mobitz II can be entirely absent** from a 10 s window in a patient who has it.
   The module reports what it sees and never infers absence.
-- **87% of current recordings are not assessable**, mostly because the P wave
-  cannot be found. That traces back to signal quality: 72 of these 116 reports
-  have at least one lead over the muscle-filter noise limit. Electrode prep will
-  move this number more than any algorithm change.
+- **Signal quality is a separate issue, and was wrongly blamed.** 72 of the 116
+  reports have at least one lead over the muscle-filter noise limit, and electrode
+  prep is worth doing on its own merits — but LUDB proved it was not the cause of
+  the refusal rate. Clean reference recordings refused at the same 87%.
 - **Third-degree block needs the atrial rate to exceed the ventricular rate**, and
   a 10 s strip may not settle that. The current rule infers dissociation only from
   a PR that is neither fixed nor progressive, which is weaker than the full
   criterion. If this label is approved it should carry that limitation.
 
-## Options
+## Options — superseded
 
-1. **Approve `First-degree AV Block` only.** PR > 200 ms fixed is the simplest and
-   safest of the five — one threshold on a measurement the report already prints
-   and already trusts.
-2. **Approve `Normal AV conduction` as well**, so a clean strip states positively
-   that conduction was checked. This is the only one that carries no false-positive
-   risk.
-3. **Hold the 2° and 3° labels** until a longer recording path exists, or until
-   the not-assessable rate falls with better acquisition.
-4. **Approve none**, and keep the module as a measurement only.
+The four options previously listed here (approve first-degree, approve normal,
+hold 2nd and 3rd degree, approve none) were written before the LUDB validation.
+**Approve none** is now the only supportable one, for the reasons in
+§Recommendation above. The others should be reconsidered only after the PR
+measurement is validated against LUDB's per-beat annotations.
 
 ## What would print
 

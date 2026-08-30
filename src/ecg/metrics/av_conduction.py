@@ -101,8 +101,40 @@ def _qrs_onset(sig: np.ndarray, r_idx: int, fs: float) -> Optional[int]:
     return start + int(idx[0])
 
 
+def _baseline_noise(sig: np.ndarray, r_peaks: np.ndarray, fs: float) -> float:
+    """Noise estimated from the TP segments — the genuinely quiet part of a beat.
+
+    The P wave must NOT be measured against noise estimated on the window that
+    contains it. Doing that is self-defeating: the P is the dominant contributor
+    to that window's spread, so a bigger P raises its own threshold. Measured on
+    LUDB record 18 (clean Schiller recording, cardiologist-confirmed sinus), the
+    P amplitudes were 0.59-1.12 mm against an in-window "3 sigma" bar of
+    0.73-1.60 mm, so every single P failed and the record came back "not
+    assessable". Across 30 LUDB records that error produced a 87% refusal rate
+    and 1/10 agreement on first-degree block.
+
+    The TP segment - after the T wave, before the next P - carries no wave, so it
+    is what "quiet" actually means here.
+    """
+    segs = []
+    for i in range(len(r_peaks) - 1):
+        start = int(r_peaks[i]) + int(0.42 * fs)      # past the T wave
+        end = int(r_peaks[i + 1]) - int(0.38 * fs)    # before the next P
+        if end > start + int(0.03 * fs):
+            segs.append(sig[start:end])
+    if not segs:
+        # No usable TP segment (fast rate): fall back to the most quiescent
+        # tenth of the record rather than to a window that holds a P wave.
+        n = max(int(0.05 * fs), 10)
+        blocks = [sig[i:i + n] for i in range(0, max(len(sig) - n, 1), n)]
+        if not blocks:
+            return float(np.std(sig)) or 1.0
+        return float(np.percentile([np.std(bk) for bk in blocks], 10)) or 1.0
+    return float(np.median([np.std(s) for s in segs])) or 1.0
+
+
 def _p_wave(sig: np.ndarray, qrs_on: int, fs: float,
-            prev_r: Optional[int]) -> Optional[Dict]:
+            prev_r: Optional[int], noise: float) -> Optional[Dict]:
     """Find the P wave preceding one QRS onset. Returns its peak and onset."""
     lo = qrs_on - int(P_SEARCH_MAX_MS / 1000.0 * fs)
     hi = qrs_on - int(P_SEARCH_MIN_MS / 1000.0 * fs)
@@ -135,10 +167,12 @@ def _p_wave(sig: np.ndarray, qrs_on: int, fs: float,
     # So: require a real peak, and reject one that sits against either edge of
     # the search window, because an edge peak means the true extremum lies
     # outside it and we are looking at the flank of something else.
-    noise = float(np.std(dev))
     if noise <= 0:
         return None
-    min_amp = 3.0 * noise
+    # 2.5x the TP-segment noise. With the peak and edge constraints below doing
+    # the specificity work, this bar only has to separate a P wave from a flat
+    # baseline, not from the rest of the complex.
+    min_amp = 2.5 * noise
     edge = max(2, int(0.012 * fs))          # 12 ms of clearance at each end
 
     best = None
@@ -202,6 +236,7 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
         return out
 
     filt = _bandpass(sig, fs, 0.5, 40.0)
+    noise = _baseline_noise(filt, r_peaks, fs)
 
     prs: List[Optional[float]] = []
     for n, r in enumerate(r_peaks):
@@ -210,7 +245,7 @@ def analyse_av_conduction(lead_ii: np.ndarray, r_peaks, fs: float = 500.0,
             prs.append(None)
             continue
         prev_r = int(r_peaks[n - 1]) if n > 0 else None
-        p = _p_wave(filt, onset, fs, prev_r)
+        p = _p_wave(filt, onset, fs, prev_r, noise)
         if p is None:
             prs.append(None)
             continue
