@@ -56,80 +56,134 @@ Four constructed cases, thresholds from your reference deck:
 
 **4 of 4.**
 
-## Evidence — 116 real recordings from this device
+## Evidence — this device, superseded
 
-| Result | Count |
-|---|---|
-| Not assessable | 101 (87%) |
-| Normal AV conduction | 15 |
-| Any AV block | 0 |
+An earlier run over 116 of our own recordings reported 101 not assessable (87%)
+and no blocks at all. That was produced by a version carrying both defects
+described below, and the 87% refusal rate was wrongly read as a signal-quality
+problem on our recordings. The current figures are in the next section.
 
-**This looked reassuring and was misleading.** The 87% refusal rate was read as a
-signal-quality problem on our recordings. It was not — see the next section.
+## Evidence — full validation, 763 records across three datasets
 
-## Evidence — LUDB, 30 cardiologist-annotated records
+Three datasets, all 12-lead and all **500 Hz**, the same as this device.
 
-The Lobachevsky University Database (physionet.org/content/ludb/1.0.1/) is 200
-12-lead, 10 s, 500 Hz records from a Schiller Cardiovit AT-101, with P, QRS and T
-boundaries annotated per lead per beat by two cardiologists, and a diagnosis per
-record. It is the same acquisition parameters as this device, on a reference cart,
-with ground truth. 30 records were used: 10 first-degree AV block, 5 third-degree,
-15 clean sinus controls.
-
-**First run — the detector failed on clean reference data.**
-
-| | Agreement |
-|---|---|
-| First-degree AV block | 1 / 10 |
-| Third-degree AV block | 0 / 5 |
-| Clean sinus control | 2 / 15 |
-
-26 of 30 came back "not assessable" — **the same 87% as on our own recordings**.
-So the refusal rate was never about our signal quality. It was the algorithm.
-
-The cause: the P wave's amplitude was tested against noise estimated on the search
-window **that contains the P wave**, so a larger P raised its own threshold. On
-record 18 the P amplitudes were 0.59–1.12 mm against a bar of 0.73–1.60 mm, and
-every one failed. Fixed by estimating noise from the TP segment instead.
-
-**Second run — after the fix.**
-
-| | Agreement | |
+| Dataset | n | Truth |
 |---|---|---|
-| First-degree AV block | **2 / 10** | most read PR 197–212 ms, at or just under the 200 ms threshold |
-| Third-degree AV block | **3 / 5** | |
-| Clean sinus control | **11 / 15** | **2 false "Third-degree AV Block" on clean sinus** |
-| Not assessable | 5 / 30 | down from 26 |
+| **LUDB** (physionet.org/content/ludb/1.0.1) | 200 | P/QRS/T boundaries annotated per lead per beat by two cardiologists, plus a diagnosis per record. Schiller Cardiovit AT-101. |
+| **PTB-XL** (physionet.org/content/ptb-xl/1.0.3) | 324 | Cardiologist report per record, SCP-coded. Selected: all 2AVB and 3AVB available, 150 1AVB, 150 clean NORM. Atrial fibrillation and flutter excluded. |
+| **This device** | 239 | none — our own recordings, no reference label |
 
-P wave detection is now working — found on 8–13 of 9–13 beats on most records.
-**The classification is not.**
+### First run (all 200 LUDB, not the 30-record sample)
 
-## Recommendation: approve nothing yet
+The 30-record sample had shown 2 false third-degree calls out of 15 controls.
+On the full set the rate is far worse:
 
-The earlier recommendation (approve first-degree and normal) is **withdrawn**.
+| LUDB truth | n | → NORM | 1AVB | 2AVB | **3AVB** | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 167 | 94 | 2 | 0 | **55** | 16 |
+| 1st degree | 10 | 4 | **2** | 0 | 3 | 1 |
+| 3rd degree | 5 | 0 | 0 | 0 | **3** | 2 |
+| Atrial fibrillation | 18 | 1 | 0 | 2 | **8** | 7 |
 
-1. **First-degree agreement is 2/10.** Eight records the cardiologists called
-   first-degree measure 182–212 ms here — at or below the 200 ms threshold. Either
-   the PR measurement is systematically 10–20 ms short against the reference, or
-   the threshold cannot be applied to this measurement as it stands. That has to be
-   resolved against the LUDB per-beat annotations before any threshold is trusted.
-2. **Third-degree produced 2 false positives on clean sinus records** (5 and 37),
-   which is the most dangerous direction for the most serious label. The current
-   rule infers dissociation from PR variability alone, which is too weak. It should
-   be dropped from consideration entirely until it tests atrial rate against
-   ventricular rate.
-3. **Normal AV conduction** is 11/15 with the 2 false positives above counted
-   against it. It is the least risky label but should wait for the same fix.
+| PTB-XL truth | n | → NORM | 1AVB | 2AVB | **3AVB** | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 150 | 68 | 0 | 0 | **77** | 5 |
+| 1st degree | 150 | 31 | **11** | 3 | **95** | 10 |
+| 2nd degree | 11 | 2 | 0 | **3** | 4 | 2 |
+| 3rd degree | 13 | 0 | 0 | 1 | **5** | 7 |
+
+**33% of normal LUDB records and 51% of normal PTB-XL records were labelled
+"Third-degree AV Block".** Complete heart block is the most serious label of the
+five. On our own 239 recordings the same rule fired 26 times, and on this evidence
+essentially all of them are false.
+
+Atrial fibrillation has no P waves at all and cannot be an AV-block question, yet
+8 of 18 AF records were called third-degree.
+
+### Two distinct defects
+
+**1. The third-degree rule uses the PR *range*.** `rng > 80.0` is
+max-minus-min across ~10 beats, so a single mis-detected P fires it. LUDB record 27:
+
+```
+PR = [168, 168, 170, 174, 176, 180, 184, 184, 356]   range 188, MAD 8
+```
+
+Eight beats within 16 ms and one outlier — reported as complete heart block.
+
+**No robust statistic rescues this rule.** Substituting the interquartile range:
+
+| | still fires on false positives | keeps true detections |
+|---|---|---|
+| IQR > 40 ms | 32 / 55 | 1 / 3 |
+| IQR > 60 ms | 28 / 55 | 0 / 3 |
+| IQR > 80 ms | 23 / 55 | 0 / 3 |
+
+There is no threshold that separates them, because PR variability is not what
+third-degree block is. The rule has to be **removed**, not tuned. A real
+implementation compares the **atrial rate against the ventricular rate**.
+
+**2. PR still pinned to the search-window edge — the defect this document
+already claimed was fixed.** The P *peak* was guarded against the window edges,
+but the *onset* walk-back was not: on a drifting baseline it never meets its
+threshold and runs to the window start, so the PR comes out as the window width
+(360 ms) wherever the peak was. Measured before the fix:
+
+| | records with ≥1 edge-pinned PR | beats pinned |
+|---|---|---|
+| LUDB | 55 / 191 | 106 / 1751 (6.1%) |
+| This device | 20 / 205 | 51 / 2125 (2.4%) |
+
+The unit tests did not catch it because synthetic strips have a flat baseline
+between beats and real recordings do not. **Fixed** — the onset must now settle
+inside the window or the beat contributes no PR.
+
+### After the onset fix
+
+| LUDB truth | n | → NORM | 1AVB | 2AVB | **3AVB** | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 167 | 104 | 2 | 0 | **41** | 20 |
+| 1st degree | 10 | 5 | **2** | 0 | 2 | 1 |
+| 3rd degree | 5 | 0 | 1 | 0 | **2** | 2 |
+
+| PTB-XL truth | n | → NORM | 1AVB | 2AVB | **3AVB** | n/a |
+|---|---|---|---|---|---|---|
+| Normal | 150 | 84 | 0 | 0 | **57** | 9 |
+| 1st degree | 150 | 38 | **12** | 2 | **84** | 14 |
+| 3rd degree | 13 | 1 | 0 | 1 | **3** | 8 |
+
+False third-degree calls fell from 55 to 41 on LUDB and 77 to 57 on PTB-XL, and
+on our own recordings from 26 to 14. **That is the onset defect being repaired,
+not the classifier becoming safe** — 25% of normal LUDB and 38% of normal PTB-XL
+records are still called complete heart block, because defect 1 is untouched.
+
+## Recommendation: approve nothing
+
+The earlier recommendation to approve first-degree and normal is **withdrawn**.
+
+1. **Third-degree AV Block must be deleted from the module**, not adjusted. It is
+   wrong on a quarter to a half of all normal recordings, and no threshold on PR
+   variability fixes it. Rebuild it around atrial rate versus ventricular rate,
+   or leave the device unable to report it.
+2. **First-degree agreement is 2/10 (LUDB) and 12/150 (PTB-XL).** Even setting
+   aside the beats stolen by the third-degree rule, the PR reads 182–212 ms on
+   records the cardiologists called first-degree. Either the measurement is
+   systematically short against the reference, or the 200 ms threshold cannot be
+   applied to it as it stands.
+3. **Atrial fibrillation must be excluded before any AV-conduction claim.** No P
+   waves means the question does not apply; today it produces a block label.
+4. **Second-degree** is 3/11 on PTB-XL, the only real Mobitz data available.
+   LUDB contains no Mobitz cases at all.
 
 ## What to do next
 
+- Delete the third-degree rule, or rebuild it on atrial versus ventricular rate.
+- Refuse any record whose rhythm is atrial fibrillation or flutter.
 - Use LUDB's per-beat P and QRS boundary annotations as ground truth for the PR
-  measurement itself, rather than comparing classifications. That isolates whether
-  the 10–20 ms gap is in P onset detection, QRS onset detection, or both.
-- Rebuild the third-degree rule around atrial-versus-ventricular rate.
-- Re-validate on the full 200 LUDB records, not 30.
-- LUDB contains **no Mobitz I or Mobitz II cases at all**, so those two remain
-  unvalidated against real data. PTB-XL or Chapman-Shaoxing would be needed.
+  measurement itself rather than comparing classifications — that isolates
+  whether the 10–20 ms gap is in P onset detection, QRS onset detection, or both.
+- Add a real-baseline regression test. Both defects above survived a passing
+  15-test suite because every test strip had a flat baseline.
 
 ## The false positives this nearly shipped with
 
@@ -156,18 +210,11 @@ refusal counts above rather than a confident answer on every strip.
   reports have at least one lead over the muscle-filter noise limit, and electrode
   prep is worth doing on its own merits — but LUDB proved it was not the cause of
   the refusal rate. Clean reference recordings refused at the same 87%.
-- **Third-degree block needs the atrial rate to exceed the ventricular rate**, and
-  a 10 s strip may not settle that. The current rule infers dissociation only from
-  a PR that is neither fixed nor progressive, which is weaker than the full
-  criterion. If this label is approved it should carry that limitation.
-
-## Options — superseded
-
-The four options previously listed here (approve first-degree, approve normal,
-hold 2nd and 3rd degree, approve none) were written before the LUDB validation.
-**Approve none** is now the only supportable one, for the reasons in
-§Recommendation above. The others should be reconsidered only after the PR
-measurement is validated against LUDB's per-beat annotations.
+- **Third-degree block needs the atrial rate to exceed the ventricular rate.**
+  The current rule infers dissociation from PR variability alone, and the
+  validation above shows what that costs: a quarter to a half of all normal
+  recordings labelled complete heart block. It is not a limitation to disclose,
+  it is a rule to remove.
 
 ## What would print
 

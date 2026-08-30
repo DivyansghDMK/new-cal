@@ -190,10 +190,21 @@ def _p_wave(sig: np.ndarray, qrs_on: int, fs: float,
     amp = float(dev[peak_i])
 
     # Onset: walk back from the P peak to where it leaves the baseline.
+    #
+    # The peak is guarded against the window edges above, but the ONSET is not,
+    # and that is a second way for a PR to pin to P_SEARCH_MAX_MS: on a drifting
+    # baseline the walk-back never meets the threshold and runs to the window
+    # start, so the measured PR is the window width regardless of where the peak
+    # was. Synthetic strips have a flat baseline between beats, so the unit tests
+    # never reproduced it -- real recordings do, on 55 of 191 LUDB records and 20
+    # of 205 of our own. If the onset does not settle inside the window, the P
+    # onset is not measurable and the beat contributes no PR.
     j = peak_i
     thr = abs(amp) * 0.20
-    while j > 0 and abs(dev[j]) > thr:
+    while j > edge and abs(dev[j]) > thr:
         j -= 1
+    if j <= edge:
+        return None
     return {
         "peak": lo + peak_i,
         "onset": lo + j,
