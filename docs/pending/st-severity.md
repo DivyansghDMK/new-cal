@@ -40,56 +40,67 @@ records from NORMAL ECG to ABNORMAL ECG, up from none.
 Wiring severity to that would print ABNORMAL ECG on three quarters of normal
 people, which is worse than the defect it fixes.
 
-## The ST measurement is the real problem
+## What is actually wrong: the rule, not the measurement
 
-Across 1607 lead measurements on records with no ischemia label:
+The ST measurement was suspected and has now been cleared. Measured on lead II
+across 929 beats of the 149 LUDB records with no ischemia label, **at LUDB's own
+calibration and using the cardiologists' own P/QRS/T boundaries**:
 
 ```
-median  -0.10 mm      IQR  -0.40 .. +0.30      |ST| > 0.5 mm on 34% of leads
+median  -0.17 mm      IQR  -0.45 .. +0.12      |ST| > 0.5 mm on 28% of beats
 ```
 
-A healthy lead should sit near 0.00 mm. What fires:
+That is what a real population looks like. Four candidate causes were tested
+against it and all four are ruled out:
 
-| | records |
+| Candidate | Result |
 |---|---|
-| ST depression | 109 |
-| ST elevation (no territory) | 46 |
-| ST elevation, named territory | 9 |
+| **J point** placed at the S-wave nadir instead of the QRS offset | swapping in the cardiologists' QRS offset: 31% → 32%. **No effect.** |
+| **TP baseline** window placement | swapping in a TP segment bounded by the annotated T offset and P onset: 31% → 28%. **3 points.** |
+| **mV scale** — the hardcoded `adc_to_mv = 1200.0` | measured at LUDB's own true calibration the distribution is unchanged. Our 1184 reproduces it to 1.3%. **Not the cause.** |
+| **Contiguity** — requiring 2 leads of one territory | clean records 67% → 44%, but ischemia only 91% → 64%. Helps, nowhere near enough alone. |
 
-### Two things already ruled out
+The J-point definition is still wrong and worth correcting on its own merits. It
+is not what is driving this.
 
-**Restricting severity to the territorial STEMI patterns.** Territorial findings
-fire on 6% of the no-ischemia records against 4% of the STEMI records. That is
-chance, so specificity cannot be bought this way.
+### The rule is missing two standard criteria
 
-**The J point.** `measure_st_deviation_from_median_beat()` places it at the
-**S-wave nadir** — `argmin` over R+20…60 ms — rather than where the QRS returns
-to baseline, which looked like the obvious cause. Re-measured against the real
-QRS offset from `detect_qrs_offset_slope_assisted()`, the scatter got slightly
-**worse**: 41% of leads over 0.5 mm against 34%. The J point is not the cause.
+```python
+if depressed:                      # interpretation.py, st_findings()
+    out.append(("ST depression", ...))
+```
 
-The J-point definition is still wrong and should be corrected on its own merits.
-It is not what is driving this.
+`depressed` is every lead at or below −0.5 mm. **One lead is enough.** Elevation
+requires two leads of a territory before it is called territorial; depression has
+no contiguity requirement at all.
 
-### What has not been ruled out
+The Fourth Universal Definition of MI, and your reference deck, require ST
+depression to be:
 
-- **The TP baseline.** Every ST value is a difference from it, so if it is noisy
-  or lands on the wrong segment, the whole distribution scatters. This is the
-  next thing to test, using LUDB's annotated T offsets and P onsets to place a
-  known-good TP segment and comparing.
-- **The mV scale.** `measure_st_deviation_from_median_beat()` hardcodes
-  `adc_to_mv = 1200.0` while the waveform path uses 1184 and the RV5/SV1 path
-  uses 2048/1441. Which is correct is still unresolved and needs the bench
-  calibration — 1 mV into a limb channel and a chest channel. Until then no
-  threshold in mm can be trusted, including these.
+1. **≥ 0.5 mm in two contiguous leads** — not implemented; measured above as
+   worth 67% → 44% on the no-ischemia records.
+2. **Horizontal or downsloping** — not implemented, and not even measured. This
+   is the criterion that separates ischaemia from the ordinary upsloping ST
+   depression a healthy heart shows at rate. It is almost certainly the larger
+   half of the missing specificity, and the ST slope is not currently computed
+   anywhere in the codebase.
+
+So the fix is not in the signal chain. It is two criteria that were never
+implemented, and both are clinical thresholds.
 
 ## Decision requested
 
 Nothing to approve yet. This records that the defect is real, that the fix is
 ready, and that shipping it now would be a regression. The order of work is:
 
-1. Bench calibration, so mm means millimetres.
-2. Diagnose the ST scatter — TP baseline first.
-3. Correct the J point.
-4. Then wire severity to the clinical findings, and re-validate on these same
-   records.
+1. **Approve the two missing ST depression criteria** — two contiguous leads,
+   and horizontal or downsloping only. Both are from your own reference deck.
+2. Implement the ST slope measurement, which does not exist yet, and re-validate
+   the depression rule on these 199 records.
+3. Correct the J point on its own merits (S-wave nadir → QRS offset), even though
+   it is not what is causing this.
+4. Then wire severity to the clinical findings and re-validate.
+
+The bench calibration is still needed for the RV5/SV1 and LVH work, but it is
+**not** a blocker here: the ST distribution is the same at LUDB's true
+calibration as at ours.
