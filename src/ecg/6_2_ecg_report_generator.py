@@ -304,8 +304,8 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
         work = np.pad(arr, pad_width=pad, mode="reflect")
     else:
         work = arr
-    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
     dft_param = dft_setting if dft_setting not in ("off", "") else None
     emg_param = emg_setting if emg_setting not in ("off", "") else None
@@ -2040,8 +2040,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                     from scipy.ndimage import gaussian_filter1d as _gf1d
                     
                     ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
                     if ac_setting in ("50", "60"):
@@ -2602,8 +2602,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
                 try:
                     from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
                     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
                     if dft_setting not in ("off", ""):
                         adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
@@ -2932,8 +2932,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
         # Apply report filters (DFT -> EMG -> AC) on extra Lead II data
         try:
             from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
-            dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-            emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
+            dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
             ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
             if dft_setting not in ("off", ""):
                 adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
@@ -3643,7 +3643,7 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     master_drawing.add(rv5_sv_label)
 
     # Calculate RV5+SV1 from displayed magnitudes: RV5 - SV1_magnitude.
-    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
+    rv5_sv1_sum = (rv5_mv + abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
     
     # SECOND COLUMN - RV5+SV1 (ALIGNED and moved up 5 points)
     # Use 3 decimal places for precision
@@ -3665,8 +3665,8 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     master_drawing.add(qtcf_label)
 
     # SECOND COLUMN - Speed/Gain (merged in one line) (ABOVE ECG GRAPH - shifted further up)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
-    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
     if dft_setting not in ("off", "") and emg_setting not in ("off", ""):

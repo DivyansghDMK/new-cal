@@ -108,7 +108,7 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
 
     rv5_text = f"{rv5_mv:.3f} mV"
     sv1_text = f"{sv1_mv:.3f} mV"    # RV5+SV1
-    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if (rv5_mv is not None and sv1_mv is not None and hr_val_check > 0) else 0.0
+    rv5_sv1_sum = (rv5_mv + abs(sv1_mv)) if (rv5_mv is not None and sv1_mv is not None and hr_val_check > 0) else 0.0
     rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV"
     
     # P/QRS/T Axis
@@ -124,8 +124,8 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     p_qrs_t_text = f"{_fmt_axis(p_axis)}/{_fmt_axis(qrs_axis)}/{_fmt_axis(t_axis)}"
 
     # 4. Prepare Filter Info
-    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
-    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
     if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
@@ -678,8 +678,8 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
 
         if settings_manager is not None:
             ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
-            emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
-            dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+            dft_setting = str(settings_manager.get_setting("filter_dft", "0.05")).strip()
         else:
             ac_setting, emg_setting, dft_setting = "50", "25", "0.5"
 
@@ -807,7 +807,7 @@ def create_report_strip_paths(
     fs = _safe_float(sampling_rate, 500.0) or 500.0
 
     try:
-        emg_val = str(settings_manager.get_setting("filter_emg", "25")).strip() if settings_manager else "25"
+        emg_val = str(settings_manager.get_setting("filter_emg", "150")).strip() if settings_manager else "150"
         dft_val = str(settings_manager.get_setting("filter_dft", "0.5")).strip() if settings_manager else "0.5"
         if dft_val in ("off", ""):
             dft_val = "0.5"

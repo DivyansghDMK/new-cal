@@ -3354,7 +3354,7 @@ class Dashboard(QWidget):
                             # on sliding windows.
                             try:
                                 from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
-                                dft_setting = str(settings_src.get_setting("filter_dft", "off")).strip()
+                                dft_setting = str(settings_src.get_setting("filter_dft", "0.05")).strip()
                                 if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
                                         # Display fix: a 0.5 Hz high-pass introduces beat-synchronous baseline
@@ -3376,7 +3376,7 @@ class Dashboard(QWidget):
                             # Track baseline a bit faster when DFT=0.5Hz is active.
                             baseline_alpha = 0.0005
                             try:
-                                if str(settings_src.get_setting("filter_dft", "off")).strip() == "0.5":
+                                if str(settings_src.get_setting("filter_dft", "0.05")).strip() == "0.5":
                                     baseline_alpha = 0.002
                             except Exception:
                                 pass
@@ -3393,7 +3393,7 @@ class Dashboard(QWidget):
 
                         try:
                             from ecg.ecg_filters import apply_emg_filter, apply_ac_filter
-                            emg_setting = str(settings_src.get_setting("filter_emg", "25")).strip()
+                            emg_setting = str(settings_src.get_setting("filter_emg", "150")).strip()
                             ac_setting = str(settings_src.get_setting("filter_ac", "50")).strip()
                             if emg_setting.lower() != "off" and len(filtered_slice) >= 10:
                                 filtered_slice = apply_emg_filter(filtered_slice, float(actual_sampling_rate), emg_setting)

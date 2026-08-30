@@ -4038,7 +4038,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     except Exception as _err:
         print(f" RV5/SV1 calc error: {_err}")
 
-    rv5_sv1_sum = round(rv5_mv - abs(sv1_mv), 3)
+    rv5_sv1_sum = round(rv5_mv + abs(sv1_mv), 3)
 
     # --- QTcF (Fridericia) = QT / RR^(1/3) ---
     qtcf_ms = 0

@@ -1,0 +1,67 @@
+From: CardioX signal-chain review, 30 August 2026
+Subject: [PENDING CLINICAL SIGN-OFF] put RV5/SV1 on the same scale as the printed waveform
+
+WHAT THIS CHANGES
+  The measured RV5 and SV1 values printed on the report, and therefore the
+  Sokolow-Lyon index compared against the 35 mm LVH threshold.
+
+WHY IT IS NOT APPLIED
+  It changes a reported clinical number. Commit 95abd7e already identified this
+  and deferred it for the same reason. It needs Dr. Rahman's sign-off, and it
+  should ship together with the bench calibration below, not before it.
+
+THE DEFECT
+  The waveform is drawn at ADC_PER_MV = 1184.0
+    (src/ecg/ecg_report_android.py:59, src/ecg/twelve_lead_test.py:783)
+  but the measurements use different, per-lead divisors:
+    (src/ecg/clinical_measurements.py:601)
+  RV5 is divided by 2048.0  ->  prints 57.8% of the drawn height
+  SV1 is divided by 1441.0  ->  prints 82.2% of the drawn height
+
+  No caller overrides these; src/ecg/metrics/intervals.py:213 calls the function
+  without passing them, so 2048/1441 are what run. They date from 46dcd2f, the
+  initial commit, and were never measured on this hardware -- the code comments
+  describe them as "Adjusted calibration factor for GE/Philips alignment", i.e.
+  hand-tuning to match another cart, per lead.
+
+  Consequence: a clinician measuring Sokolow-Lyon with calipers off the printed
+  trace gets a different answer from the number printed beside it. Verified on
+  6 reports: the printed index is 1.45-1.56x smaller than the trace shows.
+
+THE CHANGE
+--- a/src/ecg/clinical_measurements.py
++++ b/src/ecg/clinical_measurements.py
+@@ -600,7 +600,7 @@
+ def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
+-                                      v5_adc_per_mv=2048.0, v1_adc_per_mv=1441.0):
++                                      v5_adc_per_mv=1184.0, v1_adc_per_mv=1184.0):
+
+  Also review the duplicate legacy block using the same divisors at
+  src/ecg/twelve_lead_test.py:4016 and :4065 -- determine whether it is live,
+  then align or delete it.
+
+EXPECTED EFFECT
+  Printed RV5 rises by 2048/1184 = 1.73x, SV1 by 1441/1184 = 1.22x.
+  Worked example, report A989_20260829_110042 ("qq"):
+    printed today          RV5 1.999   SV1 0.000   index 1.999 mV (20.0 mm)
+    after this change      RV5 1.851   SV1 1.185   index 3.036 mV (30.4 mm)
+  against a 35 mm threshold. (SV1 also stops being 0.000 -- that part is already
+  fixed separately; the value above is measured from the raw V1 of that record,
+  present on 11 of 11 beats.)
+
+MUST SHIP WITH
+  A bench calibration. 1184 itself is not settled: commit 2306635 records lead II
+  matching a reference cart at 10 small boxes at 1184 ADC/mV, while V2 reads 14.4
+  boxes against 11 on the same cart -- about 31% apart. One scalar cannot satisfy
+  both anchors.
+
+  The device has EIGHT real front-end channels (I, II, V1-V6); III/aVR/aVL/aVF are
+  derived in software (verified: III = II - I is bit-exact). So lead II and V2 are
+  two physically separate amplifiers, and a per-channel gain difference is a real
+  possibility rather than a software artifact.
+
+  TEST: inject a known 1 mV into a limb channel and into a chest channel
+  separately and compare ADC counts.
+    equal      -> 1184 stands for all channels; apply this patch as written.
+    different  -> per-channel constants are needed; this patch becomes the
+                  starting point, not the answer.

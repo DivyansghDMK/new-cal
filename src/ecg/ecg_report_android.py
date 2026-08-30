@@ -148,9 +148,11 @@ def generate_report(
         except Exception:
             return default
 
-    ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
-    emg_setting = _get_filter_setting("filter_emg", "25")  # "25".."150" or "off"
-    dft_setting = _get_filter_setting("filter_dft", "off")  # "0.05", "0.5", or "off"
+    # Fallbacks must match SettingsManager.default_settings — see the note in
+    # ecg_filters.apply_ecg_filters_from_settings.
+    ac_setting  = _get_filter_setting("filter_ac",  "50")    # "50", "60", or "off"
+    emg_setting = _get_filter_setting("filter_emg", "150")   # "25".."150" or "off"
+    dft_setting = _get_filter_setting("filter_dft", "0.05")  # "0.05", "0.5", or "off"
     REPORT_AC_SETTING = ac_setting
     REPORT_EMG_SETTING = emg_setting
     REPORT_DFT_SETTING = dft_setting
@@ -184,6 +186,19 @@ def generate_report(
         filter_band = f"LP:{emg_setting}Hz"
     else:
         filter_band = "Filter: Off"
+
+    # IEC 60601-2-25 and the AHA/ACCF/HRS 2007 recommendations put the diagnostic
+    # bandwidth at 150 Hz for adults; 25/35/40 Hz are monitoring settings. At 25 Hz a
+    # J-point deflection of up to 2.4 mm can be manufactured by the low-pass alone,
+    # which is precisely the measurement read for ischaemia, and 20-29% of the QRS can
+    # be lost. A tracing recorded that way must say so on its face.
+    try:
+        _lp = float(emg_setting)
+    except (TypeError, ValueError):
+        _lp = None
+    if _lp is not None and _lp < 150.0:
+        filter_band += "  NON-DIAGNOSTIC"
+
     frozen = dict(frozen or {})
     frozen["filter_band"] = filter_band
     frozen["ac_frequency"] = ac_freq
@@ -223,6 +238,31 @@ def generate_report(
             lead_mv["-aVR"] = -np.asarray(lead_mv.get("aVR", np.array([])), dtype=float)
         except Exception:
             lead_mv["-aVR"] = np.array([])
+
+    # ── Name the leads whose QRS the muscle filter could not hand back clean ──
+    #
+    # artifact_statement() has always been able to print this line, but nothing
+    # ever populated frozen["lead_noise"], so it returned "" on every report and
+    # the reader was never told which traces were smoothed. The ratio comes from
+    # ecg_filters.lead_noise_ratio(), the same measurement the gate itself uses,
+    # so the leads named here are exactly the leads that took the fallback path.
+    if "lead_noise" not in frozen:
+        try:
+            from ecg.ecg_filters import lead_noise_ratio
+        except Exception:
+            try:
+                from .ecg_filters import lead_noise_ratio
+            except Exception:
+                lead_noise_ratio = None
+        if lead_noise_ratio is not None:
+            try:
+                frozen["lead_noise"] = {
+                    lead: float(lead_noise_ratio(lead_mv[lead], ECG_FS))
+                    for lead in ALL_LEADS
+                    if lead in lead_mv and np.asarray(lead_mv[lead]).size
+                }
+            except Exception as _ln_err:
+                print(f"[ecg_report_android] lead noise unavailable: {_ln_err}")
 
     # ── Figure — exact A4, white background ───────────────────────────────
     #
@@ -300,6 +340,24 @@ def _find_logo():
     return None
 
 
+
+def _fmt_mv(value):
+    """Print a millivolt figure, or "--" when it was never measured.
+
+    A failed RV5/SV1 measurement arrives here as 0.0 rather than None (the
+    fallbacks in twelve_lead_test.py return zeros), and 0.000 mV on a signed
+    report reads as a real measurement of zero. It is not: it means the lead
+    could not be measured. Print the absence.
+    """
+    if value is None:
+        return "--"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    return "--" if v == 0.0 else f"{v:.3f}"
+
+
 def _draw_header(ax, frozen, patient, PW, fmt):
     is_portrait = (fmt == '12_1')
     yb = MT - GRID_BOX          # from top
@@ -367,7 +425,11 @@ def _draw_header(ax, frozen, patient, PW, fmt):
 
         rv5     = float(frozen.get('rv5', 0.0) or 0.0)
         sv1     = float(frozen.get('sv1', 0.0) or 0.0)
-        idx_val = rv5 - abs(sv1)
+        # Sokolow-Lyon is RV5 + |SV1| — see the note on the landscape header below.
+        # This was a subtraction, which understated the index roughly fourfold.
+        # Withheld entirely unless BOTH measurements are present, because a failed
+        # measurement arrives as 0.0 and summing it prints a confident wrong number.
+        idx_val = (rv5 + abs(sv1)) if (rv5 and sv1) else None
         p_ax    = frozen.get('p_axis',   '--')
         q_ax    = frozen.get('QRS_axis', '--')
         t_ax    = frozen.get('t_axis',   '--')
@@ -415,8 +477,8 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         col3_lines = [
             f"QTc: {qtc} ms",
             f"QTcF: {qtcf} ms",
-            f"RV5/SV1: {rv5:.3f}/{sv1:.3f} mV",
-            f"RV5+SV1: {idx_val:.3f} mV",
+            f"RV5/SV1: {rv5:.3f}/{_fmt_mv(sv1)} mV",
+            f"RV5+SV1: {_fmt_mv(idx_val)} mV",
             # f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",
         ]
 
@@ -529,7 +591,18 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     qtcf = frozen.get('QTcF',0) or 0
     rv5     = float(frozen.get('rv5', 0.0) or 0.0)
     sv1     = float(frozen.get('sv1', 0.0) or 0.0)
-    idx_val = rv5 - abs(sv1)
+    # Sokolow-Lyon is RV5 + |SV1| — the DEPTH of S in V1 ADDED to the height of R
+    # in V5, compared against 35 mm. This was a subtraction, which understated the
+    # index roughly fourfold: on A300_20260829_161810 it printed 0.445 mV where the
+    # same two measurements give 1.813 mV, and the JSON payload for that recording
+    # already carried the correct 1.813. The PDF is the copy a clinician reads.
+    #
+    # A measurement that failed reports 0.0 rather than "not measured" (see the
+    # fallbacks in twelve_lead_test.py), and summing that prints a confident wrong
+    # number — on A989_20260829_110042 an SV1 of 0.000 against a real -1.185 mV cost
+    # 10.4 mm of an index whose threshold is 35 mm. So the index is withheld unless
+    # BOTH measurements are present.
+    idx_val = (rv5 + abs(sv1)) if (rv5 and sv1) else None
     p_ax    = frozen.get('p_axis',   '--')
     q_ax    = frozen.get('QRS_axis', '--')
     t_ax    = frozen.get('t_axis',   '--')
@@ -563,8 +636,8 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     ls_col3 = [
         f'QTc: {qtc} ms',
         f'QTcF: {qtcf} ms',
-        f'RV5/SV1: {rv5:.3f}/{sv1:.3f} mV',
-        f'RV5+SV1: {idx_val:.3f} mV',
+        f'RV5/SV1: {rv5:.3f}/{_fmt_mv(sv1)} mV',
+        f'RV5+SV1: {_fmt_mv(idx_val)} mV',
         # f'P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0',
     ]
     # Only show org block when org name/address is present.

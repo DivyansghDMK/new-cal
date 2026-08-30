@@ -24,9 +24,21 @@ class SettingsManager:
             # Filter settings
             "filter_ac": "50",
             # Default EMG cutoff for all modes (user can change in settings).
-            "filter_emg": "25",
+            #
+            # 150 Hz is the diagnostic bandwidth IEC 60601-2-25 asks for, and it
+            # measures -1.18 dB at 150 Hz through this chain, inside the -3 dB
+            # limit. The previous default of 25 Hz put every out-of-box capture at
+            # a monitoring bandwidth: measured on real 12-lead recordings it cost
+            # 20-29% of the QRS peak-to-peak in the chest leads and moved the J
+            # point by up to 1.1 mm. Carts ship 150 Hz as the diagnostic default
+            # and label 25/35/40 as an explicit operator choice; so do we now.
+            "filter_emg": "150",
             # Default baseline HP (DFT) cutoff for all modes (user can change in settings).
-            "filter_dft": "off",
+            # 0.05 Hz is the IEC 60601-2-25 lower diagnostic limit and passes the
+            # standard's impulse-response test (0.027 mV displacement, 0.000 mV/s
+            # slope against 0.1 mV / 0.30 mV/s limits). "off" left every capture
+            # with no baseline correction at all.
+            "filter_dft": "0.05",
 
             # System Setup settings
             "system_beat_vol": "off",
@@ -81,7 +93,7 @@ class SettingsManager:
 
                 if hz in {"25", "35", "40", "75", "100", "150"}:
                     return hz
-            return self.default_settings.get("filter_emg", "25") if hasattr(self, "default_settings") else "25"
+            return self.default_settings.get("filter_emg", "150") if hasattr(self, "default_settings") else "150"
 
         if key == "filter_dft":
             if text in ("off", "", "none", "0"):
@@ -93,7 +105,7 @@ class SettingsManager:
                     return "0.05"
                 if abs(val - 0.5) < 1e-6:
                     return "0.5"
-            return self.default_settings.get("filter_dft", "off") if hasattr(self, "default_settings") else "off"
+            return self.default_settings.get("filter_dft", "0.05") if hasattr(self, "default_settings") else "0.05"
 
         return value
     
@@ -122,10 +134,55 @@ class SettingsManager:
                     except Exception:
                         pass
 
+                merged_settings = self._migrate_settings(merged_settings)
                 return merged_settings
             except:
                 return self.default_settings.copy()
         return self.default_settings.copy()
+
+    # Bump this when a migration is added below.
+    SETTINGS_VERSION = 1
+
+    def _migrate_settings(self, settings):
+        """One-time upgrades to a stored configuration.
+
+        Changing default_settings only reaches FRESH installs: load_settings()
+        merges the saved file over the defaults, so an existing unit keeps whatever
+        cutoff it already had. When the diagnostic default moved from 25 Hz to
+        150 Hz that left every field unit recording at a monitoring bandwidth,
+        silently.
+
+        This runs once per version bump, is written back to disk, and prints what it
+        changed so the change is traceable. It only moves a cutoff that is BELOW the
+        diagnostic bandwidth; a unit already at 150 Hz, or deliberately set to a
+        monitoring bandwidth AFTER this migration ran, is left alone — and the
+        report now prints NON-DIAGNOSTIC for those, so the choice is visible rather
+        than silent.
+        """
+        try:
+            if int(settings.get("settings_version", 0) or 0) >= self.SETTINGS_VERSION:
+                return settings
+            changed = []
+            emg = str(settings.get("filter_emg", "")).strip().lower()
+            if emg not in ("", "off", "150"):
+                try:
+                    if float(emg) < 150.0:
+                        settings["filter_emg"] = "150"
+                        changed.append(f"filter_emg {emg} -> 150")
+                except ValueError:
+                    pass
+            settings["settings_version"] = self.SETTINGS_VERSION
+            try:
+                with open(self.settings_file, 'w') as f:
+                    json.dump(settings, f, indent=2)
+            except Exception:
+                pass
+            if changed:
+                print(f"[SettingsManager] migrated to v{self.SETTINGS_VERSION}: "
+                      + "; ".join(changed))
+        except Exception as e:
+            print(f"[SettingsManager] migration skipped: {e}")
+        return settings
     
     def save_settings(self):
         with open(self.settings_file, 'w') as f:

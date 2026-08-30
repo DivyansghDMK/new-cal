@@ -1730,7 +1730,7 @@ class ExpandedLeadView(QDialog):
                 if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
                     ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
                     emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
-                    dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
+                    dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', '0.05')).strip()
 
                 if apply_ecg_filters is not None:
                     # Display fix: 0.5 Hz "DFT" high-pass can introduce beat-synchronous baseline droop
