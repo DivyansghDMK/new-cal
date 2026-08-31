@@ -95,22 +95,48 @@ circuit is a heart-rate monitor at roughly 0.5–40 Hz. **The board is not built
 that circuit.** At 40 Hz the response is flat — −0.05 to +0.13 dB across all eight
 channels — and at 100 Hz it is −1.29 to −2.10 dB, inside the −3.0 dB limit.
 
-### But the high-pass corner is not 0.05 Hz
+### But the high-pass corner is not 0.05 Hz — and we know why
 
 At 0.05 Hz the response is **0.347, or −9.19 dB**, against an IEC floor of −3.0 dB.
-All eight channels agree within 0.34–0.35, so this is the filter, not noise.
+All eight channels agree within 0.339–0.352, so this is the filter, not noise.
 
-Working back to the corner:
+The hardware team states the design carries a **0.05–150 Hz filter**. That is
+consistent with what we measured, and the explanation is that **the stages
+cascade**.
 
-| assumed order | implied −3 dB corner |
-|---|---|
-| first | ~0.135 Hz |
-| second | ~0.075 Hz |
+Fitting *n* first-order high-pass stages, each at 0.05 Hz:
 
-A first-order 0.135 Hz corner predicts 0.965 at 0.5 Hz where we measure 0.997, so
-the real response is steeper than first-order and the corner sits nearer
-**0.08–0.10 Hz**. Either way it is **well above the 0.05 Hz the standard requires
-and the report prints**.
+| stages at 0.05 Hz | predicted at 0.05 Hz | at 0.5 Hz | fit error |
+|---|---|---|---|
+| 1 | 0.707 | 0.995 | 0.1801 |
+| 2 | 0.500 | 0.990 | 0.0766 |
+| **3** | **0.354** | **0.985** | **0.0070** |
+| 4 | 0.250 | 0.980 | 0.0493 |
+| **measured** | **0.347** | **0.997** | |
+
+Three stages fit better than any alternative, including a single stage with a
+freely fitted corner (which lands at 0.132 Hz with more than twice the error).
+
+**Each stage meets "0.05 Hz" on its own. The system does not.** Three first-order
+sections in series multiply their responses, so the chain that is 0.05 Hz
+per-stage is −9 dB at 0.05 Hz overall — and **IEC 60601-2-25 specifies the system
+response, not the per-stage response.** This is a design error that is invisible
+without a system-level sweep: every stage passes its own review.
+
+### The fix is a component value
+
+For three cascaded first-order stages to reach −3 dB at 0.05 Hz, each stage must
+sit at **0.025 Hz** — a factor of about two below where they are now, which means
+roughly **doubling each AC-coupling capacitor** (or its series resistor).
+
+| | now | with 0.025 Hz stages |
+|---|---|---|
+| 0.05 Hz | 0.354 (−9.0 dB) ❌ | 0.708 (−3.0 dB) ✅ |
+| 0.10 Hz | 0.716 (−2.9 dB) | 0.910 (−0.8 dB) |
+| 0.50 Hz | 0.985 (−0.1 dB) | 0.996 |
+
+Counting the actual AC-coupled stages in the schematic would confirm the fit —
+if there are exactly three, this is settled.
 
 ### Why this matters more than the top end
 
@@ -133,7 +159,7 @@ The header prints `0.05-150 Hz`.
 | end | status |
 |---|---|
 | 0.05 Hz | **measured at −9.19 dB — the claim is wrong** |
-| 150 Hz | **untested** — the ProSim's highest sine is 100 Hz, where we measure −1.7 dB. Depending on filter order, 150 Hz could sit at −3 to −5 dB |
+| 150 Hz | **untested so far.** The ProSim does reach 150 Hz — an earlier note here that it stopped at 100 Hz was wrong — so this is measurable and should be run. At 100 Hz we measure −1.7 dB |
 
 Neither end of the printed bandwidth is currently supported by measurement.
 
