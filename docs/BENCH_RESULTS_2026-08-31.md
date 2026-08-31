@@ -208,6 +208,56 @@ string changes, **every report overstates the bandwidth it was recorded at**.
 | low | three cascaded 0.05 Hz first-order stages, −9 dB together | each stage to **0.025 Hz** — roughly double each AC-coupling capacitor |
 | high | second-order low-pass at 116 Hz | corner to **≥150 Hz**, traded against anti-alias margin at 500 Hz sampling |
 
+## 3b. The software filter is part of the problem, and fixing hardware alone will not do
+
+The bench measurements above are raw ADC counts, so they describe the hardware
+only. Running the same frequencies through `apply_ecg_filters_from_settings()`
+at the shipped defaults (EMG 150, DFT 0.05, AC 50) and multiplying the two:
+
+| freq | software | hardware | **total** | dB | IEC |
+|---|---|---|---|---|---|
+| **0.05 Hz** | 0.530 | 0.347 | **0.184** | **−14.70** | ❌ |
+| 0.50 Hz | 0.998 | 0.997 | 0.995 | −0.05 | ✅ |
+| 5 Hz | 1.000 | 1.000 | 1.000 | 0.00 | ✅ |
+| 40 Hz | 1.025 | 1.004 | 1.029 | +0.25 | ✅ |
+| 100 Hz | 1.023 | 0.819 | 0.838 | −1.54 | ✅ |
+| **150 Hz** | 0.745 | 0.501 | **0.373** | **−8.56** | ❌ |
+
+The AC notch makes no difference at any of these points — it is narrow and sits
+at 50 Hz, which is not a test frequency. Selecting EMG 40 collapses 100 Hz to
+−14 dB, as a monitoring setting should.
+
+### Why the software adds so much at 0.05 Hz
+
+`apply_dft_filter` at its "0.05" setting measures **0.713 at 0.05 Hz** — not 1.0.
+Two reasons compound:
+
+- **Zero-phase filtering squares the magnitude.** The filter runs forwards and
+  backwards, so a design that is −3 dB at its corner ends up at −6 dB there.
+- The rest of the chain contributes a further factor of about 0.74 (the full
+  software chain measures 0.530 where the DFT stage alone is 0.713), most likely
+  the baseline-wander stage.
+
+So the complete signal path contains **four high-pass sections at a nominal
+0.05 Hz** — three in hardware, one in software counted twice for filtfilt.
+
+### The consequence: the hardware fix is not sufficient on its own
+
+| | response at 0.05 Hz | total |
+|---|---|---|
+| hardware corrected to −3 dB | 0.708 | |
+| software still at the 0.05 setting | × 0.713 | **0.505 = −5.94 dB** ❌ |
+| software baseline filter off | × 1.000 | **0.708 = −3.00 dB** — exactly at the limit |
+
+**−3 dB is a budget for the whole system, not a target for each stage.** Hardware
+and software cannot both spend it. Once the hardware genuinely reaches 0.05 Hz,
+the software baseline filter has to move well below it or come out of the path
+entirely — otherwise the same cascade returns in a different place.
+
+This is the same mistake at a different layer, and it is worth stating plainly:
+**every stage in this chain was specified at 0.05 Hz, and nobody multiplied them
+together.**
+
 ## 4. Answered as a side effect
 
 **Sampling clock is correct.** The application reported `499.5 pkt/s`, `no packet
