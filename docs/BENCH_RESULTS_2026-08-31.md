@@ -152,16 +152,61 @@ missing contiguity and slope criteria. **This measurement says part of it may be
 the analog front end**, and no software filter can undo it — the content is gone
 before the ADC sees it.
 
-### What the report claims, against what was measured
+### The top end fails too — the low-pass corner is 116 Hz, not 150 Hz
 
-The header prints `0.05-150 Hz`.
+The ProSim does reach 150 Hz (an earlier note here saying it stopped at 100 Hz
+was wrong). Measured:
 
-| end | status |
-|---|---|
-| 0.05 Hz | **measured at −9.19 dB — the claim is wrong** |
-| 150 Hz | **untested so far.** The ProSim does reach 150 Hz — an earlier note here that it stopped at 100 Hz was wrong — so this is measurable and should be run. At 100 Hz we measure −1.7 dB |
+| lead | I | II | V1 | V2 | V3 | V4 | V5 | V6 | mean |
+|---|---|---|---|---|---|---|---|---|---|
+| 150 Hz | 0.503 | 0.519 | 0.497 | 0.492 | 0.506 | 0.516 | 0.495 | 0.481 | **0.501** |
 
-Neither end of the printed bandwidth is currently supported by measurement.
+**−6.00 dB**, against the −3.0 dB limit. Fitting an *n*-th order low-pass to the
+5 / 40 / 100 / 150 Hz points:
+
+| order | corner | fit error |
+|---|---|---|
+| 1 | 110 Hz | 0.0680 |
+| **2** | **116 Hz** | **0.0115** |
+| 3 | 122 Hz | 0.0317 |
+| 4 | 128 Hz | 0.0614 |
+
+A second-order low-pass at **116 Hz** fits. For 150 Hz to sit inside −3 dB, that
+corner has to move to **at least 150 Hz**.
+
+**One caveat on raising it.** Sampling is 500 Hz, so Nyquist is 250 Hz. The
+present 116 Hz second-order corner attenuates 250 Hz by about −13.5 dB; moving it
+to 150 Hz reduces that to about −9.4 dB. Raising the corner buys diagnostic
+bandwidth and spends anti-alias margin, so the two have to be traded deliberately
+rather than one adjusted alone.
+
+## What the report claims, against what was measured
+
+The header prints `0.05-150 Hz`. **Neither end holds.**
+
+| | measured | IEC | |
+|---|---|---|---|
+| **0.05 Hz** | **−9.0 dB** | −3.0 dB | ❌ |
+| 0.50 Hz | −0.03 dB | | ✅ |
+| 40 Hz | +0.03 dB | | ✅ |
+| 100 Hz | −1.73 dB | | ✅ |
+| **150 Hz** | **−6.00 dB** | −3.0 dB | ❌ |
+
+```
+    measured -3 dB passband      0.10 Hz  —  116 Hz
+    printed on every report      0.05 Hz  —  150 Hz
+```
+
+The device is a competent 0.1–116 Hz instrument. It is not the 0.05–150 Hz
+instrument its own reports claim, and until either the hardware or the printed
+string changes, **every report overstates the bandwidth it was recorded at**.
+
+### Both fixes are component values
+
+| end | cause | fix |
+|---|---|---|
+| low | three cascaded 0.05 Hz first-order stages, −9 dB together | each stage to **0.025 Hz** — roughly double each AC-coupling capacitor |
+| high | second-order low-pass at 116 Hz | corner to **≥150 Hz**, traded against anti-alias margin at 500 Hz sampling |
 
 ## 4. Answered as a side effect
 
