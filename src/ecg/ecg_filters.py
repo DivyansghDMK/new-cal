@@ -205,6 +205,25 @@ EMG_FILTER_TYPE = "butter"
 # filtering. Set False for a plain single-cutoff low-pass.
 EMG_QRS_GATED = True
 
+# ...but only at a DIAGNOSTIC cutoff. Below this the gate is not applied.
+#
+# The gate hands the QRS back unfiltered, and 97% of an ECG's 25-50 Hz energy
+# lives inside the QRS. So at a 25 Hz setting the gate removes essentially
+# everything the setting was asked to remove: measured on a real V1, the 25-50 Hz
+# band came back at 0.994 of unfiltered, where a plain 25 Hz filter gives 0.26.
+# The operator selects 25 Hz, and nothing visibly changes.
+#
+# Commercial carts do filter through the QRS at 25 Hz - that is why their V1
+# looks clean at that setting, and it is also why 25/35/40 Hz are labelled
+# monitoring bandwidths rather than diagnostic ones. Selecting one is a request
+# for smoothing, and the report already prints NON-DIAGNOSTIC for it, so no ST
+# claim rests on the protection the gate provides.
+#
+# At 150 Hz the gate still matters and still applies: there the filter is meant
+# to leave the complex alone, and a smeared S wave would corrupt a J point the
+# report DOES make claims about.
+EMG_GATE_MIN_CUTOFF_HZ = 100.0
+
 # Above this ratio of high-frequency content to signal span, the trace is too
 # noisy to hand the QRS back untouched.
 #
@@ -562,7 +581,7 @@ def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) 
         # Normalize cutoff frequency
         normalized_cutoff = cutoff_freq / nyquist
         
-        if EMG_QRS_GATED:
+        if EMG_QRS_GATED and cutoff_freq >= EMG_GATE_MIN_CUTOFF_HZ:
             # Commercial carts do not run one cutoff across the whole beat. The
             # muscle filter smooths hard between beats and opens up through the
             # QRS, so the spike keeps its amplitude and nothing smears into the
