@@ -143,13 +143,35 @@ def read_packets(port: str, baud: int, seconds: float, send_start: bool = True):
             print(f"  (resynchronised past {n_bad} stray bytes)", file=sys.stderr)
 
 
+def dominant_hz(sig: np.ndarray, fs: float) -> float:
+    """Strongest frequency in the trace, so a sweep cannot be mislabelled.
+
+    Two captures taken at different generator settings but the same measured
+    frequency mean the generator was not actually changed between them — which
+    is indistinguishable from a flat response if you only look at amplitude.
+    """
+    x = np.asarray(sig, dtype=float)
+    x = x - x.mean()
+    if x.size < 64 or not np.any(x):
+        return 0.0
+    w = x * np.hanning(x.size)
+    mag = np.abs(np.fft.rfft(w))
+    freqs = np.fft.rfftfreq(x.size, 1.0 / fs)
+    lo = np.searchsorted(freqs, 0.02)          # ignore DC and slow drift
+    if lo >= mag.size:
+        return 0.0
+    k = lo + int(np.argmax(mag[lo:]))
+    return float(freqs[k])
+
+
 def summarise(a: np.ndarray, conn: np.ndarray, label: str, mode: str):
     """a: samples x 8 raw counts."""
     print(f"\n{'='*74}\n{label}   {a.shape[0]} samples, {a.shape[0]/500.0:.1f} s at 500 Hz\n{'='*74}")
     if mode == "pulse":
         hdr = f"{'lead':>5} {'baseline':>9} {'step':>8} {'p-p':>8} {'min':>6} {'max':>6} {'headroom':>9} {'elec':>5}"
     elif mode == "rms":
-        hdr = f"{'lead':>5} {'baseline':>9} {'rms':>8} {'p-p':>8} {'min':>6} {'max':>6} {'headroom':>9} {'elec':>5}"
+        hdr = (f"{'lead':>5} {'baseline':>9} {'rms':>8} {'freq':>8} {'p-p':>8} "
+               f"{'min':>6} {'max':>6} {'headroom':>9} {'elec':>5}")
     else:
         hdr = f"{'lead':>5} {'baseline':>9} {'p-p':>8} {'sd':>8} {'min':>6} {'max':>6} {'headroom':>9} {'elec':>5}"
     print(hdr)
@@ -167,7 +189,7 @@ def summarise(a: np.ndarray, conn: np.ndarray, label: str, mode: str):
             step = float(np.percentile(s, 90) - np.percentile(s, 10))
             mid = f"{step:>8.0f} {pp:>8.0f}"
         elif mode == "rms":
-            mid = f"{float(np.std(s)):>8.1f} {pp:>8.0f}"
+            mid = f"{float(np.std(s)):>8.1f} {dominant_hz(s, 500.0):>7.2f}  {pp:>8.0f}"
         else:
             mid = f"{pp:>8.0f} {float(np.std(s)):>8.1f}"
         flag = "  <-- CLIPPED" if head <= 2 else ""
@@ -180,6 +202,9 @@ def summarise(a: np.ndarray, conn: np.ndarray, label: str, mode: str):
     print("\n  12-bit converter: 0..4095, so full swing from mid-rail is about +/-2048 counts.")
     if mode == "pulse":
         print("  For a 1 mV input, 'step' IS the counts-per-mV for that channel.")
+    if mode == "rms":
+        print("  'freq' is measured from the trace itself — check it matches the")
+        print("  generator setting before trusting the label on this capture.")
 
 
 def main():
