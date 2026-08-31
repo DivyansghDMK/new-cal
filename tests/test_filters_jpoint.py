@@ -35,6 +35,24 @@ import ecg.ecg_filters as F                                  # noqa: E402
 from ecg.ecg_filters import apply_emg_filter, lead_noise_ratio  # noqa: E402
 
 FS = 500.0
+
+# The QRS gate is DIAGNOSTIC-ONLY as of EMG_GATE_MIN_CUTOFF_HZ.
+#
+# It hands the QRS back unfiltered, and ~97% of an ECG's 25-50 Hz energy lives
+# inside the QRS — so at 25 Hz the gate removed essentially everything the
+# operator asked to remove. Measured on a real V1: the 25-50 Hz band came back at
+# 0.994 of unfiltered, where a plain 25 Hz filter gives 0.26. The setting had no
+# visible effect, which is the complaint that led here.
+#
+# 25/35/40 Hz are monitoring bandwidths. Selecting one is a request for smoothing,
+# the report prints NON-DIAGNOSTIC for it, and commercial carts filter through the
+# QRS there too. Measured cost of ungating on a real 12-lead recording: worst J
+# shift 0.17 mm against a 1.0 mm reading threshold, QRS amplitude 70-98% retained.
+#
+# So these tests now split: the gate's protection is pinned where it still
+# applies, and the settings below it are pinned to ACTUALLY FILTER.
+GATED_SETTINGS = ("150",)
+UNGATED_SETTINGS = ("25", "35", "40")
 ADC_PER_MV = 1184.0
 MM_PER_MV = 10.0          # the report's gain, so tolerances read as millimetres
 R_TO_J_MS = 40.0          # where the J point sits on the beats built below
@@ -102,7 +120,7 @@ class TestNoisyLeadKeepsItsJPoint(unittest.TestCase):
 
     def test_j_point_does_not_move_a_clinically_read_amount(self):
         """1 mm of ST/J shift is read as a finding. Stay well under half of it."""
-        for setting in ("25", "35", "40", "150"):
+        for setting in GATED_SETTINGS:
             with self.subTest(setting=setting):
                 y = apply_emg_filter(self.sig.copy(), FS, setting)
                 shift = abs(_j_mm(y, self.pk) - self.j_raw)
@@ -112,32 +130,40 @@ class TestNoisyLeadKeepsItsJPoint(unittest.TestCase):
 
     def test_qrs_amplitude_survives(self):
         """20-29% loss in V1-V6 was enough to change Sokolow-Lyon voltage."""
-        for setting in ("25", "35", "40", "150"):
+        for setting in GATED_SETTINGS:
             with self.subTest(setting=setting):
                 y = apply_emg_filter(self.sig.copy(), FS, setting)
                 kept = _qrs_pp_mm(y, self.pk) / self.pp_raw
                 self.assertGreater(kept, 0.90,
                                    f"EMG {setting} Hz kept only {kept*100:.1f}% of the QRS")
 
-    def test_fallback_beats_the_plain_lowpass_it_replaced(self):
-        """The gated path must be closer to raw than the old behaviour was.
+    def test_the_noisy_lead_fallback_is_now_unreachable(self):
+        """A consequence of making the gate diagnostic-only, recorded not hidden.
 
-        EMG_QRS_GATED=False reproduces exactly what a noisy lead used to get, so
-        this compares the fix against the defect rather than against a constant.
+        EMG_GATE_FALLBACK_HZ = 100 exists so a noisy lead gets a 100 Hz version of
+        its QRS instead of the raw one, rather than having the muscle filter stand
+        down entirely. It only ever changed anything when the SETTING was narrower
+        than 100 Hz — at 150 Hz `max(setting, 100)` is the setting itself.
+
+        Those narrower settings are now ungated, so the fallback cannot be reached
+        at any shipped configuration. The constant is kept because lowering
+        EMG_GATE_MIN_CUTOFF_HZ brings it straight back, and because deleting it
+        would lose the reasoning. This test pins that it is genuinely inert, so a
+        future change to either constant fails here rather than silently altering
+        what a noisy lead receives.
         """
-        for setting in ("25", "35", "40"):
+        for setting in GATED_SETTINGS:
             with self.subTest(setting=setting):
-                fixed = apply_emg_filter(self.sig.copy(), FS, setting)
+                gated = apply_emg_filter(self.sig.copy(), FS, setting)
                 F.EMG_QRS_GATED = False
                 try:
-                    old = apply_emg_filter(self.sig.copy(), FS, setting)
+                    plain = apply_emg_filter(self.sig.copy(), FS, setting)
                 finally:
                     F.EMG_QRS_GATED = True
-                d_fixed = abs(_j_mm(fixed, self.pk) - self.j_raw)
-                d_old = abs(_j_mm(old, self.pk) - self.j_raw)
-                self.assertLess(d_fixed, d_old,
-                                f"EMG {setting} Hz: fallback {d_fixed:.3f} mm is no better "
-                                f"than the plain low-pass {d_old:.3f} mm it replaced")
+                self.assertLess(
+                    abs(_j_mm(gated, self.pk) - _j_mm(plain, self.pk)), 0.05,
+                    f"EMG {setting} Hz: the gate now changes the J point again, so "
+                    f"the fallback is reachable and needs its own coverage")
 
 
 class TestCleanLeadIsUntouched(unittest.TestCase):
@@ -150,7 +176,7 @@ class TestCleanLeadIsUntouched(unittest.TestCase):
 
     def test_j_point_and_amplitude_unchanged(self):
         j0, pp0 = _j_mm(self.sig, self.pk), _qrs_pp_mm(self.sig, self.pk)
-        for setting in ("25", "35", "40", "150"):
+        for setting in GATED_SETTINGS:
             with self.subTest(setting=setting):
                 y = apply_emg_filter(self.sig.copy(), FS, setting)
                 self.assertLess(abs(_j_mm(y, self.pk) - j0), 0.10)
@@ -253,3 +279,44 @@ class TestDiagnosticDefault(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestMonitoringSettingsActuallyFilter(unittest.TestCase):
+    """The other half of the contract, and the reason the gate became diagnostic-only.
+
+    A gate that hands the QRS back unfiltered removes almost everything a 25 Hz
+    setting was asked to remove, because ~97% of an ECG's 25-50 Hz energy is in
+    the QRS. Measured on a real V1 before this change, the 25-50 Hz band came back
+    at 0.994 of unfiltered. The operator selected 25 Hz and the trace did not
+    change, which is indistinguishable from the filter being broken.
+    """
+
+    def setUp(self):
+        _, self.sig = _beat_train(noise_uv=3.0, seed=11)
+
+    @staticmethod
+    def _band(x, lo, hi):
+        x = np.asarray(x, dtype=float)
+        mag = np.abs(np.fft.rfft(x - x.mean()))
+        f = np.fft.rfftfreq(x.size, 1.0 / FS)
+        m = (f >= lo) & (f < hi)
+        return float(np.sqrt(np.sum(mag[m] ** 2)))
+
+    def test_a_monitoring_setting_removes_content_above_its_cutoff(self):
+        raw = self._band(self.sig, 50.0, 100.0)
+        self.assertGreater(raw, 0.0, "test signal carries no 50-100 Hz content")
+        for setting in UNGATED_SETTINGS:
+            with self.subTest(setting=setting):
+                y = apply_emg_filter(self.sig.copy(), FS, setting)
+                kept = self._band(y, 50.0, 100.0) / raw
+                self.assertLess(kept, 0.5,
+                                f"EMG {setting} Hz left {kept:.3f} of the 50-100 Hz "
+                                f"band — the setting is not reaching the signal")
+
+    def test_the_diagnostic_setting_still_protects_the_qrs(self):
+        """150 Hz is where the gate must stay: the report makes ST claims there."""
+        pk = _r_peaks(self.sig)
+        j0, pp0 = _j_mm(self.sig, pk), _qrs_pp_mm(self.sig, pk)
+        y = apply_emg_filter(self.sig.copy(), FS, "150")
+        self.assertLess(abs(_j_mm(y, pk) - j0), 0.10)
+        self.assertGreater(_qrs_pp_mm(y, pk) / pp0, 0.98)

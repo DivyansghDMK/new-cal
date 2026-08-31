@@ -56,7 +56,7 @@ REPORT_DEMO_MODE = False
 # reference and prints as exactly 10 small boxes - matching the reference cart with
 # its filters off. Cross-checked against a 0.20 mV ST step, which then reads
 # 0.194 mV. The old 1280 was inherited from other code and never measured.
-ADC_PER_MV    = 1184.0
+from ecg.calibration import ADC_PER_MV          # 1423, measured on the bench
 # The 1 mV calibration pulse must be wave_gain millimetres tall, not a fixed 10:
 # at 5 mm/mV a 10 mm pulse tells the reader every wave is half its real size.
 REPORT_GAIN_MM_MV = FIXED_GAIN

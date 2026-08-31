@@ -329,6 +329,16 @@ def _settings_details(settings_manager: Any) -> Dict[str, str]:
         "ac_filter": "unknown",
         "lead_arrangement": "standard",
     }
+    # No manager passed? Load one. The 12-lead caller passes None, so every JSON
+    # twin recorded "unknown" for the filter band and the AC filter — a report that
+    # cannot say what bandwidth it was recorded at is not much of a record.
+    if settings_manager is None:
+        try:
+            from utils.settings_manager import SettingsManager
+            settings_manager = SettingsManager()
+        except Exception:
+            pass
+
     if settings_manager is None:
         return defaults
     try:

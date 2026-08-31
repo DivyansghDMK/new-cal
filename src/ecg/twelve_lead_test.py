@@ -780,11 +780,11 @@ def create_pink_grid_brush():
 # Using it here puts the live display on the report's scale: a wave that looks
 # small on screen now prints small too, instead of the display squeezing the whole
 # 0-4095 ADC span into each panel.
-ADC_PER_MV = 1184.0
+from ecg.calibration import ADC_PER_MV          # 1423, measured on the bench
 DISPLAY_HALF_SPAN_ADC = 19.5 * ADC_PER_MV / 20.0
 
 
-def _measure_st_per_lead(snap_raw, lead_names, fs, adc_per_mv=1184.0):
+def _measure_st_per_lead(snap_raw, lead_names, fs, adc_per_mv=ADC_PER_MV):
     """ST deviation per lead in mm, averaged over the beats in the snapshot.
 
     Measured at J+60 ms against the PQ segment, which is the point the ST

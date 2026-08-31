@@ -38,6 +38,8 @@ INTEGRATION WITH EXISTING CODEBASE:
 """
 
 import numpy as np
+
+from ecg.calibration import ADC_PER_MV
 from scipy.signal import butter, filtfilt, find_peaks
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -868,7 +870,7 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
                                 time_axis: np.ndarray,
                                 fs: float,
                                 tp_baseline: float,
-                                adc_per_mv: float = 1200.0
+                                adc_per_mv: float = ADC_PER_MV
                                 ) -> int:
     """
     Measure QRS duration on a single median beat using Curtin et al. (2018)
@@ -1031,7 +1033,7 @@ def compute_global_qrs_duration_mecg(
 def qrs_duration_from_raw_signal(lead_data: np.ndarray,
                                   r_curr_idx: int,
                                   fs: float = 500.0,
-                                  adc_per_mv: float = 1200.0,
+                                  adc_per_mv: float = ADC_PER_MV,
                                   heart_rate: int = 75
                                   ) -> float:
     """Per-beat QRS duration from raw signal around known R-peak. HR-adaptive."""
@@ -1236,7 +1238,7 @@ def compute_global_qrs_duration_12lead(
         lead_signals: Dict[str, np.ndarray],
         r_peaks,
         fs: float = 500.0,
-        adc_per_mv: float = 1200.0,
+        adc_per_mv: float = ADC_PER_MV,
         heart_rate: int = 75,
         min_leads: int = GLOBAL_QRS_MIN_LEADS,
         max_beats: int = GLOBAL_QRS_MAX_BEATS,
