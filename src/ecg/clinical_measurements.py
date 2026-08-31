@@ -22,6 +22,13 @@ CALIBRATION CONSTANTS (hardware-specific):
 import numpy as np
 
 from ecg.calibration import ADC_PER_MV
+
+# 12-bit converter, 0..4095. A margin rather than the exact rail: an amplifier
+# does not clip cleanly at one count, it compresses as it approaches the limit,
+# and a lead whose minimum is 2 is saturated for every practical purpose.
+_ADC_RAIL_MARGIN = 4
+_ADC_RAIL_LOW = _ADC_RAIL_MARGIN
+_ADC_RAIL_HIGH = 4095 - _ADC_RAIL_MARGIN
 from scipy.signal import butter, filtfilt, find_peaks
 from .signal_paths import display_filter, measurement_filter
 
@@ -625,15 +632,35 @@ def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
     v1  = np.asarray(v1_raw,  dtype=float)
     min_rr = max(1, int(0.30 * fs))
 
+    # A saturated channel has no measurable amplitude, and a clipped peak reads
+    # LOWER than the true one — so a railed lead does not produce an
+    # underestimate, it produces a number with no relationship to the patient.
+    #
+    # This is not hypothetical on this hardware. The 12-bit converter reaches
+    # +/-2048 counts, which at the measured 1423 counts/mV is only +/-1.44 mV
+    # against the +/-5 mV IEC 60601-2-25 asks for. On one ordinary recording from
+    # this device, six of the eight acquisition channels touched a rail.
+    #
+    # Refusing is the honest answer. The report already prints "--" for an
+    # unmeasured value; Sokolow-Lyon simply cannot be offered on a railed lead.
+    def _railed(x):
+        if x.size == 0:
+            return True
+        return bool(np.any(x <= _ADC_RAIL_LOW) or np.any(x >= _ADC_RAIL_HIGH))
+
     # ── RV5 ──────────────────────────────────────────────────────────────────
     rv5_mv = None
-    if v5.size >= min_rr * 2 and len(r_peaks_v5) >= 2:
+    if _railed(v5):
+        pass                      # saturated: no amplitude to report
+    elif v5.size >= min_rr * 2 and len(r_peaks_v5) >= 2:
         sample_to_mv_v5 = 1.0 / v5_adc_per_mv
         rv5_mv = _measure_r_wave(v5, fs, sample_to_mv_v5) or None
 
     # ── SV1 ──────────────────────────────────────────────────────────────────
     sv1_mv = None
-    if v1.size >= min_rr * 2 and len(r_peaks_v1) >= 2:
+    if _railed(v1):
+        pass                      # saturated: no amplitude to report
+    elif v1.size >= min_rr * 2 and len(r_peaks_v1) >= 2:
         sample_to_mv_v1 = 1.0 / v1_adc_per_mv
         sv1_mv = _measure_s_wave(v1, fs, sample_to_mv_v1) or None
 
