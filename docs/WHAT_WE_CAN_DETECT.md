@@ -121,12 +121,21 @@ Nothing below has been checked against reference data at all:
 | | available truth |
 |---|---|
 | **LVH / Sokolow-Lyon** | 108 LUDB records. Blocked on the bench calibration — RV5/SV1 divide by 2048/1441 while the waveform uses 1184. |
-| **Electrical axis** | LUDB labels it per record. Computed but never drawn on the report. |
+| **Electrical axis** | LUDB labels it per record. The P/QRS/T axes *are* printed in the header; what is missing is any axis *interpretation* — no "left axis deviation" statement exists, and the printed numbers have never been checked against the reference. |
 | **Bundle branch block** | 29 incomplete RBBB, 4 complete LBBB. `detect_bundle_branch_block()` is untested. |
 | **Extrasystoles (PVC/PAC)** | 14 LUDB records, 6 single PVC, 4 single PAC. |
 | **Hyperkalaemia** | no reference data identified. |
 
 ---
+
+## Not printed at all, though it is computed
+
+`build_interpretation()` returns a `severity` of `NORMAL ECG` / `BORDERLINE ECG` /
+`ABNORMAL ECG` / `UNINTERPRETABLE ECG`. **Nothing in the report renderer reads it.**
+Every commercial cart prints an equivalent line. Ours computes one and drops it.
+
+That is separate from the defect in [`pending/st-severity.md`](pending/st-severity.md),
+which is about the value being wrong when it *is* read.
 
 ## Honest summary
 
