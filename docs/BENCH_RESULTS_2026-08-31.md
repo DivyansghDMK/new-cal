@@ -75,36 +75,67 @@ This is the single most significant hardware finding of the session.
 
 ---
 
-## 3. Frequency response — the AD8232 fear is disproven
+## 3. Frequency response — the top end is fine, the bottom end FAILS
 
 ProSim performance sine, referenced to 5 Hz. The `freq` column of each capture
 confirms the generator was actually changed; an earlier sweep was invalidated
 because it was not.
 
-| freq | I | II | V1 | V2 | V3 | V4 | V5 | V6 | mean | dB |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 4.96 Hz | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.00 |
-| 10.09 Hz | 0.999 | 0.999 | 0.999 | 0.999 | 0.998 | 0.999 | 0.999 | 0.998 | 0.999 | −0.01 |
-| **40.01 Hz** | 1.008 | 1.015 | 1.001 | 1.000 | 1.003 | 1.011 | 0.998 | 0.994 | **1.004** | **+0.03** |
-| **100.03 Hz** | 0.831 | 0.862 | 0.809 | 0.801 | 0.820 | 0.845 | 0.803 | 0.786 | **0.819** | **−1.73** |
+| freq | I | II | V1 | V2 | V3 | V4 | V5 | V6 | mean | dB | IEC +0.4/−3.0 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **0.05 Hz** | 0.350 | 0.348 | 0.348 | 0.352 | 0.340 | 0.349 | 0.352 | 0.339 | **0.347** | **−9.19** | ❌ **FAIL** |
+| 0.50 Hz | 0.997 | 0.996 | 0.997 | 0.997 | 0.996 | 0.996 | 0.998 | 0.997 | 0.997 | −0.03 | ✅ |
+| 40.01 Hz | 1.008 | 1.015 | 1.001 | 1.000 | 1.003 | 1.011 | 0.998 | 0.994 | 1.004 | +0.03 | ✅ |
+| 100.03 Hz | 0.831 | 0.862 | 0.809 | 0.801 | 0.820 | 0.845 | 0.803 | 0.786 | 0.819 | −1.73 | ✅ |
 
-**At 40 Hz the response is flat** — −0.05 to +0.13 dB across all eight channels.
-**At 100 Hz it is −1.29 to −2.10 dB**, inside the −3.0 dB IEC limit.
+### The AD8232 40 Hz fear is disproven
 
 The board uses one AD8232 per channel, and the datasheet's typical application
 circuit is a heart-rate monitor at roughly 0.5–40 Hz. **The board is not built to
-that circuit.** There is no 40 Hz corner. The concern that every report's
-"0.05–150 Hz" was fiction is not supported at the top end.
+that circuit.** At 40 Hz the response is flat — −0.05 to +0.13 dB across all eight
+channels — and at 100 Hz it is −1.29 to −2.10 dB, inside the −3.0 dB limit.
 
-### Two gaps remain, and neither is closed
+### But the high-pass corner is not 0.05 Hz
 
-- **150 Hz is untested.** The ProSim's highest performance sine is 100 Hz. At
-  100 Hz we measure −1.7 dB; depending on filter order, 150 Hz could sit at −3 to
-  −5 dB. **The report claims 150 Hz and we have only demonstrated 100 Hz.**
-- **The low end is untested** — 0.05 Hz and 0.5 Hz. This half matters more for ST
-  and baseline than the top end does, and the ProSim carries both frequencies.
+At 0.05 Hz the response is **0.347, or −9.19 dB**, against an IEC floor of −3.0 dB.
+All eight channels agree within 0.34–0.35, so this is the filter, not noise.
 
----
+Working back to the corner:
+
+| assumed order | implied −3 dB corner |
+|---|---|
+| first | ~0.135 Hz |
+| second | ~0.075 Hz |
+
+A first-order 0.135 Hz corner predicts 0.965 at 0.5 Hz where we measure 0.997, so
+the real response is steeper than first-order and the corner sits nearer
+**0.08–0.10 Hz**. Either way it is **well above the 0.05 Hz the standard requires
+and the report prints**.
+
+### Why this matters more than the top end
+
+A high-pass corner above 0.05 Hz is the classic cause of **ST segment
+distortion**, and is precisely why IEC 60601-2-25 sets the limit there. The
+baseline recovers too quickly after the QRS and drags the ST segment with it —
+producing artifactual **ST depression after a tall R wave** and elevation after a
+deep S.
+
+Our ST rule fires on **77% of records carrying no ischemia label**
+([`pending/st-severity.md`](pending/st-severity.md)). That was attributed to the
+missing contiguity and slope criteria. **This measurement says part of it may be
+the analog front end**, and no software filter can undo it — the content is gone
+before the ADC sees it.
+
+### What the report claims, against what was measured
+
+The header prints `0.05-150 Hz`.
+
+| end | status |
+|---|---|
+| 0.05 Hz | **measured at −9.19 dB — the claim is wrong** |
+| 150 Hz | **untested** — the ProSim's highest sine is 100 Hz, where we measure −1.7 dB. Depending on filter order, 150 Hz could sit at −3 to −5 dB |
+
+Neither end of the printed bandwidth is currently supported by measurement.
 
 ## 4. Answered as a side effect
 
@@ -147,9 +178,7 @@ slope criteria remain the larger part.
 
 ## 6. Still to do on the bench
 
-1. **Sine at 0.05 Hz and 0.5 Hz** — completes the bandwidth claim at the end that
-   matters for ST.
-2. **T2 amplitude sweep** — find the exact input at which each channel clips,
+1. **T2 amplitude sweep** — find the exact input at which each channel clips,
    rather than inferring ±1.44 mV from the divisor.
 3. **T4 known ST deviation** — the ProSim can inject a known ±mV ST offset. This
    is the only way to validate the millimetres in every ST threshold, and no
