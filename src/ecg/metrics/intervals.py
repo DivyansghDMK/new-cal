@@ -8,6 +8,8 @@ This module provides interval calculations (PR, QRS, QT, P duration) with:
 """
 
 import numpy as np
+
+from ..calibration import ADC_PER_MV
 from typing import Optional, Tuple
 from scipy.signal import butter, filtfilt, find_peaks
 from collections import deque
@@ -214,8 +216,8 @@ def calculate_rv5_sv1_from_median(data: list, r_peaks: np.ndarray,
             lead_v5_raw, lead_v1_raw,
             r_peaks, r_peaks,   # shared R-peaks — see docstring note
             fs,
-            v5_adc_per_mv=2048.0,
-            v1_adc_per_mv=1441.0,
+            v5_adc_per_mv=ADC_PER_MV,
+            v1_adc_per_mv=ADC_PER_MV,
         )
         return rv5_mv, sv1_mv
 

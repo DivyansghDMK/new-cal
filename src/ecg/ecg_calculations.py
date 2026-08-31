@@ -53,6 +53,8 @@ from __future__ import annotations
 
 import time
 import numpy as np
+
+from ecg.calibration import ADC_PER_MV
 from collections import deque
 from typing import Optional, Dict, Any, Tuple, List
 from scipy.signal import butter, filtfilt, find_peaks
@@ -1212,7 +1214,7 @@ def calculate_all_ecg_metrics(
 
         try:
             qrs_dur_ms  = qrs_duration_from_raw_signal(
-                filt, r_curr_idx, fs, adc_per_mv=1200.0, heart_rate=hr
+                filt, r_curr_idx, fs, adc_per_mv=ADC_PER_MV, heart_rate=hr
             )
             qrs_dur_int = int(round(qrs_dur_ms)) if qrs_dur_ms > 0 else 0
         except Exception:
@@ -1235,7 +1237,7 @@ def calculate_all_ecg_metrics(
                 try:
                     global_qrs = compute_global_qrs_duration_12lead(
                         all_lead_data, r_peaks, fs,
-                        adc_per_mv=1200.0, heart_rate=hr,
+                        adc_per_mv=ADC_PER_MV, heart_rate=hr,
                     )
                 except Exception as e:
                     print(f" ⚠️ global QRS failed, keeping single-lead: {e}")
@@ -1359,7 +1361,7 @@ def calculate_qrs(lead_data: np.ndarray, r_peaks: np.ndarray,
             return 0
         filt   = _bandpass(np.asarray(lead_data, dtype=float) - np.mean(lead_data), fs)
         r_curr = int(r_peaks[len(r_peaks) // 2])
-        qrs_ms = qrs_duration_from_raw_signal(filt, r_curr, fs, adc_per_mv=1200.0)
+        qrs_ms = qrs_duration_from_raw_signal(filt, r_curr, fs, adc_per_mv=ADC_PER_MV)
         if qrs_ms <= 0:
             return 0
         qrs_int = int(round(qrs_ms))

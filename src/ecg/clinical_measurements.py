@@ -20,6 +20,8 @@ CALIBRATION CONSTANTS (hardware-specific):
 """
 
 import numpy as np
+
+from ecg.calibration import ADC_PER_MV
 from scipy.signal import butter, filtfilt, find_peaks
 from .signal_paths import display_filter, measurement_filter
 
@@ -598,7 +600,7 @@ def _measure_s_wave(samples: np.ndarray, fs: float, sample_to_mv: float) -> floa
 
 
 def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
-                                      v5_adc_per_mv=2048.0, v1_adc_per_mv=1441.0):
+                                      v5_adc_per_mv=ADC_PER_MV, v1_adc_per_mv=ADC_PER_MV):
     """
     Measure RV5 (V5 R-wave) and SV1 (V1 S-wave) using the Android-matched
     peak-averaging algorithm.
@@ -686,7 +688,7 @@ def measure_st_deviation_from_median_beat(median_beat, time_axis, fs, tp_baselin
         return None
 
     st_adc  = median_beat[st_idx] - tp_baseline
-    adc_to_mv = 1200.0
+    adc_to_mv = ADC_PER_MV
     st_mv   = np.clip(st_adc / adc_to_mv, -2.0, 2.0)
     return round(float(st_mv), 2)
 

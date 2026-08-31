@@ -1,4 +1,6 @@
 import numpy as np
+
+from ..calibration import ADC_PER_MV
 from scipy.signal import butter, filtfilt, find_peaks
 from typing import Dict, Any, List, Optional, Sequence, Tuple
 from ..qrs_detection import qrs_duration_from_raw_signal
@@ -419,7 +421,7 @@ def calculate_comprehensive_metrics(lead_data: np.ndarray, fs: float = 500.0) ->
     windows = calculate_adaptive_windows(hr, rr_sec, fs)
     
     # QRS Detection (Paper-based: Curtin et al. 2018, Stage 6-10)
-    qrs_dur_ms = qrs_duration_from_raw_signal(filt, r_curr_idx, fs, adc_per_mv=1200.0)
+    qrs_dur_ms = qrs_duration_from_raw_signal(filt, r_curr_idx, fs, adc_per_mv=ADC_PER_MV)
     results["qrs_duration"] = qrs_dur_ms
 
     # QRS start/end still needed for QT and PR calculations below
